@@ -3,10 +3,12 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
 
+	"github.com/dia-bot/dia/internal/cache"
 	"github.com/dia-bot/dia/internal/discord"
 	"github.com/gin-gonic/gin"
 	"golang.org/x/oauth2"
@@ -19,7 +21,7 @@ func (s *Server) handleLogin(c *gin.Context) {
 	state := randomToken()
 	verifier := oauth2.GenerateVerifier()
 	// Stash the PKCE verifier keyed by state for 10 minutes.
-	if err := s.rdb.Set(c.Request.Context(), "oauth:"+state, verifier, 10*time.Minute).Err(); err != nil {
+	if err := s.cache.SetString(c.Request.Context(), "oauth:"+state, verifier, 10*time.Minute); err != nil {
 		fail(c, http.StatusInternalServerError, "could not start login")
 		return
 	}
@@ -38,9 +40,13 @@ func (s *Server) handleCallback(c *gin.Context) {
 		return
 	}
 
-	verifier, err := s.rdb.GetDel(ctx, "oauth:"+state).Result()
-	if err != nil || verifier == "" {
+	verifier, err := s.cache.TakeString(ctx, "oauth:"+state)
+	if errors.Is(err, cache.ErrMiss) || verifier == "" {
 		fail(c, http.StatusBadRequest, "invalid or expired login state")
+		return
+	}
+	if err != nil {
+		fail(c, http.StatusInternalServerError, "could not read login state")
 		return
 	}
 

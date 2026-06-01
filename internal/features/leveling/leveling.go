@@ -106,10 +106,10 @@ func handleMessage(ctx context.Context, d plugin.Deps, env *event.Envelope) erro
 		}
 	}
 
-	// Anti-spam cooldown via Redis: only earn once per cooldown window.
-	if d.Redis != nil && cfg.CooldownSeconds > 0 {
+	// Anti-spam cooldown: only earn once per cooldown window.
+	if d.Cache != nil && cfg.CooldownSeconds > 0 {
 		key := "lvl:cd:" + msg.GuildID + ":" + msg.Author.ID
-		set, rerr := d.Redis.SetNX(ctx, key, 1, time.Duration(cfg.CooldownSeconds)*time.Second).Result()
+		set, rerr := d.Cache.Reserve(ctx, key, time.Duration(cfg.CooldownSeconds)*time.Second)
 		if rerr == nil && !set {
 			return nil // still on cooldown
 		}

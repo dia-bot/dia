@@ -1,4 +1,4 @@
-# Dia — Agent Guide
+# Dia Agent Guide
 
 Guidance for AI coding agents working in this repo. For the architecture and how
 to run things, see [README.md](README.md). This file is about **how to work
@@ -6,24 +6,22 @@ here**, not how to deploy.
 
 ## Repo layout (quick reference)
 
-```
-gateway/        Elixir gateway (Nostrum → NATS)            — Elixir
-cmd/worker      Go bot worker (consumes events, plugins)   — Go
-cmd/api         Go dashboard API (gin)                     — Go
-internal/       Go libs: event, eventbus, store, discord, imaging,
-                plugin (SDK), interactions, bot, api, realtime,
-                guildstate, features/*                     — Go
-pkg/discordgo   vendored Discord library (in-module)       — Go
-migrations/     versioned SQL (goose, embedded)            — SQL
-web/            SvelteKit landing + dashboard              — TS/Svelte
-deploy/         docker-compose + Dockerfiles
-```
+| Path | Purpose | Stack |
+| --- | --- | --- |
+| `gateway/` | Elixir gateway from Nostrum to NATS | Elixir |
+| `cmd/worker` | Go bot worker for events and plugins | Go |
+| `cmd/api` | Go dashboard API with gin | Go |
+| `internal/` | Go libraries for event, store, discord, imaging, plugin SDK, interactions, bot, api, realtime, guildstate, and features | Go |
+| `pkg/discordgo` | Vendored Discord library in-module | Go |
+| `migrations/` | Versioned SQL with goose and embedded migrations | SQL |
+| `web/` | SvelteKit landing page and dashboard | TS/Svelte |
+| `deploy/` | docker-compose and Dockerfiles | Docker |
 
-## Before you finish: format & check (these are FAST — do run them)
+## Before you finish: format & check
 
 Run only for the area you touched:
 
-- **Go** — format and vet the changed packages:
+- **Go**: format and vet the changed packages:
   ```bash
   gofmt -w <changed .go files>          # or: gofmt -l ./internal ./cmd  (lists unformatted)
   go vet ./internal/... ./cmd/...       # built-in linter; fast
@@ -32,7 +30,7 @@ Run only for the area you touched:
   ```bash
   mix format
   ```
-- **Web** (inside `web/`) — type-check is the lint here:
+- **Web** (inside `web/`): type-check is the lint here:
   ```bash
   pnpm exec svelte-check --tsconfig ./tsconfig.json
   ```
@@ -40,17 +38,17 @@ Run only for the area you touched:
 If `golangci-lint` is installed, `golangci-lint run ./internal/... ./cmd/...` is
 welcome; it is not required.
 
-## Do NOT run these (slow / heavy — skip unless the user explicitly asks)
+## Do NOT run these
 
 - **Do not build the whole thing.** No `go build ./...`, no building the binaries
-  just to check — `go vet` already type-checks. Build only the single package you
+  just to check. `go vet` already type-checks. Build only the single package you
   changed if you must (`go build ./internal/<pkg>/`).
-- No `pnpm build` (full production web build) — `svelte-check` is enough.
+- No `pnpm build` (full production web build). `svelte-check` is enough.
 - No `mix compile` / `mix release` / `mix deps.get` in `gateway/` unless you
   changed Elixir deps (these pull from hex and are slow).
 - No `go mod tidy` unless you actually changed Go dependencies.
 - Do not start services, run the bot, or `docker compose up`. Don't run the
-  gateway/worker/api/web dev servers to "verify" — leave running things to the user.
+  gateway/worker/api/web dev servers to "verify". Leave running things to the user.
 
 ## Conventions
 
@@ -67,10 +65,10 @@ welcome; it is not required.
   to match.
 - **Module path** is `github.com/dia-bot/dia`. Import the Discord library as
   `github.com/dia-bot/dia/pkg/discordgo` (it's vendored in-module; there is **no**
-  `replace` directive — don't add one).
+  `replace` directive. Don't add one).
 - **Web theme is clean, not gradient-heavy.** White/blush surfaces, hairline
-  borders, a single purple accent (`--color-accent`). The pink→purple gradient is
-  for the **logo and welcome/rank cards only** — never a page/dashboard
+  borders, a single purple accent (`--color-accent`). The pink to purple gradient is
+  for the **logo and welcome/rank cards only**. Never a page/dashboard
   background. Svelte 5 runes (`$state`/`$derived`/`$effect`/`$props`); reuse the
   components in `web/src/lib/components`.
 - **Never reference other bots/competitors by name** anywhere in code, comments,
@@ -78,9 +76,9 @@ welcome; it is not required.
 
 ## Where things live
 
-- Add a DB change → new file in `migrations/` (`NNNNN_name.sql`, goose
+- Add a DB change: new file in `migrations/` (`NNNNN_name.sql`, goose
   `-- +goose Up/Down`); it's embedded and applied at startup.
-- Add an API endpoint → register the route in `internal/api/server.go`, handler in
+- Add an API endpoint: register the route in `internal/api/server.go`, handler in
   the matching `internal/api/*.go`.
-- Add a dashboard page → `web/src/routes/servers/[id]/<feature>/+page.svelte`,
+- Add a dashboard page: `web/src/routes/servers/[id]/<feature>/+page.svelte`,
   following `welcome/+page.svelte`; link it in `[id]/+layout.svelte`.

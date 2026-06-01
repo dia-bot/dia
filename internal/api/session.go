@@ -4,11 +4,10 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"time"
 
-	"github.com/redis/go-redis/v9"
+	"github.com/dia-bot/dia/internal/cache"
 )
 
 // errNoSession indicates a missing/expired session.
@@ -37,23 +36,19 @@ type UserGuild struct {
 }
 
 type sessionStore struct {
-	rdb *redis.Client
-	ttl time.Duration
+	cache *cache.Store
+	ttl   time.Duration
 }
 
-func newSessionStore(rdb *redis.Client, ttl time.Duration) *sessionStore {
-	return &sessionStore{rdb: rdb, ttl: ttl}
+func newSessionStore(cache *cache.Store, ttl time.Duration) *sessionStore {
+	return &sessionStore{cache: cache, ttl: ttl}
 }
 
 func (s *sessionStore) key(token string) string { return "sess:" + token }
 
 func (s *sessionStore) create(ctx context.Context, sess *Session) (string, error) {
 	token := randomToken()
-	raw, err := json.Marshal(sess)
-	if err != nil {
-		return "", err
-	}
-	if err := s.rdb.Set(ctx, s.key(token), raw, s.ttl).Err(); err != nil {
+	if err := s.cache.SetJSON(ctx, s.key(token), sess, s.ttl); err != nil {
 		return "", err
 	}
 	return token, nil
@@ -63,22 +58,19 @@ func (s *sessionStore) get(ctx context.Context, token string) (*Session, error) 
 	if token == "" {
 		return nil, errNoSession
 	}
-	raw, err := s.rdb.Get(ctx, s.key(token)).Bytes()
-	if errors.Is(err, redis.Nil) {
+	var sess Session
+	err := s.cache.GetJSON(ctx, s.key(token), &sess)
+	if errors.Is(err, cache.ErrMiss) {
 		return nil, errNoSession
 	}
 	if err != nil {
-		return nil, err
-	}
-	var sess Session
-	if err := json.Unmarshal(raw, &sess); err != nil {
 		return nil, err
 	}
 	return &sess, nil
 }
 
 func (s *sessionStore) delete(ctx context.Context, token string) error {
-	return s.rdb.Del(ctx, s.key(token)).Err()
+	return s.cache.Delete(ctx, s.key(token))
 }
 
 // randomToken returns a 256-bit opaque token.

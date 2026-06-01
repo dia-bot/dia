@@ -32,7 +32,7 @@ func New(deps plugin.Deps) *Bot {
 	return &Bot{
 		deps:   deps,
 		router: interactions.NewRouter(deps.Discord, deps.Log),
-		gstate: guildstate.New(deps.Redis),
+		gstate: guildstate.New(deps.Cache),
 		events: map[event.Type][]plugin.EventHandler{},
 		log:    deps.Log,
 	}

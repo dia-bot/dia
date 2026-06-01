@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/dia-bot/dia/internal/cache"
 	"github.com/dia-bot/dia/internal/config"
 	"github.com/dia-bot/dia/internal/discord"
 	"github.com/dia-bot/dia/internal/eventbus"
@@ -19,7 +20,6 @@ import (
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
-	"github.com/redis/go-redis/v9"
 	"golang.org/x/oauth2"
 )
 
@@ -30,7 +30,7 @@ type Deps struct {
 	Config  *config.Config
 	Log     *slog.Logger
 	Store   *store.Store
-	Redis   *redis.Client
+	Cache   *cache.Store
 	Discord *discord.Client
 	Imaging *imaging.Renderer
 	Bus     eventbus.Bus
@@ -41,7 +41,7 @@ type Server struct {
 	cfg      *config.Config
 	log      *slog.Logger
 	store    *store.Store
-	rdb      *redis.Client
+	cache    *cache.Store
 	discord  *discord.Client
 	imaging  *imaging.Renderer
 	bus      eventbus.Bus
@@ -59,13 +59,13 @@ func New(d Deps) *Server {
 		cfg:      d.Config,
 		log:      d.Log,
 		store:    d.Store,
-		rdb:      d.Redis,
+		cache:    d.Cache,
 		discord:  d.Discord,
 		imaging:  d.Imaging,
 		bus:      d.Bus,
-		gstate:   guildstate.New(d.Redis),
+		gstate:   guildstate.New(d.Cache),
 		hub:      realtime.NewHub(d.Log),
-		sessions: newSessionStore(d.Redis, sessionTTL),
+		sessions: newSessionStore(d.Cache, sessionTTL),
 		oauth: &oauth2.Config{
 			ClientID:     d.Config.Discord.ClientID,
 			ClientSecret: d.Config.Discord.ClientSecret,

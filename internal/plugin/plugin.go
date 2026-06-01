@@ -12,6 +12,7 @@ import (
 	"context"
 	"log/slog"
 
+	"github.com/dia-bot/dia/internal/cache"
 	"github.com/dia-bot/dia/internal/config"
 	"github.com/dia-bot/dia/internal/discord"
 	"github.com/dia-bot/dia/internal/event"
@@ -19,7 +20,6 @@ import (
 	"github.com/dia-bot/dia/internal/imaging"
 	"github.com/dia-bot/dia/internal/interactions"
 	"github.com/dia-bot/dia/internal/store"
-	"github.com/redis/go-redis/v9"
 )
 
 // Category groups features for the dashboard sidebar.
@@ -46,7 +46,7 @@ type Deps struct {
 	Config  *config.Config
 	Log     *slog.Logger
 	Store   *store.Store
-	Redis   *redis.Client
+	Cache   *cache.Store
 	Discord *discord.Client
 	Imaging *imaging.Renderer
 	Bus     eventbus.Bus

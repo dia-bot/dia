@@ -54,11 +54,11 @@ func main() {
 		fatal(log, "invalid configuration", err)
 	}
 
-	rdb, err := cache.Connect(ctx, cfg.Redis.URL, log)
+	caches, err := cache.Connect(ctx, cfg.Redis.URL, log)
 	if err != nil {
 		fatal(log, "redis", err)
 	}
-	defer rdb.Close()
+	defer caches.Close()
 
 	dg, err := discord.New(cfg.Discord.Token, cfg.Discord.ClientID, log)
 	if err != nil {
@@ -79,7 +79,7 @@ func main() {
 		Config:  cfg,
 		Log:     log,
 		Store:   st,
-		Redis:   rdb,
+		Cache:   caches,
 		Discord: dg,
 		Imaging: imaging.New(cfg.Imaging.FontsDir, log),
 		Bus:     bus,
