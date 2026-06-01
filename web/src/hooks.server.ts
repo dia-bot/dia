@@ -1,7 +1,10 @@
 import type { Handle } from '@sveltejs/kit';
 import { env } from '$env/dynamic/public';
+import { env as privateEnv } from '$env/dynamic/private';
 
-const API = env.PUBLIC_API_URL ?? 'http://localhost:8080';
+// Server→API calls use the internal URL (container hostname) when set, falling
+// back to the public URL for single-origin / local dev setups.
+const API = privateEnv.API_INTERNAL_URL || env.PUBLIC_API_URL || 'http://localhost:8080';
 
 // Resolve the current user from the API using the session cookie. On localhost
 // the cookie is shared across ports; in production put the API and web behind
