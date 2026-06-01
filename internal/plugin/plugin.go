@@ -79,6 +79,7 @@ type Registrar struct {
 	Modals     []ModalRoute
 	Events     map[event.Type][]EventHandler
 	Workers    []NamedWorker
+	Fallback   interactions.Handler // optional dynamic command fallback (custom commands)
 }
 
 // NewRegistrar returns an empty Registrar.
@@ -108,6 +109,10 @@ func (r *Registrar) OnEvent(t event.Type, h EventHandler) {
 func (r *Registrar) Worker(name string, run func(ctx context.Context)) {
 	r.Workers = append(r.Workers, NamedWorker{Name: name, Run: run})
 }
+
+// CommandFallback registers a handler for application commands that have no
+// statically-registered handler (dynamic per-guild custom commands).
+func (r *Registrar) CommandFallback(h interactions.Handler) { r.Fallback = h }
 
 // Plugin is the minimal feature interface.
 type Plugin interface {

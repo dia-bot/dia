@@ -58,6 +58,9 @@ func (b *Bot) Register(ctx context.Context, plugins ...plugin.Plugin) error {
 			b.events[t] = append(b.events[t], hs...)
 		}
 		b.workers = append(b.workers, reg.Workers...)
+		if reg.Fallback != nil {
+			b.router.SetCommandFallback(reg.Fallback)
+		}
 		b.log.Info("registered plugin",
 			"key", p.Info().Key, "commands", len(reg.Commands), "events", len(reg.Events))
 	}
