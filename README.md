@@ -3,22 +3,41 @@
 
   # Dia
 
-  **A modern, open-source Discord bot with a beautifully simple realtime dashboard.**
+  **A modern, open-source Discord bot with a realtime dashboard for teams that want control without bot sprawl.**
 
   [![CI](https://github.com/dia-bot/dia/actions/workflows/ci.yml/badge.svg)](https://github.com/dia-bot/dia/actions/workflows/ci.yml)
+  [![Go Reference](https://pkg.go.dev/badge/github.com/dia-bot/dia.svg)](https://pkg.go.dev/github.com/dia-bot/dia)
+  [![Go Version](https://img.shields.io/github/go-mod/go-version/dia-bot/dia)](https://go.dev/)
+  [![Elixir](https://img.shields.io/badge/Elixir-1.18-4b275f?logo=elixir&logoColor=white)](https://elixir-lang.org/)
+  [![SvelteKit](https://img.shields.io/badge/SvelteKit-2-ff3e00?logo=svelte&logoColor=white)](https://kit.svelte.dev/)
+  [![Docker](https://img.shields.io/badge/Docker-ready-2496ed?logo=docker&logoColor=white)](deploy/docker-compose.yml)
+  [![License](https://img.shields.io/badge/license-MIT-blue.svg)](#license)
 </div>
 
 ---
 
 ## What is Dia?
 
-Dia is a Discord bot you configure from a clean web dashboard. Everything is
-slash-command native, every feature is fully customizable, and the dashboard is
-**realtime**: create a channel in Discord and it shows up in the dropdowns
-instantly. It's designed to be easy to self-host and to scale across machines
-when your communities grow.
+Dia is a Discord bot you configure from a clean web dashboard. It is
+slash-command native, fully self-hostable, and built around realtime guild state:
+create a channel in Discord and it appears in the dashboard without a refresh.
 
-### Features
+It combines the features most communities install as separate bots into one
+operational stack that can run locally, in Docker, or across multiple gateway
+nodes when your communities grow.
+
+## Highlights
+
+| Area | What Dia provides |
+| --- | --- |
+| Dashboard | OAuth login, per-server settings, image previews, and live guild updates |
+| Engagement | Welcome images, rank cards, XP, levels, leaderboards, and role rewards |
+| Roles | Button/select reaction roles and automatic roles on member join |
+| Moderation | Ban, kick, timeout, warn, case logs, spam rules, invite filters, link filters, and banned words |
+| Commands | Custom slash commands designed from the dashboard |
+| Operations | Docker Compose, embedded migrations, Redis cache, Postgres storage, and NATS-backed event delivery |
+
+## Features
 
 - **Welcome**: greet members with custom messages and rendered welcome-card
   images. Pick a preset or design your own with a live preview.
@@ -32,31 +51,29 @@ when your communities grow.
 
 ## Architecture
 
-Dia is split into tiers, each using the right tool for the job:
-
-- **Discord Gateway**: holds sharded WebSocket connections and sends normalized
-  gateway events to `gateway/`.
-- **Gateway (Elixir + Nostrum)**: the BEAM is ideal for thousands of supervised
-  WebSocket shards. It holds the gateway connections, shards across nodes by
-  config, and forwards every relevant event to NATS. No business logic.
-- **NATS JetStream**: carries `discord.events.<type>.<guild_id>` messages for
-  workers and realtime API consumers.
-- **Worker (Go)**: consumes events, runs the feature plugins, routes slash-command
-  interactions, awards XP, runs automod and renders images.
-- **API (Go + gin)**: Discord OAuth2 login with Redis-backed sessions, per-guild
-  configuration, welcome/rank image previews, and a realtime WebSocket that
-  streams guild changes to the dashboard.
-- **Web (SvelteKit + Svelte 5 + Tailwind v4)**: the landing page and dashboard.
-
-### Tech stack
+Dia is split into tiers, each using the right tool for the job. The gateway only
+normalizes Discord events, the worker owns bot behavior, and the API owns the
+dashboard contract.
 
 | Tier | Stack |
 | --- | --- |
-| Gateway | Elixir, Nostrum, gnat (NATS) |
-| Event bus | NATS JetStream |
-| Worker / API | Go, gin, pgx, go-redis, fogleman/gg (imaging), vendored discordgo (REST) |
-| Database | PostgreSQL (durable config) + Redis (cache, sessions, realtime) |
-| Web | SvelteKit 2, Svelte 5 (runes), TypeScript, Tailwind CSS v4 |
+| Discord gateway | Sharded WebSocket connections through Elixir and Nostrum |
+| Event bus | NATS JetStream subjects like `discord.events.<type>.<guild_id>` |
+| Worker | Go plugins for interactions, XP, automod, roles, welcome images, and custom commands |
+| API | Go and gin for OAuth, sessions, config CRUD, previews, and realtime WebSocket updates |
+| Data | PostgreSQL for durable config, Redis for cache, sessions, and live guild snapshots |
+| Web | SvelteKit 2, Svelte 5 runes, TypeScript, and Tailwind CSS v4 |
+
+## Tech stack
+
+| Layer | Tools |
+| --- | --- |
+| Gateway | Elixir, Nostrum, gnat |
+| Backend | Go, gin, pgx, go-redis, goose |
+| Bot SDK | Internal plugin framework plus vendored Discord REST client |
+| Imaging | fogleman/gg and image helpers for welcome and rank cards |
+| Frontend | SvelteKit, Svelte 5, TypeScript, Tailwind CSS |
+| Infrastructure | Docker Compose, Postgres, Redis, NATS JetStream |
 
 ## Quick start (development)
 
