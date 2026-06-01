@@ -1,0 +1,128 @@
+# Full self-hostable Dia stack.
+#
+#   cp .env.example .env   # fill in DISCORD_* + SESSION_SECRET
+#   docker compose -f deploy/docker-compose.yml up -d --build
+#
+# Browser hits the web on :3000 and the API on :8080. For production put both
+# behind one domain via a reverse proxy (so the session cookie stays first-party)
+# and point PUBLIC_API_URL / API_BASE_URL / WEB_BASE_URL at the public URLs.
+
+name: dia
+
+x-discord: &discord
+  DISCORD_TOKEN: ${DISCORD_TOKEN}
+  DISCORD_CLIENT_ID: ${DISCORD_CLIENT_ID}
+  DISCORD_CLIENT_SECRET: ${DISCORD_CLIENT_SECRET}
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: dia
+      POSTGRES_PASSWORD: dia
+      POSTGRES_DB: dia
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dia -d dia"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  nats:
+    image: nats:2.10-alpine
+    command: ["-js", "-sd", "/data", "-m", "8222"]
+    volumes:
+      - natsdata:/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8222/healthz | grep -q ok || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  gateway:
+    build:
+      context: ../gateway
+    environment:
+      <<: *discord
+      NATS_URL: nats://nats:4222
+      NATS_STREAM: DIA_EVENTS
+      DIA_ENV: prod
+      GATEWAY_INTENTS: guilds,guild_members,guild_messages,message_content
+      NODE_COUNT: ${NODE_COUNT:-1}
+      NODE_INDEX: ${NODE_INDEX:-0}
+      SHARD_TOTAL: ${SHARD_TOTAL:-1}
+    depends_on:
+      nats: { condition: service_healthy }
+
+  worker:
+    build:
+      context: ..
+    command: ["/app/worker"]
+    environment:
+      <<: *discord
+      ENV: production
+      DATABASE_URL: postgres://dia:dia@postgres:5432/dia?sslmode=disable
+      REDIS_URL: redis://redis:6379/0
+      NATS_URL: nats://nats:4222
+      NATS_STREAM: DIA_EVENTS
+      FONTS_DIR: /app/assets/fonts
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      nats: { condition: service_healthy }
+
+  api:
+    build:
+      context: ..
+    command: ["/app/api"]
+    environment:
+      <<: *discord
+      ENV: production
+      API_ADDR: ":8080"
+      API_BASE_URL: ${API_BASE_URL:-http://localhost:8080}
+      WEB_BASE_URL: ${WEB_BASE_URL:-http://localhost:3000}
+      SESSION_SECRET: ${SESSION_SECRET}
+      DATABASE_URL: postgres://dia:dia@postgres:5432/dia?sslmode=disable
+      REDIS_URL: redis://redis:6379/0
+      NATS_URL: nats://nats:4222
+      NATS_STREAM: DIA_EVENTS
+      FONTS_DIR: /app/assets/fonts
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      nats: { condition: service_healthy }
+
+  web:
+    build:
+      context: ../web
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      # Browser-facing API/WS (used by the SPA); set to your public URLs in prod.
+      PUBLIC_API_URL: ${PUBLIC_API_URL:-http://localhost:8080}
+      PUBLIC_WS_URL: ${PUBLIC_WS_URL:-ws://localhost:8080}
+      # Internal URL the SvelteKit server uses to reach the API container.
+      API_INTERNAL_URL: http://api:8080
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
+
+volumes:
+  pgdata:
+  redisdata:
+  natsdata:
