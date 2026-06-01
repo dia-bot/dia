@@ -1,0 +1,39 @@
+# Env / secrets
+.env
+.env.*
+!.env.example
+
+# Go
+/bin/
+/dist/
+*.test
+*.out
+coverage.*
+vendor/
+
+# Elixir gateway
+gateway/_build/
+gateway/deps/
+gateway/*.ez
+gateway/erl_crash.dump
+gateway/.elixir_ls/
+gateway/cover/
+
+# SvelteKit / Node (web)
+web/node_modules/
+web/.svelte-kit/
+web/build/
+web/.vercel/
+web/.output/
+node_modules/
+
+# Editors / OS
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.swp
+
+# Local data / docker volumes
+/data/
+/tmp/
