@@ -9,6 +9,11 @@
     "preview": "vite preview",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json"
   },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
+  },
   "dependencies": {
     "@sveltejs/adapter-node": "^5.2.12"
   },
@@ -16,6 +21,7 @@
     "@sveltejs/kit": "^2.20.0",
     "@sveltejs/vite-plugin-svelte": "^5.0.3",
     "@tailwindcss/vite": "^4.1.0",
+    "@types/node": "^25.9.1",
     "lucide-svelte": "^0.469.0",
     "svelte": "^5.20.0",
     "svelte-check": "^4.1.0",

@@ -5,8 +5,8 @@
 
 	let { data, children }: { data: { csrf?: string | null }; children: Snippet } = $props();
 
-	// Make the CSRF token available to the API client (initial + on updates).
-	setCsrf(data.csrf ?? '');
+	// Make the CSRF token available to the API client. Runs before any
+	// user-initiated mutation (reads don't send the token).
 	$effect(() => {
 		setCsrf(data.csrf ?? '');
 	});

@@ -1,14 +1,24 @@
 <script lang="ts">
-	let { checked = $bindable(false), disabled = false }: { checked?: boolean; disabled?: boolean } =
-		$props();
+	let {
+		checked = $bindable(false),
+		disabled = false,
+		onchange
+	}: { checked?: boolean; disabled?: boolean; onchange?: (v: boolean) => void } = $props();
+
+	function handle() {
+		if (disabled) return;
+		checked = !checked;
+		onchange?.(checked);
+	}
 </script>
 
 <button
 	type="button"
 	role="switch"
+	aria-label="Toggle"
 	aria-checked={checked}
 	{disabled}
-	onclick={() => (checked = !checked)}
+	onclick={handle}
 	class="relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors disabled:opacity-50 {checked
 		? 'bg-accent'
 		: 'bg-line-strong'}"

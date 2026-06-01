@@ -17,12 +17,12 @@
 
 	let { children }: { children: Snippet } = $props();
 
-	const store = new GuildStore($page.params.id);
+	const store = new GuildStore($page.params.id ?? '');
 	setContext(GUILD_CTX, store);
 
 	let loadedFor = '';
 	$effect(() => {
-		const gid = $page.params.id;
+		const gid = $page.params.id ?? '';
 		if (gid !== loadedFor) {
 			loadedFor = gid;
 			store.id = gid;
