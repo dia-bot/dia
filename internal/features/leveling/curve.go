@@ -1,6 +1,6 @@
 package leveling
 
-// XP curve helpers (MEE6-style).
+// XP curve helpers (classic polynomial).
 //
 // The XP required to advance from level L to L+1 is:
 //

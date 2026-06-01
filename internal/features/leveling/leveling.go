@@ -1,4 +1,4 @@
-// Package leveling awards members XP for chatting, ranks them on a MEE6-style
+// Package leveling awards members XP for chatting, ranks them on a classic polynomial
 // curve, renders rank cards, and grants configurable level-role rewards.
 package leveling
 
