@@ -1,0 +1,60 @@
+# Dev infrastructure for Dia.
+#
+#   docker compose up -d
+#
+# Spins up the backing services (Postgres, Redis, NATS/JetStream) so you can run
+# the Elixir gateway, the Go services and the SvelteKit web app locally against
+# them. The full self-hostable stack (incl. app containers) lives in
+# deploy/docker-compose.yml.
+
+name: dia-dev
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: dia
+      POSTGRES_PASSWORD: dia
+      POSTGRES_DB: dia
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dia -d dia"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  nats:
+    image: nats:2.10-alpine
+    # -js enables JetStream; -sd sets the storage directory.
+    command: ["-js", "-sd", "/data", "-m", "8222"]
+    ports:
+      - "4222:4222"   # client
+      - "8222:8222"   # monitoring
+    volumes:
+      - natsdata:/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8222/healthz | grep -q ok || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  pgdata:
+  redisdata:
+  natsdata:

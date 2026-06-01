@@ -1,0 +1,104 @@
+// Browser API client for the Dia backend. Uses cookie credentials and a
+// double-submit CSRF token (set once from /api/me via the root layout).
+import { env } from '$env/dynamic/public';
+import type {
+	GuildDetail,
+	GuildListItem,
+	FeatureState
+} from './types';
+
+export const API_URL = env.PUBLIC_API_URL ?? 'http://localhost:8080';
+export const WS_URL = env.PUBLIC_WS_URL ?? 'ws://localhost:8080';
+
+let csrfToken = '';
+export function setCsrf(token: string) {
+	csrfToken = token;
+}
+
+export const loginURL = `${API_URL}/auth/login`;
+
+class ApiError extends Error {
+	constructor(
+		public status: number,
+		message: string
+	) {
+		super(message);
+	}
+}
+
+async function req<T>(method: string, path: string, body?: unknown): Promise<T> {
+	const headers: Record<string, string> = {};
+	if (body !== undefined) headers['Content-Type'] = 'application/json';
+	if (method !== 'GET') headers['X-CSRF-Token'] = csrfToken;
+
+	const res = await fetch(`${API_URL}${path}`, {
+		method,
+		credentials: 'include',
+		headers,
+		body: body !== undefined ? JSON.stringify(body) : undefined
+	});
+	if (!res.ok) {
+		let msg = res.statusText;
+		try {
+			const j = await res.json();
+			if (j?.error) msg = j.error;
+		} catch {
+			/* non-JSON error */
+		}
+		throw new ApiError(res.status, msg);
+	}
+	if (res.status === 204) return undefined as T;
+	return (await res.json()) as T;
+}
+
+export const api = {
+	logout: () => req<void>('POST', '/api/auth/logout'),
+
+	guilds: () => req<{ guilds: GuildListItem[] }>('GET', '/api/guilds'),
+	guild: (id: string) => req<GuildDetail>('GET', `/api/guilds/${id}`),
+
+	feature: (id: string, key: string) =>
+		req<FeatureState>('GET', `/api/guilds/${id}/features/${key}`),
+	saveFeature: (id: string, key: string, enabled: boolean, config: unknown) =>
+		req<{ ok: boolean }>('PUT', `/api/guilds/${id}/features/${key}`, { enabled, config }),
+
+	leaderboard: (id: string) =>
+		req<{ entries: any[] }>('GET', `/api/guilds/${id}/leaderboard`),
+	rewards: (id: string) => req<{ rewards: any[] }>('GET', `/api/guilds/${id}/level-rewards`),
+	setReward: (id: string, level: number, role_id: string, remove_previous: boolean) =>
+		req('PUT', `/api/guilds/${id}/level-rewards`, { level, role_id, remove_previous }),
+	deleteReward: (id: string, level: number) =>
+		req('DELETE', `/api/guilds/${id}/level-rewards/${level}`),
+
+	commands: (id: string) => req<{ commands: any[] }>('GET', `/api/guilds/${id}/commands`),
+	upsertCommand: (id: string, cmd: unknown) =>
+		req('PUT', `/api/guilds/${id}/commands`, cmd),
+	deleteCommand: (id: string, cid: number) =>
+		req('DELETE', `/api/guilds/${id}/commands/${cid}`),
+
+	menus: (id: string) => req<{ menus: any[] }>('GET', `/api/guilds/${id}/reaction-roles`),
+	upsertMenu: (id: string, menu: unknown) =>
+		req<{ id?: number; ok?: boolean }>('PUT', `/api/guilds/${id}/reaction-roles`, menu),
+	deleteMenu: (id: string, mid: number) =>
+		req('DELETE', `/api/guilds/${id}/reaction-roles/${mid}`),
+
+	cases: (id: string) => req<{ cases: any[] }>('GET', `/api/guilds/${id}/cases`),
+	welcomePresets: () => req<{ presets: any[] }>('GET', '/api/welcome/presets')
+};
+
+// previewImage posts a config and returns an object URL for an <img src>.
+export async function previewImage(
+	id: string,
+	kind: 'welcome' | 'rank',
+	payload: unknown
+): Promise<string> {
+	const res = await fetch(`${API_URL}/api/guilds/${id}/${kind}/preview`, {
+		method: 'POST',
+		credentials: 'include',
+		headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+		body: JSON.stringify(payload)
+	});
+	if (!res.ok) throw new ApiError(res.status, 'preview failed');
+	const blob = await res.blob();
+	return URL.createObjectURL(blob);
+}
