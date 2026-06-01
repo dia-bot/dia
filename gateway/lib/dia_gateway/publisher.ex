@@ -106,9 +106,7 @@ defmodule Dia.Gateway.Publisher do
       {:error, reason} ->
         :telemetry.execute(@telemetry_stream, %{count: 1}, %{result: :error})
 
-        Logger.warning(
-          "could not ensure jetstream stream (#{inspect(reason)}); retrying in 2s"
-        )
+        Logger.warning("could not ensure jetstream stream (#{inspect(reason)}); retrying in 2s")
 
         Process.send_after(self(), :ensure_stream, 2000)
         {:noreply, state}

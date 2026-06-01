@@ -34,12 +34,10 @@ defmodule Dia.Gateway.MixProject do
       # NATS client. We use gnat's own JetStream API; the archived
       # :jetstream / mmmries package is intentionally NOT used.
       {:gnat, "~> 1.15"},
-
       {:jason, "~> 1.4"},
 
       # Clustering is compiled in but OFF by default (CLUSTER_ENABLED=true to turn on).
       {:libcluster, "~> 3.4"},
-
       {:telemetry, "~> 1.2"},
       {:telemetry_metrics, "~> 1.0"}
     ]

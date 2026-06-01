@@ -71,10 +71,15 @@ defmodule Dia.Gateway.Application do
         ]
       }
 
-      Supervisor.child_spec(
-        {Gnat.ConnectionSupervisor, [settings, [name: :"#{name}_supervisor"]]},
-        id: :"gnat_conn_sup_#{i}"
-      )
+      # Gnat.ConnectionSupervisor.start_link/2 takes (settings, gen_server_opts)
+      # as two separate args, so we must use an explicit MFA child spec (the
+      # `{Module, arg}` tuple form would pass a single combined arg and break).
+      %{
+        id: :"gnat_conn_sup_#{i}",
+        start:
+          {Gnat.ConnectionSupervisor, :start_link, [settings, [name: :"#{name}_supervisor"]]},
+        type: :worker
+      }
     end
   end
 end

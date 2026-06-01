@@ -34,6 +34,14 @@ defmodule Dia.Gateway.Consumer do
     forward(:GUILD_CREATE, guild_id(guild), ws, Mapper.map_guild(guild), id_of(guild))
   end
 
+  # A guild returning from "unavailable" (e.g. after an outage) is delivered by
+  # Nostrum as GUILD_AVAILABLE, but it carries the same full guild snapshot as
+  # GUILD_CREATE. The Go contract has no GUILD_AVAILABLE type, so we forward it
+  # AS a GUILD_CREATE so the worker still gets the refreshed guild state.
+  def handle_event({:GUILD_AVAILABLE, guild, ws}) do
+    forward(:GUILD_CREATE, guild_id(guild), ws, Mapper.map_guild(guild), id_of(guild))
+  end
+
   # GUILD_UPDATE is delivered as {old_guild, new_guild} (old is nil under NoOp).
   def handle_event({:GUILD_UPDATE, {_old, guild}, ws}) do
     forward(:GUILD_UPDATE, guild_id(guild), ws, Mapper.map_guild(guild), id_of(guild))
@@ -47,6 +55,16 @@ defmodule Dia.Gateway.Consumer do
   def handle_event({:GUILD_DELETE, {old_guild, unavailable}, ws}) do
     gid = if is_map(old_guild), do: id_of(old_guild), else: nil
     data = Mapper.map_guild_delete(%{id: gid, unavailable: unavailable})
+    forward(:GUILD_DELETE, gid, ws, data, gid || dedup_fallback(:GUILD_DELETE, ws))
+  end
+
+  # A guild going unavailable (outage, not a real removal) is delivered as
+  # GUILD_UNAVAILABLE carrying an UnavailableGuild struct WITH its id intact.
+  # We forward it as a GUILD_DELETE with unavailable=true — and unlike the NoOp
+  # GUILD_DELETE path above, the guild id is preserved here.
+  def handle_event({:GUILD_UNAVAILABLE, unavailable_guild, ws}) do
+    gid = id_of(unavailable_guild)
+    data = Mapper.map_guild_delete(%{id: gid, unavailable: true})
     forward(:GUILD_DELETE, gid, ws, data, gid || dedup_fallback(:GUILD_DELETE, ws))
   end
 
