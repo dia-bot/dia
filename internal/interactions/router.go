@@ -28,6 +28,7 @@ type Router struct {
 	commands   map[string]*Command
 	components []prefixRoute
 	modals     []prefixRoute
+	fallback   Handler // invoked for application commands with no registered handler
 
 	client *discord.Client
 	log    *slog.Logger
@@ -63,6 +64,14 @@ func (r *Router) OnModal(prefix string, h Handler) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.modals = append(r.modals, prefixRoute{prefix, h})
+}
+
+// SetCommandFallback sets a handler invoked when an application command has no
+// statically-registered handler (used by dynamic custom commands).
+func (r *Router) SetCommandFallback(h Handler) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.fallback = h
 }
 
 // CommandDefs returns the registered command definitions (for REST registration).
@@ -109,10 +118,14 @@ func (r *Router) Dispatch(ctx context.Context, i *event.Interaction) {
 func (r *Router) dispatchCommand(c *Context, auto bool) error {
 	r.mu.RLock()
 	cmd := r.commands[c.I.Data.Name]
+	fallback := r.fallback
 	r.mu.RUnlock()
 	if cmd == nil {
 		if auto {
 			return nil
+		}
+		if fallback != nil {
+			return fallback(c)
 		}
 		return c.RespondEphemeral("Unknown command.")
 	}

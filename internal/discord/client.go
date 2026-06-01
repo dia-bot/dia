@@ -84,6 +84,21 @@ func (c *Client) SendMessage(channelID string, data *discordgo.MessageSend) (*di
 	return c.s.ChannelMessageSendComplex(channelID, data)
 }
 
+// DeleteMessage deletes a message (used by automod).
+func (c *Client) DeleteMessage(channelID, messageID, reason string) error {
+	return c.s.ChannelMessageDelete(channelID, messageID, discordgo.WithAuditLogReason(reason))
+}
+
+// SendDM opens a DM channel with a user and sends a message.
+func (c *Client) SendDM(userID, content string) error {
+	ch, err := c.s.UserChannelCreate(userID)
+	if err != nil {
+		return err
+	}
+	_, err = c.s.ChannelMessageSend(ch.ID, content)
+	return err
+}
+
 // ── Roles ────────────────────────────────────────────────────
 
 // AddRole grants a role to a member.
