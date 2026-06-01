@@ -6,7 +6,7 @@ import "github.com/dia-bot/dia/internal/imaging"
 type Preset struct {
 	ID         string             `json:"id"`
 	Name       string             `json:"name"`
-	Background imaging.Background  `json:"background"`
+	Background imaging.Background `json:"background"`
 	Accent     string             `json:"accent_color"`
 	Text       string             `json:"text_color"`
 	SubText    string             `json:"sub_text_color"`

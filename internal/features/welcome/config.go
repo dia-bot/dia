@@ -11,7 +11,7 @@ const FeatureKey = "welcome"
 type Config struct {
 	// Join
 	ChannelID  string `json:"channel_id"`
-	Message    string `json:"message"`     // template; placeholders below
+	Message    string `json:"message"` // template; placeholders below
 	UseEmbed   bool   `json:"use_embed"`
 	EmbedColor string `json:"embed_color"` // hex
 	DMMessage  string `json:"dm_message"`  // optional DM template
@@ -34,7 +34,7 @@ type CardConfig struct {
 	Title        string             `json:"title"`
 	Subtitle     string             `json:"subtitle"`
 	Footer       string             `json:"footer"`
-	Background    imaging.Background `json:"background"`
+	Background   imaging.Background `json:"background"`
 	AccentColor  string             `json:"accent_color"`
 	TextColor    string             `json:"text_color"`
 	SubTextColor string             `json:"sub_text_color"`
