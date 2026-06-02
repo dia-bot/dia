@@ -151,8 +151,12 @@ func (s *Server) logMiddleware() gin.HandlerFunc {
 }
 
 func (s *Server) corsMiddleware() gin.HandlerFunc {
+	origins := s.cfg.API.CORSAllowOrigins
+	if len(origins) == 0 {
+		origins = []string{s.cfg.API.WebBaseURL}
+	}
 	return cors.New(cors.Config{
-		AllowOrigins:     []string{s.cfg.API.WebBaseURL},
+		AllowOrigins:     origins,
 		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
 		AllowHeaders:     []string{"Origin", "Content-Type", "X-CSRF-Token"},
 		ExposeHeaders:    []string{"X-Request-ID"},
