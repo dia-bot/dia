@@ -11,11 +11,13 @@ here**, not how to deploy.
 | `gateway/` | Elixir gateway from Nostrum to NATS | Elixir |
 | `cmd/worker` | Go bot worker for events and plugins | Go |
 | `cmd/api` | Go dashboard API with gin | Go |
+| `cmd/seed` | Idempotent dev fixture loader (`make seed`) | Go |
 | `internal/` | Go libraries for event, store, discord, imaging, plugin SDK, interactions, bot, api, realtime, guildstate, and features | Go |
 | `pkg/discordgo` | Vendored Discord library in-module | Go |
 | `migrations/` | Versioned SQL with goose and embedded migrations | SQL |
 | `web/` | SvelteKit landing page and dashboard | TS/Svelte |
-| `deploy/` | docker-compose and Dockerfiles | Docker |
+| `docker-compose.yml` | Local dev stack: infra + app services via compose profiles; `make infra` / `make app` | Docker |
+| `deploy/` | Full self-hostable stack + dev Dockerfiles | Docker |
 
 ## Before you finish: format & check
 
@@ -82,3 +84,6 @@ welcome; it is not required.
   the matching `internal/api/*.go`.
 - Add a dashboard page: `web/src/routes/servers/[id]/<feature>/+page.svelte`,
   following `welcome/+page.svelte`; link it in `[id]/+layout.svelte`.
+- Add dev fixtures: extend `cmd/seed` (reuse the feature's `Default()` so the
+  seeded JSONB can't drift). Keep every write idempotent (upsert or existence
+  guard) — `make seed` is meant to be re-runnable.

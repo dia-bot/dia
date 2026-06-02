@@ -1,15 +1,41 @@
-# Dev infrastructure for Dia.
+# Dia — local development stack (one file, the Makefile picks what runs).
 #
-#   docker compose up -d
+# Service groups are split by Compose PROFILES, so `make` controls what starts
+# by naming services — there's no second compose file:
 #
-# Spins up the backing services (Postgres, Redis, NATS/JetStream) so you can run
-# the Elixir gateway, the Go services and the SvelteKit web app locally against
-# them. The full self-hostable stack (incl. app containers) lives in
-# deploy/docker-compose.yml.
+#   make infra          # postgres + redis + nats         (no profile: shared infra)
+#   make app            # + worker + api + web            (profile: app)
+#   make app GATEWAY=1   # + the Elixir gateway            (profile: gateway)
+#   make seed           # load fixtures (native go run, talks to infra)
+#
+# Because the app/gateway services carry profiles, a bare `docker compose up`
+# (no profile, no service names) starts ONLY the infra — a safe default. The
+# Makefile names services explicitly, which starts them regardless of profile.
+#
+# The full self-hostable PRODUCTION stack (compiled images, no bind mounts) is a
+# separate artifact: deploy/docker-compose.yml, via `make stack`.
+#
+# ── Dev app services (profiles: app / gateway) ───────────────────────────────
+# Source is bind-mounted. The web app has real HMR (Vite). The Go services run
+# via `go run` and the gateway via `mix run` — none auto-reload inside Docker
+# (host→VM file-change events are unreliable), so apply code changes by
+# restarting the service: `make restart SVC=api` (recompiles from the mounted
+# source against the warm cache in a few seconds). Build caches live on named
+# volumes shared across worktrees.
+#
+# ── Credentials / config ─────────────────────────────────────────────────────
+# Set everything in a repo-root `.env` (copy `.env.example`). Each app service
+# loads it via `env_file`, so ANY supported variable you put there (DISCORD_*,
+# SESSION_SECRET, LOG_LEVEL, …) reaches the container. `.env` is optional
+# (required: false) so the api/web still boot on the dev fallbacks. The
+# `environment:` blocks override only what must differ in-network — the infra
+# URLs point at the service names (precedence is environment > env_file), so
+# your credentials pass straight through while the wiring stays correct.
 
 name: dia-dev
 
 services:
+  # ── Infra (no profile: always part of the stack) ───────────────────────────
   postgres:
     image: postgres:16-alpine
     environment:
@@ -54,7 +80,141 @@ services:
       timeout: 3s
       retries: 10
 
+  # ── App (profile: app) — `make app` ────────────────────────────────────────
+  worker:
+    image: dia-go-dev
+    build:
+      context: .
+      dockerfile: deploy/docker/go-dev.Dockerfile
+    profiles: ["app"]
+    command: go run ./cmd/worker
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      # Container-internal overrides (win over .env). Credentials come from .env.
+      ENV: development
+      CGO_ENABLED: "0"
+      DATABASE_URL: postgres://dia:dia@postgres:5432/dia?sslmode=disable
+      REDIS_URL: redis://redis:6379/0
+      NATS_URL: nats://nats:4222
+    volumes:
+      - .:/app
+      - dia_gomodcache:/go/pkg/mod
+      - dia_gocache:/root/.cache/go-build
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+
+  api:
+    image: dia-go-dev
+    build:
+      context: .
+      dockerfile: deploy/docker/go-dev.Dockerfile
+    profiles: ["app"]
+    command: go run ./cmd/api
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      ENV: development
+      CGO_ENABLED: "0"
+      API_ADDR: ":8080"
+      DATABASE_URL: postgres://dia:dia@postgres:5432/dia?sslmode=disable
+      REDIS_URL: redis://redis:6379/0
+      NATS_URL: nats://nats:4222
+      # Dev fallbacks so the api boots before you've written a .env. Your own
+      # values in .env take precedence (compose interpolates them here). A real
+      # OAuth login still needs your DISCORD_CLIENT_ID / DISCORD_CLIENT_SECRET.
+      SESSION_SECRET: ${SESSION_SECRET:-dia-local-dev-session-secret-change-me}
+      DISCORD_CLIENT_ID: ${DISCORD_CLIENT_ID:-000000000000000000}
+      DISCORD_CLIENT_SECRET: ${DISCORD_CLIENT_SECRET:-dev-placeholder-secret}
+    ports:
+      - "8080:8080"
+    volumes:
+      - .:/app
+      - dia_gomodcache:/go/pkg/mod
+      - dia_gocache:/root/.cache/go-build
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+
+  web:
+    image: dia-web-dev
+    build:
+      context: .
+      dockerfile: deploy/docker/web-dev.Dockerfile
+    profiles: ["app"]
+    command: sh -c "pnpm install --no-frozen-lockfile && pnpm dev --host 0.0.0.0 --port 5173"
+    environment:
+      NODE_ENV: development
+      # Browser-facing URLs (used by the SPA in the user's browser).
+      PUBLIC_API_URL: ${PUBLIC_API_URL:-http://localhost:8080}
+      PUBLIC_WS_URL: ${PUBLIC_WS_URL:-ws://localhost:8080/realtime}
+      # Internal URL the SvelteKit SSR server uses to reach the api container
+      # (inside the network localhost would point back at the web container).
+      API_INTERNAL_URL: http://api:8080
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./web:/app
+      - dia_web_node_modules:/app/node_modules
+    depends_on:
+      - api
+
+  # ── Gateway (profile: gateway) — `make app GATEWAY=1` ───────────────────────
+  # Opt-in: needs a real DISCORD_TOKEN; without one it exits immediately (it
+  # IDENTIFYs to Discord), which is why it's not in the default `app` set.
+  gateway:
+    image: dia-gateway-dev
+    build:
+      context: .
+      dockerfile: deploy/docker/gateway-dev.Dockerfile
+    profiles: ["gateway"]
+    command: sh -c "mix deps.get && mix run --no-halt"
+    working_dir: /app
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      # Container-internal overrides; DISCORD_TOKEN + sharding come from .env.
+      MIX_ENV: dev
+      NATS_URL: nats://nats:4222
+      NATS_STREAM: ${NATS_STREAM:-DIA_EVENTS}
+      GATEWAY_INTENTS: ${GATEWAY_INTENTS:-guilds,guild_members,guild_messages,message_content}
+      SHARD_TOTAL: ${SHARD_TOTAL:-1}
+      NODE_COUNT: ${NODE_COUNT:-1}
+      NODE_INDEX: ${NODE_INDEX:-0}
+    volumes:
+      - ./gateway:/app
+      - dia_mix_deps:/app/deps
+      - dia_mix_build:/app/_build
+    depends_on:
+      nats:
+        condition: service_healthy
+
 volumes:
+  # Infra data.
   pgdata:
   redisdata:
   natsdata:
+  # Build caches. Explicit `name:` opts out of the per-project prefix so every
+  # worktree shares one physical volume — populated once, warm everywhere.
+  dia_gomodcache:
+    name: dia_gomodcache
+  dia_gocache:
+    name: dia_gocache
+  dia_web_node_modules:
+    name: dia_web_node_modules
+  dia_mix_deps:
+    name: dia_mix_deps
+  dia_mix_build:
+    name: dia_mix_build

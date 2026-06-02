@@ -21,12 +21,12 @@ type Config struct {
 	Env      string // "development" | "production"
 	LogLevel string // debug | info | warn | error
 
-	Discord DiscordConfig
-	NATS    NATSConfig
+	Discord  DiscordConfig
+	NATS     NATSConfig
 	Postgres PostgresConfig
-	Redis   RedisConfig
-	API     APIConfig
-	Imaging ImagingConfig
+	Redis    RedisConfig
+	API      APIConfig
+	Imaging  ImagingConfig
 }
 
 // DiscordConfig holds Discord application credentials.
@@ -62,6 +62,10 @@ type APIConfig struct {
 	OAuthRedirectPath string
 	SessionSecret     string
 	SessionCookieName string
+	// CORSAllowOrigins are the browser origins permitted by CORS. Empty means
+	// "just WebBaseURL"; set CORS_ALLOW_ORIGINS (comma-separated) to allow more
+	// than one — e.g. localhost plus a Tailscale/LAN address for off-box access.
+	CORSAllowOrigins []string
 }
 
 // ImagingConfig configures the image renderer.
@@ -106,6 +110,7 @@ func Load() (*Config, error) {
 			OAuthRedirectPath: env("OAUTH_REDIRECT_PATH", "/auth/callback"),
 			SessionSecret:     env("SESSION_SECRET", ""),
 			SessionCookieName: env("SESSION_COOKIE_NAME", "dia_session"),
+			CORSAllowOrigins:  splitList(env("CORS_ALLOW_ORIGINS", "")),
 		},
 		Imaging: ImagingConfig{
 			FontsDir: env("FONTS_DIR", "./assets/fonts"),
@@ -165,6 +170,20 @@ func envInt(key string, def int) int {
 		}
 	}
 	return def
+}
+
+// splitList parses a comma-separated value into a trimmed, non-empty slice.
+func splitList(v string) []string {
+	if v == "" {
+		return nil
+	}
+	var out []string
+	for _, p := range strings.Split(v, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // Duration parses an env var as a Go duration with a default fallback.

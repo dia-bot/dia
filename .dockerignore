@@ -1,0 +1,45 @@
+# Keep the Docker build context small and reproducible. Applies to builds whose
+# context is the repo root (the Go images and the dev images). The web/gateway
+# production images use their own subdirectory contexts.
+
+# VCS / editor / OS
+.git
+.github
+.idea
+.vscode
+*.swp
+.DS_Store
+
+# Local env + data
+.env
+.env.*
+!.env.example
+/data
+/tmp
+
+# Go build output (rebuilt in-image)
+/bin
+/dist
+*.test
+*.out
+coverage.*
+
+# Node / SvelteKit (web)
+web/node_modules
+web/.svelte-kit
+web/build
+web/.vercel
+web/.output
+node_modules
+
+# Elixir gateway build artifacts
+gateway/_build
+gateway/deps
+gateway/*.ez
+gateway/erl_crash.dump
+gateway/.elixir_ls
+gateway/cover
+
+# Docs / meta that never affect a build
+*.md
+LICENSE
