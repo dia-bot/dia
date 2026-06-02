@@ -12,19 +12,22 @@ output.
    cp .env.example .env
    ```
 
-2. Start local infrastructure:
+2. Start the whole dev stack (infra + migrations + seed + app) in one command:
 
    ```bash
-   make infra-up
+   make up      # stop later with `make down`
    ```
 
-3. Run the services you need:
+3. Or drive the pieces. `make help` lists every target.
 
    ```bash
-   make api
-   make worker
-   make gateway-deps && make gateway
-   make web-install && make web
+   make infra                          # Postgres + Redis + NATS (shared)
+   make seed                           # idempotent fixtures
+   make app                            # Docker: worker + api (:8080) + web (:5173)
+   # …or run it natively (no containers for the app):
+   make run                            # worker + api together (Ctrl-C stops both)
+   make web                            # SvelteKit dev server on :5173 (separate terminal)
+   make gateway-deps && make gateway   # Elixir gateway, if needed
    ```
 
 ## Checks

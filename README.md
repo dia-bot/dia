@@ -77,27 +77,93 @@ dashboard contract.
 
 ## Quick start (development)
 
+The fastest path is one command: `make up` brings up infra, applies
+migrations, seeds fixtures, and starts the app. `make down` stops it.
+
 ```bash
 cp .env.example .env          # fill in DISCORD_TOKEN, DISCORD_CLIENT_ID/SECRET, SESSION_SECRET
-make infra-up                 # Postgres + Redis + NATS via docker
-
-# in separate terminals:
-make api                      # Go dashboard API on :8080 (runs migrations)
-make worker                   # Go bot worker
-make gateway-deps && make gateway   # Elixir gateway (needs DISCORD_TOKEN)
-make web-install && make web        # SvelteKit dev server on :5173
+make up                       # infra + migrations + seed + app (the whole dev stack)
+# …later…
+make down                     # stop everything (volumes kept; `make reset` wipes them)
 ```
 
-Open http://localhost:5173 and log in with Discord.
+`make up GATEWAY=1` also starts the Elixir gateway; `make up SEED=0` skips the
+fixtures (migrations still run). Prefer to drive the pieces? `make infra` brings
+up the shared stateful services (Postgres, Redis, NATS) and leaves them running,
+`make seed` loads idempotent fixtures, and `make app` starts the app (or run it
+natively). `make help` lists every target.
+
+**Docker.** Source is bind-mounted and build caches are shared across git
+worktrees. The web app has live HMR (Vite); the Go services run via `go run`
+and the gateway via `mix run`, which don't auto-reload inside Docker (host→VM
+file-change events are unreliable), so apply code changes with
+`make restart SVC=api` — it recompiles from the mounted source against the warm
+cache in a few seconds. Every container reads your repo-root `.env` (via
+`env_file`), so credentials and any supported variable you set there flow
+straight through; the in-container infra URLs (Postgres/Redis/NATS) are the only
+values the compose file overrides.
+
+```bash
+make app                      # worker + api (:8080) + web (:5173)
+make app GATEWAY=1            # also start the Elixir gateway (needs DISCORD_TOKEN)
+make restart SVC=api          # recompile + restart api after editing Go code
+make app-logs                 # follow logs   ·   make app-down
+```
+
+**Native (host Go/Node).** Fastest inner loop — no containers for the app.
+
+```bash
+make run                      # worker + api together on the host (Ctrl-C stops both)
+make web                      # SvelteKit dev server on :5173 (separate terminal)
+make gateway-deps && make gateway   # Elixir gateway, if you need it (needs DISCORD_TOKEN)
+# …or run the Go services one at a time:
+make worker                   # just the bot worker
+make api                      # just the API on :8080 (runs migrations)
+```
+
+`make run` and `make web` use plain `go run` / `pnpm dev` on the host (no
+Docker); they talk to the infra started by `make infra` and to each other on
+`localhost`.
+
+To reach the dashboard from another device — over Tailscale or the LAN — set
+`PUBLIC_HOST` to this machine's Tailscale IP or MagicDNS name and pass it to the
+native targets:
+
+```bash
+make run PUBLIC_HOST=$(tailscale ip -4 | head -1)
+make web PUBLIC_HOST=$(tailscale ip -4 | head -1)
+```
+
+The web dev server then binds `0.0.0.0`, the dashboard calls the API at
+`PUBLIC_HOST:8080`, and the API allows that origin via CORS (localhost keeps
+working too). OAuth login from another device additionally needs
+`http://PUBLIC_HOST:8080/auth/callback` registered as a redirect URI in the
+Discord developer portal.
+
+Open http://localhost:5173 and log in with Discord. To make the seeded
+configuration show up for a server you own, point the seeder at it:
+`make seed SEED_GUILD_ID=<your guild id>` (the dashboard only lists guilds the
+bot is in).
 
 ## Quick start (Docker, full stack)
 
+The full self-hostable stack (production-style images for every service) lives
+in `deploy/docker-compose.yml`. `make stack` is a thin wrapper around it that
+also feeds it your repo-root `.env`.
+
 ```bash
 cp .env.example .env          # set DISCORD_* and SESSION_SECRET (openssl rand -hex 32)
-docker compose -f deploy/docker-compose.yml up -d --build
+make stack                    # == docker compose --env-file .env -p dia-stack -f deploy/docker-compose.yml up -d --build
 ```
 
-Dashboard on http://localhost:3000, API on http://localhost:8080.
+Dashboard on http://localhost:3000, API on http://localhost:8080. Stop it with
+`make stack-down`. This runs under its own compose project (`dia-stack`) so it
+never collides with the `make infra` / `make app` dev stack.
+
+> The `--env-file .env` flag matters: because the compose file is under
+> `deploy/`, a bare `docker compose -f deploy/docker-compose.yml up` looks for
+> `deploy/.env` and ignores your repo-root `.env`. Use `make stack` (which adds
+> the flag) or pass `--env-file .env` yourself.
 
 ## Scaling across machines
 
@@ -115,15 +181,18 @@ consumers.
 ## Project structure
 
 ```text
-gateway/         Elixir gateway (Nostrum to NATS)
-cmd/worker       Go bot worker (consumes events, runs plugins)
-cmd/api          Go dashboard API (gin)
-internal/        Go libraries: eventbus, store, discord, imaging, plugin SDK,
-                 interactions, bot runtime, api, realtime, guildstate, features/*
-pkg/discordgo    vendored Discord library (REST + types)
-migrations/      versioned SQL (goose, embedded)
-web/             SvelteKit landing + dashboard
-deploy/          full-stack docker-compose + k8s
+gateway/                 Elixir gateway (Nostrum to NATS)
+cmd/worker               Go bot worker (consumes events, runs plugins)
+cmd/api                  Go dashboard API (gin)
+cmd/seed                 Go dev seeder (idempotent fixture data)
+internal/                Go libraries: eventbus, store, discord, imaging, plugin
+                         SDK, interactions, bot runtime, api, realtime, features/*
+pkg/discordgo            vendored Discord library (REST + types)
+migrations/              versioned SQL (goose, embedded)
+web/                     SvelteKit landing + dashboard
+docker-compose.yml       local dev stack: infra + app services via compose
+                         profiles (`make infra` / `make app`)
+deploy/                  full self-hostable stack (`make stack`) + dev Dockerfiles
 ```
 
 ### Extending Dia
