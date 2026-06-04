@@ -70,7 +70,7 @@
 						item.path
 					)
 						? 'bg-blush font-medium text-accent-ink'
-						: 'text-muted hover:bg-[#faf5f8] hover:text-ink'}"
+						: 'text-muted hover:bg-surface hover:text-ink'}"
 				>
 					<item.icon size={16} class="shrink-0" />
 					<span class="truncate">{item.label}</span>

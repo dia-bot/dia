@@ -1,31 +1,49 @@
 @import 'tailwindcss';
 
 /* ─────────────────────────────────────────────────────────────
-   Dia design system — clean, airy, typographic. White/blush
-   surfaces, hairline blush borders, a single purple accent.
-   The pink→purple gradient is reserved for the logo + brand
-   moments only (never as a page background).
+   Dia design system — clean, dark, near-monochrome (Cursor /
+   Linear-dark grade). A true near-black neutral canvas with crisp
+   near-white text and hairline rules. Color is rare: a single
+   violet accent, brand-cohesive with the pink→purple logo gradient.
+   Grotesk for UI, monospace for technical labels/code. The gradient
+   is reserved for the logo mark, the welcome/rank cards and the one
+   primary CTA — never a page or section background.
    ───────────────────────────────────────────────────────────── */
 @theme {
-	--font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+	--font-sans: 'Hanken Grotesk', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+	--font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', 'Menlo', monospace;
+	/* Big display headlines are set in the heavy sans now — no serif.
+	   --font-display is repointed to Hanken so any leftover
+	   `var(--font-display)` references keep rendering a clean grotesk. */
+	--font-display: 'Hanken Grotesk', ui-sans-serif, system-ui, -apple-system, sans-serif;
 
-	--color-bg: #fbf7f8; /* app chrome (faint blush) */
-	--color-surface: #ffffff; /* cards / panels */
-	--color-ink: #2b2233; /* primary text */
-	--color-muted: #8a7f90; /* secondary text */
-	--color-faint: #b7adb6; /* tertiary / placeholder */
-	--color-line: #efe6ec; /* hairline borders */
-	--color-line-strong: #e4d8e0;
+	/* ── Clean dark, near-monochrome canvas ── */
+	--color-bg: #0a0a0c; /* near-black page canvas, faint cool tint */
+	--color-surface: #141417; /* elevated panel / card */
+	--color-ink: #fafafa; /* primary text — near-white (not pure) */
+	--color-ink-2: #060608; /* repurposed: a DARKER inset, deeper than bg */
+	--color-muted: #a4a4ae; /* secondary text — neutral grey (AA on bg/surface) */
+	--color-faint: #6b6b75; /* tertiary / placeholder / hairline-mono ticks */
+	--color-line: #212126; /* subtle hairline border on dark */
+	--color-line-strong: #2d2d34; /* stronger divider / ring */
 
-	--color-accent: #b244fc; /* brand purple — the one accent */
-	--color-accent-ink: #8b29cf; /* darker for text-on-light */
-	--color-pink: #ff6363; /* brand pink (highlights/CTAs) */
-	--color-blush: #f1dfdf; /* logo background tint */
+	/* Single accent: a clean violet that pops on near-black and harmonises with
+	   the pink→purple logo gradient. accent-ink is a LIGHTER tint for text/links
+	   on dark (text must be lighter than the fill on a dark canvas). */
+	--color-accent: #a472ff; /* solid accent fill — vivid violet, brand-cohesive */
+	--color-accent-ink: #c4a6ff; /* lighter violet for links/labels on dark */
+	--color-pink: #ff6363; /* logo gradient top — gradient/brand moments only */
+	--color-purple: #b244fc; /* logo gradient end — gradient/brand moments only */
+	--color-blush: #211a33; /* soft chip tint → translucent-feel violet wash on dark */
 
-	--color-success: #16a34a;
-	--color-danger: #e5484d;
+	--color-success: #34d399; /* lifted for AA on dark */
+	--color-danger: #ff6166; /* lifted for AA on dark */
 
-	--radius-card: 14px;
+	--radius-card: 16px;
+
+	/* Page container width — the one knob for overall site width.
+	   Used via `max-w-page` on every section/nav/footer wrapper. */
+	--container-page: 96rem; /* 1536px */
 }
 
 * {
@@ -34,6 +52,13 @@
 
 html {
 	background: var(--color-bg);
+	scroll-padding-top: 5rem; /* offset anchor jumps for the sticky nav */
+}
+
+@media (prefers-reduced-motion: no-preference) {
+	html {
+		scroll-behavior: smooth;
+	}
 }
 
 body {
@@ -42,18 +67,41 @@ body {
 	font-family: var(--font-sans);
 	-webkit-font-smoothing: antialiased;
 	-moz-osx-font-smoothing: grayscale;
-	font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
 }
 
-/* Brand gradient — only for the logo mark and deliberate brand text. */
+::selection {
+	background: color-mix(in srgb, var(--color-accent) 30%, transparent);
+}
+
+/* Brand gradient — rose→purple, only for the logo mark and welcome/rank cards. */
 .brand-gradient {
-	background: linear-gradient(135deg, var(--color-pink), var(--color-accent));
+	background: linear-gradient(135deg, #ff6363, #b244fc);
 }
 .brand-text {
-	background: linear-gradient(135deg, var(--color-pink), var(--color-accent));
+	background: linear-gradient(135deg, #ff6363, #b244fc);
 	-webkit-background-clip: text;
 	background-clip: text;
 	color: transparent;
+}
+
+/* Hairline grid — the technical motif. Use sparingly, usually masked.
+   On dark, a faint near-white line reads where a dark hairline would vanish. */
+.grid-lines {
+	background-image:
+		linear-gradient(to right, rgba(255, 255, 255, 0.05) 1px, transparent 1px),
+		linear-gradient(to bottom, rgba(255, 255, 255, 0.05) 1px, transparent 1px);
+	background-size: 56px 56px;
+}
+
+/* Film grain — a tiny fractal-noise tile at very low opacity. On dark we
+   SCREEN-blend so the noise lightens (multiply over near-black is a no-op).
+   pointer-events off so it never intercepts interaction. */
+.grain {
+	background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+	background-size: 160px 160px;
+	opacity: 0.04;
+	mix-blend-mode: screen;
+	pointer-events: none;
 }
 
 @layer components {
@@ -61,12 +109,19 @@ body {
 		background: var(--color-surface);
 		border: 1px solid var(--color-line);
 		border-radius: var(--radius-card);
+		/* Depth on dark = a 1px lit top edge + black ambient, not a dark drop shadow. */
+		box-shadow:
+			inset 0 1px 0 rgba(255, 255, 255, 0.04),
+			0 1px 2px rgba(0, 0, 0, 0.5),
+			0 20px 48px -24px rgba(0, 0, 0, 0.7);
 	}
 
+	/* Technical eyebrow: monospace, uppercase, tracked. */
 	.eyebrow {
+		font-family: var(--font-mono);
 		font-size: 11px;
-		font-weight: 600;
-		letter-spacing: 0.12em;
+		font-weight: 500;
+		letter-spacing: 0.08em;
 		text-transform: uppercase;
 		color: var(--color-muted);
 	}
@@ -78,30 +133,38 @@ body {
 		gap: 0.5rem;
 		height: 2.5rem;
 		padding: 0 1rem;
-		border-radius: 11px;
+		border-radius: 12px;
 		font-size: 0.875rem;
 		font-weight: 600;
 		white-space: nowrap;
-		transition: background-color 0.15s, border-color 0.15s, color 0.15s, opacity 0.15s;
+		transition:
+			background-color 0.15s,
+			border-color 0.15s,
+			color 0.15s,
+			opacity 0.15s;
 		cursor: pointer;
 	}
 	.btn:disabled {
 		opacity: 0.5;
 		cursor: not-allowed;
 	}
+	/* On dark, the neutral "primary" is a near-white pill with dark text. */
 	.btn-primary {
 		background: var(--color-ink);
-		color: #fff;
+		color: var(--color-bg);
 	}
 	.btn-primary:hover:not(:disabled) {
-		background: #3c3142;
+		background: #e6e6ea;
 	}
 	.btn-accent {
 		background: var(--color-accent);
 		color: #fff;
+		box-shadow:
+			inset 0 1px 0 rgba(255, 255, 255, 0.18),
+			0 8px 24px -10px rgba(164, 114, 255, 0.55);
 	}
 	.btn-accent:hover:not(:disabled) {
-		background: #a033ef;
+		background: #b488ff;
 	}
 	.btn-ghost {
 		background: transparent;
@@ -109,24 +172,27 @@ body {
 		border: 1px solid var(--color-line-strong);
 	}
 	.btn-ghost:hover:not(:disabled) {
-		background: #faf5f8;
+		background: var(--color-surface);
+		border-color: rgba(255, 255, 255, 0.14);
 	}
 
 	.input {
 		width: 100%;
 		height: 2.5rem;
 		padding: 0 0.75rem;
-		border-radius: 10px;
+		border-radius: 12px;
 		border: 1px solid var(--color-line-strong);
-		background: #fff;
+		background: var(--color-ink-2);
 		font-size: 0.875rem;
 		color: var(--color-ink);
-		transition: border-color 0.15s, box-shadow 0.15s;
+		transition:
+			border-color 0.15s,
+			box-shadow 0.15s;
 	}
 	.input:focus {
 		outline: none;
 		border-color: var(--color-accent);
-		box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 18%, transparent);
+		box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 16%, transparent);
 	}
 	textarea.input {
 		height: auto;
@@ -153,7 +219,7 @@ body {
 	height: 10px;
 }
 ::-webkit-scrollbar-thumb {
-	background: #e2d6df;
+	background: var(--color-line-strong);
 	border-radius: 999px;
 	border: 3px solid var(--color-bg);
 }

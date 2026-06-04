@@ -169,7 +169,7 @@
 									<span
 										class="rounded-full px-2 py-0.5 text-[11px] font-medium {cmd.enabled
 											? 'bg-blush text-accent-ink'
-											: 'bg-[#f4eef2] text-faint'}"
+											: 'bg-ink-2 text-muted'}"
 									>
 										{cmd.enabled ? 'Enabled' : 'Disabled'}
 									</span>
