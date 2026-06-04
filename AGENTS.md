@@ -68,11 +68,18 @@ welcome; it is not required.
 - **Module path** is `github.com/dia-bot/dia`. Import the Discord library as
   `github.com/dia-bot/dia/pkg/discordgo` (it's vendored in-module; there is **no**
   `replace` directive. Don't add one).
-- **Web theme is clean, not gradient-heavy.** White/blush surfaces, hairline
-  borders, a single purple accent (`--color-accent`). The pink to purple gradient is
-  for the **logo and welcome/rank cards only**. Never a page/dashboard
-  background. Svelte 5 runes (`$state`/`$derived`/`$effect`/`$props`); reuse the
-  components in `web/src/lib/components`.
+- **Web theme is serious & technical, not gradient-heavy.** A neutral
+  charcoal/paper palette (`--color-ink` near-black on `--color-bg`/`--color-surface`),
+  hairline rules (`--color-line`), and a single rose accent (`--color-accent` = #ff6363, the logo's top colour; `--color-accent-ink` is the deeper rose for text/links).
+  Grotesk for UI (`--font-sans` = Hanken Grotesk), monospace for technical labels &
+  code (`--font-mono` = JetBrains Mono); `.eyebrow` is the mono label style. The
+  pink→purple gradient is for the **logo mark and welcome/rank cards only** — never a
+  page/section/dashboard background (use near-black `--color-ink-2` sections for
+  emphasis instead). Marketing site lives in `web/src/routes` (home + `/features/*`,
+  `/pricing`, `/compare`, `/about`, `/contact`, `/terms`, `/privacy`) with shared
+  pieces in `web/src/lib/components/marketing`. Svelte 5 runes
+  (`$state`/`$derived`/`$effect`/`$props`); reuse the components in
+  `web/src/lib/components`.
 - **Never reference other bots/competitors by name** anywhere in code, comments,
   or UI copy.
 
