@@ -128,33 +128,124 @@
 				</div>
 			</Reveal>
 
-			<!-- ── the product, large: a live welcome moment in a real Discord window ── -->
-			<div class="relative mt-20 sm:mt-28">
-				<Reveal delay={280} y={28}>
-					<DiscordWindow
-						channel="welcome"
-						title="Aurora"
-						topic="Say hi to new members"
-						members="1,284 online"
-						channels={['welcome', 'general', 'introductions', 'level-ups', 'roles']}
-					>
-						<DiscordMessage author="maya" color="#1aa179" time="Today at 4:19 PM">
-							just joined, hi everyone 👋
-						</DiscordMessage>
-						<DiscordMessage brand author="Dia" time="Today at 4:19 PM">
-							Welcome to <strong class="font-semibold text-[#f2f3f5]">Aurora</strong>,
-							<span class={mention}>@maya</span>! 🎉 You're our
-							<strong class="font-semibold text-[#f2f3f5]">1,024th</strong> member.
-							<div class="mt-2 max-w-[520px]">
-								<WelcomeCard from="#FF6363" to="#B244FC" angle={45} title="Welcome, {'{user}'}!" subtitle="You're member #{'{count}'} of {'{server}'}" username="maya" count={1024} server="Aurora" />
+			<!-- ── HERO PRODUCT SURFACE: a choreographed join, staged in one real #welcome ──
+				     A hairline "timeline spine" runs down a real gutter column inside the chat
+				     (never a breakout that fights the window's overflow-hidden), pinning three
+				     numbered beats: maya joins → Dia welcomes (the climax) → she grabs roles.
+				     The gradient WelcomeCard is the dominant signature object — lifted on a
+				     dark-correct lit-edge + black ambient + a single 1px brand ring. Staggered
+				     Reveal delays pace the sequence (Reveal self-guards reduced-motion). On
+				     mobile it collapses to a clean single-column transcript so the proof that it
+				     really posted is never hidden. -->
+				<div class="relative mt-20 sm:mt-28">
+					<Reveal delay={260} y={28}>
+						<DiscordWindow
+							channel="welcome"
+							title="Aurora"
+							topic="Say hi to new members"
+							members="1,284 online"
+							channels={['welcome', 'general', 'introductions', 'level-ups', 'roles']}
+						>
+							<!-- 2-track grid: a narrow spine gutter + the message track. The spine
+							     and its numbered nodes live entirely INSIDE this grid (no negative
+							     margins escape the frame), so the window's overflow-hidden never
+							     clips them. Gutter collapses on mobile to a single column. -->
+							<div class="relative grid grid-cols-1 gap-x-3.5 sm:grid-cols-[34px_minmax(0,1fr)]">
+								<!-- the spine: one continuous faint near-white hairline (a dark line
+								     would vanish on dark), with a single brand-lit segment over the
+								     climax beat — the one deliberate colour event on the rail. -->
+								<div aria-hidden="true" class="relative hidden sm:block">
+									<span
+										class="absolute left-1/2 top-4 bottom-4 w-px -translate-x-1/2"
+										style="background: linear-gradient(to bottom, transparent, rgba(255,255,255,0.10) 14%, rgba(255,255,255,0.10) 86%, transparent);"
+									></span>
+									<span
+										class="absolute left-1/2 top-[30%] h-[40%] w-px -translate-x-1/2"
+										style="background: linear-gradient(to bottom, transparent, rgba(178,68,252,0.5), transparent);"
+									></span>
+								</div>
+
+								<!-- message track -->
+								<div class="min-w-0 space-y-3.5">
+									<!-- BEAT 01 — the member arrives (a real Discord join line) -->
+									<Reveal delay={360} y={14}>
+										<div class="relative flex items-center gap-2.5 text-[13px] text-[#949ba4]">
+											<span class="beat-node beat-node-01">01</span>
+											<svg viewBox="0 0 24 24" class="h-4 w-4 shrink-0 text-[#23a55a]" fill="none" aria-hidden="true">
+												<path
+													d="M5 12h11M11 7l5 5-5 5"
+													stroke="currentColor"
+													stroke-width="2"
+													stroke-linecap="round"
+													stroke-linejoin="round"
+												/>
+											</svg>
+											<span><span class="font-medium text-[#dbdee1]">maya</span> joined the server.</span>
+											<span class="ml-auto hidden font-mono text-[11px] text-[#6d7178] sm:inline">4:19 PM</span>
+										</div>
+									</Reveal>
+
+									<Reveal delay={460} y={14}>
+										<DiscordMessage author="maya" color="#1aa179" time="Today at 4:19 PM">
+											just joined, hi everyone 👋
+										</DiscordMessage>
+									</Reveal>
+
+									<!-- BEAT 02 — Dia welcomes her. THE CLIMAX. The bot line reads as a real
+									     grouped message; the WelcomeCard is the dominant object below it —
+									     oversized (max-w-[560px]), nudged toward the left edge of the chat
+									     column for an off-center, placed composition (a small positive
+									     offset only — it never exits the window frame). -->
+									<Reveal delay={580} y={18}>
+										<div class="relative">
+											<span class="beat-node beat-node-lit">02</span>
+											<DiscordMessage brand author="Dia" time="Today at 4:19 PM">
+												Welcome to <strong class="font-semibold text-[#f2f3f5]">Aurora</strong>,
+												<span class={mention}>@maya</span> — you're our
+												<strong class="font-semibold text-[#f2f3f5]">1,024th</strong> member.
+											</DiscordMessage>
+
+											<!-- the signature artifact: the gradient WelcomeCard, dominant -->
+											<div class="mt-2.5 pl-0 sm:pl-[52px]">
+												<div class="relative w-full max-w-[560px] sm:-ml-2 lg:-ml-3">
+													<div class="wc-frame overflow-hidden rounded-2xl">
+														<WelcomeCard
+															from="#FF6363"
+															to="#B244FC"
+															angle={45}
+															title="Welcome, {'{user}'}!"
+															subtitle="You're member #{'{count}'} of {'{server}'}"
+															username="maya"
+															count={1024}
+															server="Aurora"
+														/>
+													</div>
+													<!-- provenance caption — mono, quiet, one tiny solid-accent dot -->
+													<div class="mt-2 flex items-center gap-2 font-mono text-[10.5px] uppercase tracking-[0.08em] text-faint">
+														<span class="h-1 w-1 rounded-full bg-accent"></span>
+														posted automatically
+														<span class="text-line-strong">·</span>
+														<span class="text-muted">~40ms</span>
+													</div>
+												</div>
+											</div>
+										</div>
+									</Reveal>
+
+									<!-- BEAT 03 — she's in, and grabs her roles -->
+									<Reveal delay={760} y={14}>
+										<div class="relative">
+											<span class="beat-node beat-node-03">03</span>
+											<DiscordMessage author="kai" color="#c79bff" time="Today at 4:20 PM">
+												welcome maya! 🙌 grab your roles in <span class={mention}>#roles</span>
+											</DiscordMessage>
+										</div>
+									</Reveal>
+								</div>
 							</div>
-						</DiscordMessage>
-						<DiscordMessage author="kai" color="#c79bff" time="Today at 4:20 PM">
-							welcome maya! 🙌 grab your roles in <span class={mention}>#roles</span>
-						</DiscordMessage>
-					</DiscordWindow>
-				</Reveal>
-			</div>
+						</DiscordWindow>
+					</Reveal>
+				</div>
 		</div>
 	</section>
 
@@ -319,26 +410,83 @@
 		</div>
 	</section>
 
-	<!-- ───────────────────────── Deep: Welcome editor ───────────────────────── -->
-	<section class="border-t border-line bg-surface py-20 sm:py-28">
-		<div class="mx-auto max-w-page px-6">
-			<Reveal>
-				<span class="eyebrow">[ welcome ]</span>
-				<div class="mt-3 grid items-end gap-6 lg:grid-cols-12">
-					<h2 class="text-3xl font-bold tracking-[-0.02em] sm:text-[2.6rem] sm:leading-[1.05] lg:col-span-7">
-						Design welcome cards, element by element.
-					</h2>
-					<p class="text-lg leading-relaxed text-muted lg:col-span-5">
-						Not a fixed template — a real composer. Drag any layer, restyle it, pick a layout, theme
-						it. The editor below is live; try it.
-					</p>
+	<!-- ───────────────────────── Deep: Welcome editor — STUDIO BENCH ─────────────────────────
+	 Near-black bench (bg-ink-2) breaks the run of bg / bg-surface deep sections and lets the
+	 editor's own .card lift forward. Deliberately drops the page's repeated
+	 [eyebrow]+7/5 split-headline+paragraph rhythm: a ruled index line, an oversized offset
+	 headline, and a 3-column mono SPEC LEDGER (drag / layout / theme) that reads as a real
+	 app status bar — not marketing prose. The only colour event is a single 1px lit top edge
+	 on the bench frame; everything else is monochrome hairlines + crop-mark corner ticks. -->
+<section class="relative border-y border-line bg-ink-2 py-20 sm:py-28">
+	<div class="mx-auto max-w-page px-6">
+		<!-- ── Masthead: ruled index + oversized offset headline (no eyebrow/split/paragraph) ── -->
+		<Reveal y={20}>
+			<div>
+				<!-- ruled index line replaces the bracket eyebrow -->
+				<div class="flex items-baseline gap-3">
+					<span class="font-mono text-[12px] font-medium tracking-[0.08em] text-faint">[ welcome ]</span>
+					<span class="h-px flex-1 translate-y-[-1px] bg-line"></span>
+					<span class="font-mono text-[11px] uppercase tracking-[0.14em] text-faint">studio</span>
 				</div>
-			</Reveal>
-			<Reveal delay={80}>
-				<div class="mt-12"><WelcomeEditor /></div>
-			</Reveal>
-		</div>
-	</section>
+
+				<!-- editorial headline: small lead line, then an oversized underscored offset line -->
+				<h2 class="mt-6 font-sans font-black leading-[0.95] tracking-[-0.035em] text-ink">
+					<span class="block text-[clamp(1.85rem,4.4vw,3rem)]">Design welcome cards,</span>
+					<span
+						class="mt-1 block w-fit pb-1 text-[clamp(2.3rem,7vw,5rem)] leading-[0.9] tracking-[-0.04em]"
+						style="border-bottom: 2px solid var(--color-line-strong);"
+						>element <span class="text-muted">by</span> element.</span
+					>
+				</h2>
+			</div>
+		</Reveal>
+
+		<!-- ── Spec ledger: replaces the marketing paragraph. Reads like an app status bar. ── -->
+		<Reveal delay={70} y={16}>
+			<div
+				class="mt-9 flex flex-col divide-y divide-line border-y border-line text-sm sm:flex-row sm:divide-x sm:divide-y-0 sm:border-y-0"
+			>
+				<div class="flex items-baseline gap-3 py-4 pr-8 sm:py-0">
+					<span class="font-mono text-[11px] uppercase tracking-[0.08em] text-faint">drag</span>
+					<span class="text-muted">Move any layer on the canvas, or nudge with arrow keys.</span>
+				</div>
+				<div class="flex items-baseline gap-3 py-4 sm:px-8 sm:py-0">
+					<span class="font-mono text-[11px] uppercase tracking-[0.08em] text-faint">layout</span>
+					<span class="text-muted">Six composable presets — recompose, don't restart.</span>
+				</div>
+				<div class="flex items-baseline gap-3 py-4 sm:py-0 sm:pl-8">
+					<span class="font-mono text-[11px] uppercase tracking-[0.08em] text-faint">theme</span>
+					<span class="text-muted">Swatch the whole card, then tune per element. It's live.</span>
+				</div>
+			</div>
+		</Reveal>
+
+		<!-- ── The bench: editor framed as a file on a drafting table (FILE strip + crop ticks) ── -->
+		<Reveal delay={140} y={26}>
+			<div class="mt-12 sm:mt-14">
+				<!-- spec strip: treats the editor like a file on the bench -->
+				<div class="mb-3 flex items-center gap-3">
+					<span class="font-mono text-[11px] tracking-[0.06em] text-faint">FILE</span>
+					<span class="font-mono text-[12px] text-muted">welcome.card</span>
+					<span class="h-px flex-1 bg-line"></span>
+					<span class="font-mono text-[11px] tracking-[0.06em] text-faint">1024 × 450 · EDITABLE</span>
+				</div>
+
+				<div class="bench-frame relative">
+					<!-- four crop-mark corner ticks (decorative drafting motif, behind interaction) -->
+					<span class="tick tick-tl" aria-hidden="true"></span>
+					<span class="tick tick-tr" aria-hidden="true"></span>
+					<span class="tick tick-bl" aria-hidden="true"></span>
+					<span class="tick tick-br" aria-hidden="true"></span>
+
+					<div class="bench-inset">
+						<WelcomeEditor />
+					</div>
+				</div>
+			</div>
+		</Reveal>
+	</div>
+</section>
 
 	<!-- ───────────────────────── Deep: Leveling ───────────────────────── -->
 	<section class="py-20 sm:py-28">
@@ -494,3 +642,181 @@
 	<CtaSection heading="Add Dia to your community." href={cta} />
 	<SiteFooter />
 </div>
+
+<style>
+	/* ── Hero welcome moment: climax frame + timeline nodes ── */
+	/* Climax frame: the WelcomeCard is lifted above the transcript with
+	   dark-correct elevation only — a 1px lit top edge, a single 1px
+	   brand-tinted ring (the one allowed brand edge), and a black ambient
+	   shadow. No light drop shadow, no gradient wash. */
+	.wc-frame {
+		box-shadow:
+			inset 0 1px 0 rgba(255, 255, 255, 0.06),
+			0 0 0 1px rgba(178, 68, 252, 0.18),
+			0 24px 56px -20px rgba(0, 0, 0, 0.78);
+	}
+
+	/* Timeline node: a small numbered mono tick pinned into the spine gutter,
+	   to the LEFT of the message track but still INSIDE the window frame (the
+	   34px gutter column lives in DiscordWindow's padded message area). */
+	.beat-node {
+		position: absolute;
+		left: -26px;
+		top: 0.375rem;
+		display: none;
+		place-items: center;
+		width: 22px;
+		height: 22px;
+		border-radius: 999px;
+		background: var(--color-bg);
+		border: 1px solid var(--color-line-strong);
+		font-family: var(--font-mono);
+		font-size: 9.5px;
+		font-weight: 600;
+		letter-spacing: 0.04em;
+		color: var(--color-faint);
+		line-height: 1;
+	}
+	/* beat 01 sits centered on its single-line row */
+	.beat-node-01 {
+		position: static;
+		display: none;
+	}
+	@media (min-width: 640px) {
+		.beat-node,
+		.beat-node-01 {
+			display: grid;
+		}
+		.beat-node-01 {
+			position: absolute;
+			left: -26px;
+			top: 50%;
+			transform: translateY(-50%);
+		}
+	}
+	/* the climax node lights with the solid accent — one tiny deliberate colour event */
+	.beat-node-lit {
+		border-color: color-mix(in srgb, var(--color-accent) 60%, transparent);
+		color: var(--color-accent-ink);
+		box-shadow: 0 0 0 4px color-mix(in srgb, var(--color-accent) 12%, transparent);
+	}
+	/* Entrance polish for the lit node ONLY — a gentle ring settle. Reveal
+	   handles the lift; this never transforms the Reveal-lifted element, so
+	   no double-bounce. Fully gated behind reduced-motion. */
+	@media (prefers-reduced-motion: no-preference) {
+		.beat-node-lit {
+			animation: beat-light 0.7s ease-out both;
+			animation-delay: 0.62s;
+		}
+		@keyframes beat-light {
+			from {
+				box-shadow: 0 0 0 0 color-mix(in srgb, var(--color-accent) 0%, transparent);
+				border-color: var(--color-line-strong);
+				color: var(--color-faint);
+			}
+			to {
+				box-shadow: 0 0 0 4px color-mix(in srgb, var(--color-accent) 12%, transparent);
+				border-color: color-mix(in srgb, var(--color-accent) 60%, transparent);
+				color: var(--color-accent-ink);
+			}
+		}
+	}
+
+	/* ── Welcome studio bench: drafting frame + crop ticks ── */
+	/* The bench frame: a hairline gutter around the editor with a single deliberate lit
+	   top-edge — the only place a gradient touches a surface here, and only as a 1px edge
+	   (border-box), never a wash. Depth comes from the .card recipe + this lit edge. */
+	.bench-frame {
+		padding: 14px;
+		border: 1px solid var(--color-line);
+		border-radius: 20px;
+		background:
+			linear-gradient(var(--color-ink-2), var(--color-ink-2)) padding-box,
+			/* 1px lit edge: rose→violet only along the very top, fading to the hairline */
+				linear-gradient(180deg, rgba(255, 99, 99, 0.35), var(--color-line) 2px, var(--color-line))
+				border-box;
+		box-shadow:
+			inset 0 1px 0 rgba(255, 255, 255, 0.04),
+			0 28px 60px -30px rgba(0, 0, 0, 0.8);
+	}
+	@media (min-width: 640px) {
+		.bench-frame {
+			padding: 22px;
+		}
+	}
+	.bench-inset {
+		border-radius: 12px;
+		overflow: hidden;
+	}
+
+	/* Crop-mark corner ticks — drafting motif. Two 1px hairlines per corner. Static. */
+	.tick {
+		position: absolute;
+		width: 14px;
+		height: 14px;
+		pointer-events: none;
+		opacity: 0.7;
+	}
+	.tick::before,
+	.tick::after {
+		content: '';
+		position: absolute;
+		background: var(--color-line-strong);
+	}
+	.tick::before {
+		width: 14px;
+		height: 1px;
+	}
+	.tick::after {
+		width: 1px;
+		height: 14px;
+	}
+	.tick-tl {
+		top: -1px;
+		left: -1px;
+	}
+	.tick-tl::before {
+		top: 0;
+		left: 0;
+	}
+	.tick-tl::after {
+		top: 0;
+		left: 0;
+	}
+	.tick-tr {
+		top: -1px;
+		right: -1px;
+	}
+	.tick-tr::before {
+		top: 0;
+		right: 0;
+	}
+	.tick-tr::after {
+		top: 0;
+		right: 0;
+	}
+	.tick-bl {
+		bottom: -1px;
+		left: -1px;
+	}
+	.tick-bl::before {
+		bottom: 0;
+		left: 0;
+	}
+	.tick-bl::after {
+		bottom: 0;
+		left: 0;
+	}
+	.tick-br {
+		bottom: -1px;
+		right: -1px;
+	}
+	.tick-br::before {
+		bottom: 0;
+		right: 0;
+	}
+	.tick-br::after {
+		bottom: 0;
+		right: 0;
+	}
+</style>

@@ -143,11 +143,7 @@
 		<div class="flex items-center justify-between">
 			<div class="flex items-center gap-2">
 				<h3 class="text-[15px] font-semibold">{mode === 'rank' ? 'Rank' : 'Welcome'} card editor</h3>
-				<span
-					class="inline-flex items-center gap-1.5 rounded-full bg-blush px-2 py-0.5 text-[11px] font-semibold text-accent-ink"
-				>
-					<span class="h-1.5 w-1.5 rounded-full bg-accent"></span> Live
-				</span>
+				<span class="rounded-md border border-line-strong px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.14em] text-faint">editable</span>
 			</div>
 			<button class="btn btn-ghost h-8 px-2.5 text-xs" onclick={reset}>
 				<RotateCcw size={13} /> Reset
