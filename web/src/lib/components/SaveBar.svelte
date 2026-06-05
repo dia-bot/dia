@@ -9,7 +9,7 @@
 
 {#if dirty}
 	<div
-		class="sticky bottom-4 z-20 mt-6 flex items-center justify-between gap-4 rounded-xl border border-[var(--color-line-strong)] bg-white/95 px-4 py-3 shadow-lg backdrop-blur"
+		class="sticky bottom-4 z-20 mt-6 flex items-center justify-between gap-4 rounded-xl border border-line-strong bg-surface/95 px-4 py-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.04),0_8px_28px_-8px_rgba(0,0,0,0.7)] backdrop-blur"
 	>
 		<span class="text-sm text-muted">You have unsaved changes</span>
 		<div class="flex items-center gap-2">

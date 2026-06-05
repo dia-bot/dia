@@ -200,7 +200,7 @@
 
 			{#if cfg.card.enabled}
 				<!-- Live preview -->
-				<div class="mb-5 overflow-hidden rounded-xl border border-line bg-[#f6f1f4]">
+				<div class="mb-5 overflow-hidden rounded-xl border border-line bg-ink-2">
 					{#if previewUrl}
 						<img src={previewUrl} alt="Welcome card preview" class="w-full" />
 					{:else}
@@ -218,7 +218,7 @@
 								onclick={() => applyPreset(p.id)}
 								class="rounded-lg border px-3 py-1.5 text-sm transition-colors {cfg.card.preset === p.id
 									? 'border-accent bg-blush text-accent-ink'
-									: 'border-line-strong hover:bg-[#faf5f8]'}"
+									: 'border-line-strong hover:bg-ink-2'}"
 							>
 								{p.name}
 							</button>

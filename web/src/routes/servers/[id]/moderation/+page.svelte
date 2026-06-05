@@ -80,16 +80,16 @@
 		switch ((action ?? '').toLowerCase()) {
 			case 'ban':
 			case 'unban':
-				return 'border-[color-mix(in_srgb,var(--color-danger)_35%,transparent)] bg-[color-mix(in_srgb,var(--color-danger)_10%,white)] text-[var(--color-danger)]';
+				return 'border-[color-mix(in_srgb,var(--color-danger)_35%,transparent)] bg-[color-mix(in_srgb,var(--color-danger)_18%,transparent)] text-[var(--color-danger)]';
 			case 'kick':
-				return 'border-line-strong bg-[#faf3f5] text-pink';
+				return 'border-[color-mix(in_srgb,var(--color-pink)_35%,transparent)] bg-[color-mix(in_srgb,var(--color-pink)_15%,transparent)] text-[var(--color-pink)]';
 			case 'timeout':
 			case 'mute':
 				return 'border-line-strong bg-blush text-accent-ink';
 			case 'warn':
-				return 'border-line-strong bg-[#fbf3e6] text-[#b07a16]';
+				return 'border-[color-mix(in_srgb,#f5b440_35%,transparent)] bg-[color-mix(in_srgb,#f5b440_15%,transparent)] text-[#f5c66b]';
 			default:
-				return 'border-line-strong bg-[#faf5f8] text-muted';
+				return 'border-line-strong bg-surface text-muted';
 		}
 	}
 
@@ -145,10 +145,10 @@
 					No cases yet. Moderation actions taken in your server will appear here.
 				</div>
 			{:else}
-				<div class="overflow-hidden rounded-xl border border-line">
+				<div class="overflow-x-auto rounded-xl border border-line">
 					<table class="w-full text-sm">
 						<thead>
-							<tr class="border-b border-line bg-[#faf5f8] text-left text-xs uppercase tracking-wide text-muted">
+							<tr class="border-b border-line bg-ink-2 text-left text-xs uppercase tracking-wide text-muted">
 								<th class="px-3 py-2 font-medium">Case</th>
 								<th class="px-3 py-2 font-medium">Action</th>
 								<th class="px-3 py-2 font-medium">User</th>

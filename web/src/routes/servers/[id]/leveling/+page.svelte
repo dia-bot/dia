@@ -281,7 +281,7 @@
 			<h2 class="mb-4 text-base font-semibold">Rank card</h2>
 
 			<!-- Live preview -->
-			<div class="mb-5 overflow-hidden rounded-xl border border-line bg-[#f6f1f4]">
+			<div class="mb-5 overflow-hidden rounded-xl border border-line bg-ink-2">
 				{#if previewUrl}
 					<img src={previewUrl} alt="Rank card preview" class="w-full" />
 				{:else}
@@ -364,7 +364,7 @@
 				<p class="mb-4 text-sm text-muted">No level rewards yet.</p>
 			{/if}
 
-			<div class="rounded-xl border border-line-strong bg-[#faf5f8] p-4">
+			<div class="rounded-xl border border-line bg-ink-2 p-4">
 				<div class="grid items-end gap-3 sm:grid-cols-[7rem_1fr_auto]">
 					<div>
 						<span class="label">Level</span>
