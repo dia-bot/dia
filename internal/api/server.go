@@ -94,9 +94,11 @@ func (s *Server) Handler() http.Handler {
 
 	r.GET("/healthz", func(c *gin.Context) { c.JSON(200, gin.H{"status": "ok", "ws_clients": s.hub.Count()}) })
 
-	// OAuth (no session required).
+	// OAuth (no session required). The browser callback lands on the web origin
+	// (WebBaseURL + OAuthRedirectPath); the web server completes the flow by
+	// calling /auth/exchange server-to-server.
 	r.GET("/auth/login", s.handleLogin)
-	r.GET(s.cfg.API.OAuthRedirectPath, s.handleCallback)
+	r.POST("/auth/exchange", s.handleExchange)
 
 	// Realtime WebSocket (auth checked inside the handler off the cookie).
 	r.GET("/realtime/:id", s.handleRealtime)

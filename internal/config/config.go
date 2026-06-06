@@ -73,9 +73,11 @@ type ImagingConfig struct {
 	FontsDir string
 }
 
-// OAuthRedirectURL returns the absolute Discord OAuth2 callback URL.
+// OAuthRedirectURL returns the absolute Discord OAuth2 callback URL. The callback
+// lands on the dashboard (web) origin, which completes the exchange against the
+// API — so the session cookie is set first-party on the web origin.
 func (a APIConfig) OAuthRedirectURL() string {
-	return strings.TrimRight(a.BaseURL, "/") + a.OAuthRedirectPath
+	return strings.TrimRight(a.WebBaseURL, "/") + a.OAuthRedirectPath
 }
 
 // Load resolves configuration from the environment, loading a .env file first
