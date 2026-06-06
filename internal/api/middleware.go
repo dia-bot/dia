@@ -15,8 +15,9 @@ const (
 	ctxSession = "dia_session"
 	ctxGuildID = "dia_guild_id"
 
-	// Guild permissions that grant dashboard management access.
-	manageMask = discordgo.PermissionAdministrator | discordgo.PermissionManageServer
+	// Guild permission that grants dashboard management access: Administrator only
+	// (the guild owner implicitly qualifies — see canManage).
+	manageMask = discordgo.PermissionAdministrator
 )
 
 func (s *Server) sessionFromCookie(c *gin.Context) (*Session, string, bool) {
