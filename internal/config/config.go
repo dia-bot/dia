@@ -233,9 +233,34 @@ func parseDotEnv(f *os.File) {
 		}
 		key = strings.TrimSpace(key)
 		val = strings.TrimSpace(val)
+		val = stripInlineComment(val)
 		val = strings.Trim(val, `"'`)
 		if _, exists := os.LookupEnv(key); !exists {
 			_ = os.Setenv(key, val)
 		}
 	}
+}
+
+// stripInlineComment removes a trailing "# comment" from a .env value so that
+// lines like `NATS_STREAM=DIA_EVENTS   # stream name` resolve to `DIA_EVENTS`.
+// It is quote-aware: inside a quoted value a '#' is literal, and only a comment
+// after the closing quote is dropped. For an unquoted value a '#' starts a
+// comment only at the value start or when preceded by whitespace, so values
+// that legitimately contain '#' (e.g. a URL fragment like host#frag) survive.
+func stripInlineComment(val string) string {
+	if val == "" {
+		return val
+	}
+	if q := val[0]; q == '"' || q == '\'' {
+		if end := strings.IndexByte(val[1:], q); end >= 0 {
+			return val[:end+2] // keep through the closing quote; drop the rest
+		}
+		return val // unterminated quote: leave untouched
+	}
+	for i := 0; i < len(val); i++ {
+		if val[i] == '#' && (i == 0 || val[i-1] == ' ' || val[i-1] == '\t') {
+			return strings.TrimRight(val[:i], " \t")
+		}
+	}
+	return val
 }
