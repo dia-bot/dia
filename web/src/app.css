@@ -4,8 +4,8 @@
    Dia design system — clean, dark, near-monochrome (Cursor /
    Linear-dark grade). A true near-black neutral canvas with crisp
    near-white text and hairline rules. Color is rare: a single
-   violet accent, brand-cohesive with the pink→purple logo gradient.
-   Grotesk for UI, monospace for technical labels/code. The gradient
+   rose accent (the logo's top colour). Grotesk for UI, monospace
+   for technical labels/code. The pink→purple gradient
    is reserved for the logo mark, the welcome/rank cards and the one
    primary CTA — never a page or section background.
    ───────────────────────────────────────────────────────────── */
@@ -27,14 +27,14 @@
 	--color-line: #212126; /* subtle hairline border on dark */
 	--color-line-strong: #2d2d34; /* stronger divider / ring */
 
-	/* Single accent: a clean violet that pops on near-black and harmonises with
-	   the pink→purple logo gradient. accent-ink is a LIGHTER tint for text/links
-	   on dark (text must be lighter than the fill on a dark canvas). */
-	--color-accent: #a472ff; /* solid accent fill — vivid violet, brand-cohesive */
-	--color-accent-ink: #c4a6ff; /* lighter violet for links/labels on dark */
+	/* Single accent: the logo's rose, which pops on near-black. accent-ink is a
+	   LIGHTER tint for text/links on dark (text must be lighter than the fill on a
+	   dark canvas). The pink→purple gradient is reserved for the logo + cards. */
+	--color-accent: #ff6363; /* solid accent fill — the logo's rose */
+	--color-accent-ink: #ff8a8a; /* lighter rose for links/labels on dark */
 	--color-pink: #ff6363; /* logo gradient top — gradient/brand moments only */
 	--color-purple: #b244fc; /* logo gradient end — gradient/brand moments only */
-	--color-blush: #211a33; /* soft chip tint → translucent-feel violet wash on dark */
+	--color-blush: #2a1a1d; /* soft chip tint → warm rose wash on dark */
 
 	--color-success: #34d399; /* lifted for AA on dark */
 	--color-danger: #ff6166; /* lifted for AA on dark */
@@ -161,10 +161,10 @@ body {
 		color: #fff;
 		box-shadow:
 			inset 0 1px 0 rgba(255, 255, 255, 0.18),
-			0 8px 24px -10px rgba(164, 114, 255, 0.55);
+			0 8px 24px -10px rgba(255, 99, 99, 0.5);
 	}
 	.btn-accent:hover:not(:disabled) {
-		background: #b488ff;
+		background: #ff7d7d;
 	}
 	.btn-ghost {
 		background: transparent;
@@ -210,6 +210,71 @@ body {
 		font-size: 0.75rem;
 		color: var(--color-muted);
 		margin-top: 0.25rem;
+	}
+}
+
+/* Skeleton placeholder — a static block with a single light sweep across it.
+   Premium loading state (Linear/Vercel-grade): no opacity blink, just a calm
+   shimmer. Add a `rounded-*` utility in markup to shape it. */
+@keyframes skeleton-sweep {
+	100% {
+		transform: translateX(100%);
+	}
+}
+@layer components {
+	.skeleton {
+		position: relative;
+		overflow: hidden;
+		border-radius: 6px;
+		background: var(--color-line-strong);
+	}
+	.skeleton::after {
+		content: '';
+		position: absolute;
+		inset: 0;
+		transform: translateX(-100%);
+		background: linear-gradient(
+			90deg,
+			transparent,
+			color-mix(in srgb, var(--color-ink) 8%, transparent),
+			transparent
+		);
+		animation: skeleton-sweep 1.5s ease-in-out infinite;
+	}
+}
+@media (prefers-reduced-motion: reduce) {
+	.skeleton::after {
+		animation: none;
+	}
+}
+
+/* Motion for Bits UI popovers / dropdowns / command dialog. Subtle entrance
+   only (exit is instant) — keeps menus feeling immediate, not animated. */
+@keyframes menu-pop {
+	from {
+		opacity: 0;
+		transform: scale(0.97) translateY(-2px);
+	}
+}
+@keyframes dialog-pop {
+	from {
+		opacity: 0;
+		transform: translate(-50%, 4px) scale(0.985);
+	}
+}
+@layer components {
+	.menu-pop {
+		animation: menu-pop 120ms cubic-bezier(0.16, 1, 0.3, 1);
+		transform-origin: var(--bits-floating-transform-origin, top);
+	}
+	.dialog-pop {
+		animation: dialog-pop 140ms cubic-bezier(0.16, 1, 0.3, 1);
+	}
+}
+@media (prefers-reduced-motion: reduce) {
+	.menu-pop,
+	.dialog-pop {
+		animation: none;
 	}
 }
 
