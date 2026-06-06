@@ -136,6 +136,12 @@ func (c *Config) RequireBot() error {
 // RequireAPI validates the configuration needed by the API service.
 func (c *Config) RequireAPI() error {
 	var missing []string
+	// The API calls Discord's REST API with the bot token (e.g. the live
+	// /users/@me/guilds membership check that backs the dashboard's bot_present
+	// fallback), so the token is required, not optional.
+	if c.Discord.Token == "" {
+		missing = append(missing, "DISCORD_TOKEN")
+	}
 	if c.Discord.ClientID == "" {
 		missing = append(missing, "DISCORD_CLIENT_ID")
 	}
