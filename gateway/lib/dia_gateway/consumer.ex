@@ -173,9 +173,10 @@ defmodule Dia.Gateway.Consumer do
     forward(:INTERACTION_CREATE, gid, ws, data, id_of(interaction))
   end
 
-  # ── Catch-all: ignore everything else (READY, TYPING_START, presence, etc.) ──
-
-  def handle_event(_event), do: :ok
+  # Everything else (READY, TYPING_START, presence, etc.) is ignored by the
+  # `handle_event(_)` catch-all that `use Nostrum.Consumer` injects via
+  # `__before_compile__`, so we deliberately do not define our own — a redundant
+  # catch-all here would shadow Nostrum's and trip the compiler's clause check.
 
   # ── Internal ──────────────────────────────────────────────────────────────────
 
