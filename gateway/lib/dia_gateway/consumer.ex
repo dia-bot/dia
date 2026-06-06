@@ -199,13 +199,27 @@ defmodule Dia.Gateway.Consumer do
 
     case Jason.encode(envelope) do
       {:ok, body} ->
-        Publisher.publish(subject, body, to_string(dedup_id))
+        Publisher.publish(subject, body, dedup_key(type, dedup_id))
 
       {:error, reason} ->
         Logger.error("failed to encode #{type} envelope: #{inspect(reason)}")
         :ok
     end
   end
+
+  # JetStream dedupe is keyed on the `Nats-Msg-Id` header per STREAM (not per
+  # subject), so the id MUST be namespaced by event type. Several types share the
+  # bare guild id as their natural dedupe id — GUILD_CREATE, GUILD_UPDATE,
+  # GUILD_DELETE, and the READY-time GUILD_UNAVAILABLE (forwarded as GUILD_DELETE)
+  # — and on connect Discord delivers the unavailable GUILD_DELETE burst *before*
+  # the GUILD_CREATE snapshot. Without the type prefix the later GUILD_CREATE
+  # collides with that just-published GUILD_DELETE inside the duplicate window and
+  # is silently dropped, so the guild never reaches the worker. Prefixing keeps
+  # per-type idempotency (a redelivered GUILD_CREATE still dedupes) while letting
+  # create/update/delete for one guild coexist.
+  defp dedup_key(_type, nil), do: ""
+  defp dedup_key(_type, ""), do: ""
+  defp dedup_key(type, dedup_id), do: type <> ":" <> to_string(dedup_id)
 
   # Subject guild segment: empty / nil guild id becomes the "0" token.
   defp guild_segment(nil), do: "0"
