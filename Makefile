@@ -210,8 +210,8 @@ fmt: ## gofmt the Go code
 
 ## ── Gateway (Elixir, native) ─────────────────────────────────
 .PHONY: gateway gateway-deps
-gateway: ## Run the Elixir gateway natively
-	cd gateway && mix run --no-halt
+gateway: ## Run the Elixir gateway natively (loads repo-root .env so DISCORD_TOKEN etc. reach mix)
+	set -a; [ -f .env ] && . ./.env; set +a; cd gateway && mix run --no-halt
 
 gateway-deps: ## Fetch Elixir deps
 	cd gateway && mix deps.get
