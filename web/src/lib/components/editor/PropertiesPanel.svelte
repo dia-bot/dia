@@ -12,6 +12,8 @@
 	import ColorPicker from '$lib/components/ui/ColorPicker.svelte';
 	import Toggle from '$lib/components/Toggle.svelte';
 	import ImageInput from '$lib/components/editor/ImageInput.svelte';
+	import { uploadFont, deleteFont } from '$lib/api';
+	import { scrub } from '$lib/actions/scrub';
 	import {
 		Copy,
 		Trash2,
@@ -25,7 +27,10 @@
 		AlignEndHorizontal,
 		AlignHorizontalDistributeCenter,
 		AlignVerticalDistributeCenter,
-		Repeat2
+		Repeat2,
+		Upload,
+		Loader2,
+		X
 	} from 'lucide-svelte';
 
 	const alignButtons: { edge: AlignEdge; label: string; icon: typeof Group }[] = [
@@ -59,6 +64,34 @@
 			(p) => p.width === editor.layout.width && p.height === editor.layout.height
 		)?.label ?? 'custom';
 
+	// ── custom (premium) font upload ──────────────────────────────────────────
+	let fontFile = $state<HTMLInputElement>();
+	let fontBusy = $state(false);
+	let fontErr = $state('');
+	async function onFontUpload(file: File | null | undefined) {
+		if (!file) return;
+		fontBusy = true;
+		fontErr = '';
+		try {
+			const f = await uploadFont(editor.guildId, file);
+			editor.addFont(f);
+			const sel = editor.selected;
+			if (sel?.type === 'text') sel.font_family = f.family; // apply the new font
+		} catch (e) {
+			fontErr = e instanceof Error ? e.message : 'Upload failed';
+		} finally {
+			fontBusy = false;
+		}
+	}
+	async function onFontDelete(family: string) {
+		try {
+			await deleteFont(editor.guildId, family);
+			editor.removeFont(family);
+		} catch {
+			/* leave it; the next list refresh will reconcile */
+		}
+	}
+
 	function setBgType(t: BackgroundType) {
 		const bg = editor.layout.background;
 		bg.type = t;
@@ -82,14 +115,18 @@
 
 {#snippet num(label: string, value: number, set: (n: number) => void, opts: { min?: number; step?: number } = {})}
 	<label class="flex items-center gap-2">
-		<span class="w-4 shrink-0 text-xs text-muted">{label}</span>
+		<span
+			use:scrub={{ get: () => value, set, step: opts.step ?? 1, min: opts.min }}
+			title="Drag to change"
+			class="w-4 shrink-0 cursor-ew-resize select-none text-xs text-muted hover:text-ink"
+		>{label}</span>
 		<input
 			type="number"
 			value={value ?? 0}
 			min={opts.min}
 			step={opts.step ?? 1}
 			oninput={(e) => set(e.currentTarget.valueAsNumber || 0)}
-			class="h-8 w-full rounded-md border border-line-strong bg-ink-2 px-2 text-sm tabular-nums text-ink outline-none transition-colors hover:border-faint focus:border-accent"
+			class="h-8 w-full rounded-lg border border-line-strong bg-ink-2 px-2.5 text-sm tabular-nums text-ink outline-none transition-all hover:border-faint focus:border-faint focus:ring-2 focus:ring-line-strong"
 		/>
 	</label>
 {/snippet}
@@ -117,7 +154,7 @@
 			{step}
 			value={value ?? 0}
 			oninput={(e) => set(e.currentTarget.valueAsNumber || 0)}
-			class="h-8 w-14 shrink-0 rounded-md border border-line-strong bg-ink-2 px-1.5 text-center text-xs tabular-nums text-ink outline-none transition-colors hover:border-faint focus:border-accent"
+			class="h-8 w-14 shrink-0 rounded-lg border border-line-strong bg-ink-2 px-1.5 text-center text-xs tabular-nums text-ink outline-none transition-all hover:border-faint focus:border-faint focus:ring-2 focus:ring-line-strong"
 		/>
 	</div>
 {/snippet}
@@ -133,15 +170,15 @@
 
 <!-- Generic 2..3-way segmented control. items: [value, label][] -->
 {#snippet segmented(current: string, items: [string, string][], set: (v: string) => void)}
-	<div class="flex rounded-md border border-line-strong bg-ink-2 p-0.5">
+	<div class="flex gap-0.5 rounded-lg border border-line-strong bg-ink-2 p-1">
 		{#each items as [val, lbl] (val)}
 			<button
 				type="button"
 				onclick={() => set(val)}
-				class="flex-1 rounded-[5px] px-2 py-1 text-xs font-medium capitalize transition-colors {current ===
+				class="flex-1 rounded-md px-2 py-1 text-xs font-medium capitalize transition-all duration-100 {current ===
 				val
-					? 'bg-surface text-ink shadow-sm'
-					: 'text-muted hover:text-ink'}"
+					? 'bg-surface text-ink shadow-sm ring-1 ring-line-strong'
+					: 'text-muted hover:bg-surface/50 hover:text-ink'}"
 			>
 				{lbl}
 			</button>
@@ -343,10 +380,11 @@
 						rows="3"
 						value={layer.text ?? ''}
 						oninput={(e) => (layer.text = e.currentTarget.value)}
-						class="w-full resize-y rounded-md border border-line-strong bg-ink-2 px-2.5 py-2 text-sm leading-snug text-ink outline-none transition-colors hover:border-faint focus:border-accent"
+						class="w-full resize-y rounded-lg border border-line-strong bg-ink-2 px-2.5 py-2 text-sm leading-snug text-ink outline-none transition-all hover:border-faint focus:border-faint focus:ring-2 focus:ring-line-strong"
 					></textarea>
 					<p class="mt-1 text-[11px] text-faint">
-						Variables: <span class="font-mono text-muted">{'{user}'} {'{count}'} {'{user.avatar}'}</span>
+						Variables: <span class="font-mono text-muted">{'{{.User.Username}}'} {'{{.Count}}'} {'{{.User.Avatar}}'}</span> · supports
+						<span class="font-mono text-muted">{'{{if}}'}</span> logic
 					</p>
 				</div>
 				<div class="flex items-center justify-between gap-3">
@@ -356,11 +394,54 @@
 							bind:value={() => layer.font_family ?? '', (v) => (layer.font_family = v)}
 							options={[
 								{ value: '', label: 'Default (Lato)' },
-								...CARD_FONTS.map((f) => ({ value: f.family, label: f.family }))
+								...CARD_FONTS.map((f) => ({ value: f.family, label: f.family })),
+								...editor.customFonts.map((f) => ({ value: f.family, label: `${f.family} (custom)` }))
 							]}
 						/>
 					</div>
 				</div>
+				<!-- Custom (premium) fonts: upload + manage -->
+				{#if editor.premium}
+					<div class="space-y-1.5">
+						<button
+							type="button"
+							onclick={() => fontFile?.click()}
+							disabled={fontBusy}
+							class="flex w-full items-center justify-center gap-1.5 rounded-md border border-line-strong px-2 py-1.5 text-xs font-medium text-muted transition-colors hover:border-faint hover:text-ink disabled:opacity-50"
+						>
+							{#if fontBusy}<Loader2 size={13} class="animate-spin" />{:else}<Upload size={13} />{/if}
+							Upload font (TTF/OTF)
+						</button>
+						<input
+							bind:this={fontFile}
+							type="file"
+							accept=".ttf,.otf,font/ttf,font/otf"
+							class="hidden"
+							onchange={(e) => {
+								onFontUpload(e.currentTarget.files?.[0]);
+								e.currentTarget.value = '';
+							}}
+						/>
+						{#if fontErr}<p class="text-[11px] text-danger">{fontErr}</p>{/if}
+						{#each editor.customFonts as f (f.family)}
+							<div class="flex items-center justify-between gap-2 rounded-md bg-ink-2 px-2 py-1 text-[11px] text-muted">
+								<span class="truncate" style="font-family:'{f.family}', sans-serif;">{f.family}</span>
+								<button
+									type="button"
+									onclick={() => onFontDelete(f.family)}
+									aria-label="Remove font"
+									class="grid h-5 w-5 shrink-0 place-items-center rounded text-faint transition-colors hover:bg-surface hover:text-danger"
+								>
+									<X size={12} />
+								</button>
+							</div>
+						{/each}
+					</div>
+				{:else}
+					<p class="text-[11px] text-faint">
+						Upload your own fonts with <span class="text-accent-ink">Premium</span>.
+					</p>
+				{/if}
 				<div class="flex items-center justify-between gap-3">
 					{@render row('Size')}
 					{@render num('px', layer.font_size ?? 0, (n) => (layer.font_size = n), { min: 1 })}
@@ -407,10 +488,10 @@
 						value={layer.src ?? ''}
 						onChange={(v) => (layer.src = v)}
 						guildId={editor.guildId}
-						placeholder="https://… or {'{user.avatar}'}"
+						placeholder="https://… or {'{{.User.Avatar}}'}"
 					/>
 					<span class="mt-1 block text-[11px] text-faint">
-						Supports <span class="font-mono text-muted">{'{user.avatar}'}</span>
+						Supports <span class="font-mono text-muted">{'{{.User.Avatar}}'}</span>
 					</span>
 				</div>
 				<div class="flex items-center justify-between gap-3">
@@ -454,7 +535,7 @@
 						value={layer.src ?? ''}
 						onChange={(v) => (layer.src = v)}
 						guildId={editor.guildId}
-						placeholder="{'{user.avatar}'} or upload"
+						placeholder="{'{{.User.Avatar}}'} or upload"
 					/>
 				</div>
 				<div class="flex items-center justify-between gap-3">

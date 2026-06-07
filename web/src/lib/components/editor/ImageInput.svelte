@@ -59,7 +59,7 @@
 			{placeholder}
 			{value}
 			oninput={(e) => onChange(e.currentTarget.value)}
-			class="h-8 w-full min-w-0 rounded-md border border-line-strong bg-ink-2 px-2 text-sm text-ink outline-none transition-colors hover:border-faint focus:border-accent"
+			class="h-8 w-full min-w-0 rounded-lg border border-line-strong bg-ink-2 px-2.5 text-sm text-ink outline-none transition-all hover:border-faint focus:border-faint focus:ring-2 focus:ring-line-strong"
 		/>
 		{#if guildId}
 			<button

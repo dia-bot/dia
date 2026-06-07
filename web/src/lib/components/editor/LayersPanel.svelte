@@ -111,19 +111,22 @@
 	</header>
 
 	<!-- Canvas row: click to deselect everything and edit the document (size + background). -->
-	<button
-		type="button"
-		onclick={() => editor.select(null)}
-		class="flex h-8 w-full shrink-0 items-center gap-2 border-b border-line px-3 text-[13px] outline-none transition-colors {canvasActive
-			? 'bg-surface text-ink'
-			: 'text-muted hover:bg-surface/50'}"
-	>
-		<Frame size={14} class="shrink-0 {canvasActive ? 'text-accent-ink' : 'text-faint'}" />
-		<span class="flex-1 text-left">Canvas</span>
-		<span class="font-mono text-[10px] tabular-nums text-faint">
-			{editor.layout.width}×{editor.layout.height}
-		</span>
-	</button>
+	<div class="px-1.5 pt-1.5">
+		<button
+			type="button"
+			onclick={() => editor.select(null)}
+			class="group flex h-8 w-full items-center gap-2 rounded-lg px-2 text-[13px] outline-none transition-all duration-100 {canvasActive
+				? 'bg-surface text-ink ring-1 ring-line-strong'
+				: 'text-muted hover:bg-surface/60'}"
+		>
+			<Frame size={14} class="shrink-0 {canvasActive ? 'text-ink' : 'text-faint group-hover:text-muted'}" />
+			<span class="flex-1 text-left font-medium">Canvas</span>
+			<span class="font-mono text-[10px] tabular-nums text-faint">
+				{editor.layout.width}×{editor.layout.height}
+			</span>
+		</button>
+	</div>
+	<div class="mx-3 my-1.5 h-px bg-line"></div>
 
 	<div class="min-h-0 flex-1 overflow-y-auto py-1">
 		{#if ordered.length === 0}
@@ -144,9 +147,9 @@
 									editor.select(layer.id);
 								}
 							}}
-							class="group flex h-8 cursor-pointer items-center gap-1.5 pr-1 pl-1.5 text-[13px] outline-none transition-[background-color,opacity] {selected
-								? 'bg-surface text-ink'
-								: 'text-muted hover:bg-surface/50'} {dragId === layer.id ? 'opacity-40' : ''}"
+							class="group mx-1.5 flex h-8 cursor-pointer items-center gap-1.5 rounded-lg pr-1 pl-1 text-[13px] outline-none transition-all duration-100 {selected
+								? 'bg-surface text-ink ring-1 ring-line-strong'
+								: 'text-muted hover:bg-surface/60'} {dragId === layer.id ? 'opacity-40' : ''}"
 						>
 							<!-- drag grip -->
 							<button
@@ -162,8 +165,8 @@
 								<GripVertical size={13} />
 							</button>
 
-							<Icon size={14} class="shrink-0 {selected ? 'text-accent-ink' : 'text-faint'}" />
-							<span class="min-w-0 flex-1 truncate {layer.hidden ? 'opacity-50' : ''}">{layer.name}</span>
+							<Icon size={14} class="shrink-0 {selected ? 'text-ink' : 'text-faint group-hover:text-muted'}" />
+							<span class="min-w-0 flex-1 truncate {layer.hidden ? 'opacity-50' : ''} {selected ? 'font-medium' : ''}">{layer.name}</span>
 
 							<div class="flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 {selected ? 'opacity-100' : ''}">
 								<button
@@ -207,7 +210,7 @@
 				{/each}
 
 				{#if dragId !== null}
-					<div class="pointer-events-none absolute inset-x-1 h-0.5 -translate-y-1/2 rounded-full bg-accent" style="top:{dropGap * ROW}px"></div>
+					<div class="pointer-events-none absolute inset-x-2 h-0.5 -translate-y-1/2 rounded-full bg-ink" style="top:{dropGap * ROW}px"></div>
 				{/if}
 			</ul>
 		{/if}
