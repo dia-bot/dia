@@ -51,8 +51,9 @@ export function clampCanvas(w: number, h: number): { width: number; height: numb
 	const px = width * height;
 	if (px > MAX_CANVAS_PIXELS) {
 		const s = Math.sqrt(MAX_CANVAS_PIXELS / px);
-		width = Math.max(MIN_CANVAS, Math.round(width * s));
-		height = Math.max(MIN_CANVAS, Math.round(height * s));
+		// floor (not round) to match Go's int() truncation and stay within budget
+		width = Math.max(MIN_CANVAS, Math.floor(width * s));
+		height = Math.max(MIN_CANVAS, Math.floor(height * s));
 	}
 	return { width, height };
 }
@@ -92,6 +93,7 @@ export interface Layer {
 	text?: string; // supports {variables}
 	font_size?: number;
 	font_weight?: number; // 400 | 700
+	font_family?: string; // card-font family name ('' = default); see layout/fonts.ts
 	color?: string; // hex
 	align?: Align;
 	// image / avatar
