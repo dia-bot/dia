@@ -86,15 +86,14 @@ func (r *Renderer) drawBackground(ctx context.Context, dc *gg.Context, w, h int,
 	dc.Fill()
 }
 
-// gradientLine returns the start/end points of a gradient at angle (degrees)
-// spanning the canvas.
+// gradientLine returns the start/end points of a gradient at angle (degrees),
+// using the CSS linear-gradient convention so it matches the dashboard's
+// `linear-gradient(Ndeg, …)` preview exactly: 0deg points up, increasing
+// clockwise (direction vector = (sin, -cos)).
 func gradientLine(w, h, angle float64) (x0, y0, x1, y1 float64) {
-	if angle == 0 {
-		angle = 45 // pleasant default diagonal
-	}
 	rad := angle * math.Pi / 180
 	cx, cy := w/2, h/2
-	dx, dy := math.Cos(rad), math.Sin(rad)
+	dx, dy := math.Sin(rad), -math.Cos(rad)
 	half := math.Max(w, h)
 	return cx - dx*half, cy - dy*half, cx + dx*half, cy + dy*half
 }
