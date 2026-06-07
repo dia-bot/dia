@@ -344,6 +344,18 @@ func (s *Server) guildName(c *gin.Context) string {
 	return "your server"
 }
 
+// guildIconURL returns the guild's icon CDN URL (or "" if it has none), for the
+// {{.Server.Icon}} card variable.
+func (s *Server) guildIconURL(c *gin.Context) string {
+	gid := guildID(c)
+	if gidInt, ok := event.ParseID(gid); ok {
+		if g, err := s.store.Guilds.Get(c.Request.Context(), gidInt); err == nil {
+			return discord.GuildIconURL(gid, g.Icon, 256)
+		}
+	}
+	return ""
+}
+
 func orDefault(s, def string) string {
 	if s == "" {
 		return def
