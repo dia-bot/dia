@@ -14,12 +14,13 @@ import (
 // with NewVars; the fields are intentionally private so apply() stays the single
 // place that knows how a member/guild maps to placeholder values.
 type Vars struct {
-	user    event.User
-	guildID string
-	server  string
-	count   int
-	lookup  templating.Lookup // read-only guild data for getRole/getChannel; nil in previews
-	fonts   map[string]string // guild custom fonts (family → URL) for the card renderer
+	user       event.User
+	guildID    string
+	server     string
+	serverIcon string // guild icon CDN URL ({{.Guild.Icon}})
+	count      int
+	lookup     templating.Lookup // read-only guild data for getRole/getChannel; nil in previews
+	fonts      map[string]string // guild custom fonts (family → URL) for the card renderer
 }
 
 // NewVars builds a template context for a member in a guild.
@@ -38,6 +39,12 @@ func (v Vars) WithLookup(l templating.Lookup) Vars {
 // that uses an uploaded font renders with it.
 func (v Vars) WithFonts(f map[string]string) Vars {
 	v.fonts = f
+	return v
+}
+
+// WithServerIcon attaches the guild icon URL ({{.Guild.Icon}}).
+func (v Vars) WithServerIcon(url string) Vars {
+	v.serverIcon = url
 	return v
 }
 
@@ -128,6 +135,7 @@ func (v Vars) Map() map[string]string {
 		"{user}":          v.displayName(),
 		"{server.id}":     v.guildID,
 		"{server}":        v.server,
+		"{server.icon}":   v.serverIcon,
 		"{count.ordinal}": ordinal(v.count),
 		"{count}":         strconv.Itoa(v.count),
 	}

@@ -62,7 +62,8 @@ func (s *Server) handleWelcomeTest(c *gin.Context) {
 	fonts, _ := s.store.Uploads.FontMap(c.Request.Context(), gidInt)
 	v := welcome.NewVars(user, gid, s.guildName(c), count).
 		WithLookup(tmpllookup.New(c.Request.Context(), s.gstate, gid)).
-		WithFonts(fonts)
+		WithFonts(fonts).
+		WithServerIcon(s.guildIconURL(c))
 
 	send, err := welcome.BuildMessage(c.Request.Context(), s.imaging, mc, v)
 	if err != nil {

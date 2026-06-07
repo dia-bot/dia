@@ -18,7 +18,8 @@ type Layer struct {
 	Opacity  *float64 `json:"opacity"`            // pointer so an explicit 0 (fully transparent) is distinct from unset (=1)
 	Rotation float64  `json:"rotation,omitempty"` // degrees, about the layer centre
 	Hidden   bool     `json:"hidden"`
-	Group    string   `json:"group,omitempty"` // soft-group id (editor-only; ignored when rendering)
+	Group    string   `json:"group,omitempty"`  // soft-group id (editor-only; ignored when rendering)
+	Locked   bool     `json:"locked,omitempty"` // editor-only; ignored when rendering
 
 	// text
 	Text       string  `json:"text,omitempty"`
@@ -45,6 +46,12 @@ type Layer struct {
 	// path (pen / pencil)
 	Nodes  []PathNode `json:"nodes,omitempty"`
 	Closed bool       `json:"closed,omitempty"`
+
+	// masking ("use as mask"): Clip marks this layer as a stencil that clips the
+	// layers ABOVE it (until the next mask). ClipMode = "alpha" | "luminance".
+	Clip       bool   `json:"clip,omitempty"`
+	ClipMode   string `json:"clip_mode,omitempty"`
+	ClipInvert bool   `json:"clip_invert,omitempty"` // hide inside the shape / show outside
 }
 
 // PathNode is a bezier anchor with its two cubic control handles (absolute

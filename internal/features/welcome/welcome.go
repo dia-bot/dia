@@ -63,8 +63,8 @@ func handleJoin(ctx context.Context, d plugin.Deps, env *event.Envelope) error {
 	if err != nil || !enabled || !cfg.Welcome.Enabled {
 		return err
 	}
-	name, count := guildInfo(ctx, d, gid, ma.MemberCount)
-	v := Vars{user: ma.Member.User, guildID: ma.GuildID, server: name, count: count, lookup: tmpllookup.New(ctx, d.GuildState, ma.GuildID), fonts: guildFonts(ctx, d, gid)}
+	name, count, icon := guildInfo(ctx, d, gid, ma.MemberCount)
+	v := Vars{user: ma.Member.User, guildID: ma.GuildID, server: name, serverIcon: discord.GuildIconURL(ma.GuildID, icon, 256), count: count, lookup: tmpllookup.New(ctx, d.GuildState, ma.GuildID), fonts: guildFonts(ctx, d, gid)}
 	return sendConfigured(ctx, d, cfg.Welcome, v)
 }
 
@@ -78,8 +78,8 @@ func handleLeave(ctx context.Context, d plugin.Deps, env *event.Envelope) error 
 	if err != nil || !enabled || !cfg.Goodbye.Enabled {
 		return err
 	}
-	name, count := guildInfo(ctx, d, gid, mr.MemberCount)
-	v := Vars{user: mr.User, guildID: mr.GuildID, server: name, count: count, lookup: tmpllookup.New(ctx, d.GuildState, mr.GuildID), fonts: guildFonts(ctx, d, gid)}
+	name, count, icon := guildInfo(ctx, d, gid, mr.MemberCount)
+	v := Vars{user: mr.User, guildID: mr.GuildID, server: name, serverIcon: discord.GuildIconURL(mr.GuildID, icon, 256), count: count, lookup: tmpllookup.New(ctx, d.GuildState, mr.GuildID), fonts: guildFonts(ctx, d, gid)}
 	return sendConfigured(ctx, d, cfg.Goodbye, v)
 }
 
@@ -95,8 +95,8 @@ func handleTest(c *interactions.Context, d plugin.Deps) error {
 	if err := c.Defer(true); err != nil {
 		return err
 	}
-	name, count := guildInfo(c.Ctx, d, gid, 0)
-	v := Vars{user: c.User, guildID: c.GuildID, server: name, count: count, lookup: tmpllookup.New(c.Ctx, d.GuildState, c.GuildID), fonts: guildFonts(c.Ctx, d, gid)}
+	name, count, icon := guildInfo(c.Ctx, d, gid, 0)
+	v := Vars{user: c.User, guildID: c.GuildID, server: name, serverIcon: discord.GuildIconURL(c.GuildID, icon, 256), count: count, lookup: tmpllookup.New(c.Ctx, d.GuildState, c.GuildID), fonts: guildFonts(c.Ctx, d, gid)}
 	if err := sendConfigured(c.Ctx, d, cfg.Welcome, v); err != nil {
 		_, e := c.FollowupContent("Failed to send test welcome: " + err.Error())
 		return e
@@ -218,9 +218,9 @@ func renderCard(ctx context.Context, img *imaging.Renderer, card CardConfig, v V
 	})
 }
 
-func guildInfo(ctx context.Context, d plugin.Deps, guildID int64, fallbackCount int) (name string, count int) {
+func guildInfo(ctx context.Context, d plugin.Deps, guildID int64, fallbackCount int) (name string, count int, icon string) {
 	if g, err := d.Store.Guilds.Get(ctx, guildID); err == nil {
-		name, count = g.Name, g.MemberCount
+		name, count, icon = g.Name, g.MemberCount, g.Icon
 	}
 	if fallbackCount > 0 {
 		count = fallbackCount
@@ -228,7 +228,7 @@ func guildInfo(ctx context.Context, d plugin.Deps, guildID int64, fallbackCount 
 	if name == "" {
 		name = "the server"
 	}
-	return name, count
+	return name, count, icon
 }
 
 // colorInt converts a #RRGGBB string to a Discord embed color int.

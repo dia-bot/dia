@@ -2,6 +2,7 @@ package imaging
 
 import (
 	"context"
+	"image"
 	"image/color"
 	"math"
 	"strings"
@@ -128,12 +129,11 @@ func (r *Renderer) RenderLayout(ctx context.Context, in layout.Layout, vars map[
 	// Card data root (pure Go template): {{.User.Username}}, {{.User.Avatar}}, …
 	data := templating.DataFromVars(vars)
 
-	for i, l := range in.Layers {
-		if i >= 50 { // safety backstop; the editor caps layers well below this
-			break
-		}
+	// draw paints a single layer onto the given context. Factored out so a mask
+	// group can render its content + stencil onto separate sub-contexts.
+	draw := func(dc *gg.Context, l layout.Layer) {
 		if l.Hidden {
-			continue
+			return
 		}
 
 		// Opacity mirrors the DOM exactly: unset -> 1, explicit 0 -> not drawn.
@@ -142,7 +142,7 @@ func (r *Renderer) RenderLayout(ctx context.Context, in layout.Layout, vars map[
 			opacity = *l.Opacity
 		}
 		if opacity <= 0 {
-			continue
+			return
 		}
 		if opacity > 1 {
 			opacity = 1
@@ -278,6 +278,24 @@ func (r *Renderer) RenderLayout(ctx context.Context, in layout.Layout, vars map[
 				})
 			}
 			cx, cy := l.X+l.W/2, l.Y+l.H/2
+			// Ring: a coloured border behind the image (matches the DOM box-shadow),
+			// so a circular image is a full member avatar.
+			if l.RingWidth > 0 {
+				dc.SetColor(withAlpha(parseHex(l.RingColor, color.White), opacity))
+				switch l.Mask {
+				case "circle":
+					dc.DrawCircle(cx, cy, drawW/2+l.RingWidth)
+				case "ellipse":
+					dc.DrawEllipse(cx, cy, l.W/2+l.RingWidth, l.H/2+l.RingWidth)
+				default:
+					if l.Radius > 0 {
+						dc.DrawRoundedRectangle(l.X-l.RingWidth, l.Y-l.RingWidth, l.W+2*l.RingWidth, l.H+2*l.RingWidth, l.Radius+l.RingWidth)
+					} else {
+						dc.DrawRectangle(l.X-l.RingWidth, l.Y-l.RingWidth, l.W+2*l.RingWidth, l.H+2*l.RingWidth)
+					}
+				}
+				dc.Fill()
+			}
 			dc.Push()
 			switch l.Mask {
 			case "circle":
@@ -337,5 +355,77 @@ func (r *Renderer) RenderLayout(ctx context.Context, in layout.Layout, vars map[
 		}
 	}
 
+	// Render the layers, honouring "use as mask": a clip layer is a stencil that
+	// masks the run of layers above it (until the next clip layer). The stencil
+	// itself is not painted — only its alpha/luminance shapes the masked content.
+	n := len(in.Layers)
+	if n > 50 { // safety backstop; the editor caps layers well below this
+		n = 50
+	}
+	for i := 0; i < n; i++ {
+		l := in.Layers[i]
+		if !l.Clip {
+			draw(dc, l)
+			continue
+		}
+		// Gather the masked run above this stencil. A grouped mask clips only its
+		// own group (a "mask group"); a groupless mask clips until the next mask.
+		j := i + 1
+		if l.Group != "" {
+			for j < n && !in.Layers[j].Clip && in.Layers[j].Group == l.Group {
+				j++
+			}
+		} else {
+			for j < n && !in.Layers[j].Clip {
+				j++
+			}
+		}
+		if j > i+1 && !l.Hidden {
+			content := gg.NewContext(w, h)
+			for k := i + 1; k < j; k++ {
+				draw(content, in.Layers[k])
+			}
+			stencil := gg.NewContext(w, h)
+			draw(stencil, l)
+			dc.DrawImage(applyMask(content.Image(), stencil.Image(), l.ClipMode, l.ClipInvert), 0, 0)
+		} else if j > i+1 {
+			// A hidden stencil clips nothing → its masked layers draw normally.
+			for k := i + 1; k < j; k++ {
+				draw(dc, in.Layers[k])
+			}
+		}
+		i = j - 1
+	}
+
 	return encodePNG(dc)
+}
+
+// applyMask multiplies content's alpha by the stencil's coverage. "alpha" uses
+// the stencil's opacity; "luminance" uses its brightness × opacity (Figma's two
+// core mask types). Both images are the same size (the canvas).
+func applyMask(content, stencil image.Image, mode string, invert bool) image.Image {
+	b := content.Bounds()
+	out := image.NewNRGBA(b)
+	for y := b.Min.Y; y < b.Max.Y; y++ {
+		for x := b.Min.X; x < b.Max.X; x++ {
+			c := color.NRGBAModel.Convert(content.At(x, y)).(color.NRGBA)
+			if c.A == 0 {
+				continue
+			}
+			m := color.NRGBAModel.Convert(stencil.At(x, y)).(color.NRGBA)
+			var f float64
+			if mode == "luminance" {
+				lum := (0.2126*float64(m.R) + 0.7152*float64(m.G) + 0.0722*float64(m.B)) / 255
+				f = lum * float64(m.A) / 255
+			} else {
+				f = float64(m.A) / 255
+			}
+			if invert {
+				f = 1 - f
+			}
+			c.A = uint8(float64(c.A)*f + 0.5)
+			out.SetNRGBA(x, y, c)
+		}
+	}
+	return out
 }

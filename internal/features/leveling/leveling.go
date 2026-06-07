@@ -250,9 +250,16 @@ func handleRank(c *interactions.Context, d plugin.Deps) error {
 
 	var png []byte
 	if card.Layout != nil {
-		// Studio-designed card: render the declarative layout with rank variables.
+		// Studio-designed card: render the declarative layout with rank + guild vars.
 		fonts, _ := d.Store.Uploads.FontMap(c.Ctx, gid)
-		png, err = d.Imaging.RenderLayout(c.Ctx, *card.Layout, rankVars(target, level, rank, into, span, lu.XP), fonts)
+		vars := rankVars(target, level, rank, into, span, lu.XP)
+		if g, gerr := d.Store.Guilds.Get(c.Ctx, gid); gerr == nil {
+			vars["{server}"] = g.Name
+			vars["{server.id}"] = c.GuildID
+			vars["{server.icon}"] = discord.GuildIconURL(c.GuildID, g.Icon, 256)
+			vars["{count}"] = strconv.Itoa(g.MemberCount)
+		}
+		png, err = d.Imaging.RenderLayout(c.Ctx, *card.Layout, vars, fonts)
 	} else {
 		png, err = d.Imaging.RenderRank(c.Ctx, imaging.RankInput{
 			Background:   card.Background,
