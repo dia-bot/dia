@@ -18,7 +18,8 @@ import {
 	type PathNode,
 	type HandleMode,
 	type ShapeKind,
-	type ClipMode
+	type ClipMode,
+	type BoolOp
 } from './schema';
 
 export const EDITOR_CTX = Symbol('dia-layout-editor');
@@ -29,9 +30,40 @@ export type Tool = 'select' | 'scale' | 'rect' | 'ellipse' | 'text' | 'image' | 
 
 export type AlignEdge = 'left' | 'hcenter' | 'right' | 'top' | 'vcenter' | 'bottom';
 
+// A row in the layers panel's derived tree (one level of nesting). A 'group' row
+// is a group / mask-group header; a 'leaf' row is a single layer at depth 0
+// (loose) or depth 1 (inside a group). Built by EditorStore.tree from the flat
+// layer list's contiguous group runs (front-most first, for display).
+export type LayerRow =
+	| {
+			kind: 'group';
+			id: string; // the group id
+			depth: 0;
+			isMask: boolean; // a mask group (bottom member is a stencil)
+			isBoolean: boolean; // a boolean group (group meta carries a bool op)
+			collapsed: boolean;
+			name: string;
+			childIds: string[]; // members, bottom → top
+			hidden: boolean; // every member hidden
+			locked: boolean; // every member locked
+	  }
+	| {
+			kind: 'leaf';
+			id: string; // the layer id
+			layer: Layer;
+			depth: 0 | 1; // 1 = inside a group
+			group: string | null;
+			isStencil: boolean; // this leaf is its group's mask stencil
+			masked: boolean; // a masked sibling sitting above the stencil
+	  };
+
 export class EditorStore {
 	layout = $state<Layout>(defaultLayout());
 	selectedIds = $state<string[]>([]);
+	// Editor-only collapse state for group containers in the layers panel, keyed by
+	// group id. Deliberately NOT persisted (pure view state); group ids are stable
+	// so a collapse survives edits, and a saved layout doesn't carry UI state.
+	collapsed = $state<Record<string, boolean>>({});
 	tool = $state<Tool>('select');
 	// When tool === 'shape', this is the shape the canvas draws on drag.
 	shapeKind = $state<ShapeKind>('triangle');
@@ -126,7 +158,11 @@ export class EditorStore {
 		}
 		const layer = this.layout.layers.find((l) => l.id === id);
 		if (layer?.group) {
-			this.selectedIds = this.layout.layers.filter((l) => l.group === layer.group).map((l) => l.id);
+			// Select the group, but never pull a locked member into a movable selection.
+			const ids = this.layout.layers
+				.filter((l) => l.group === layer.group && !l.locked)
+				.map((l) => l.id);
+			this.selectedIds = ids.length ? ids : [id];
 		} else {
 			this.selectedIds = [id];
 		}
@@ -134,8 +170,19 @@ export class EditorStore {
 	selectMany(ids: string[]) {
 		this.selectedIds = [...ids];
 	}
+	// selectOne selects exactly this layer, bypassing the group auto-expand in
+	// select() — the panel's child-row click path (pick one member of a group).
+	selectOne(id: string) {
+		this.selectedIds = [id];
+	}
+	// selectGroup selects every (unlocked) member of a group as a unit — the panel's
+	// container-header click path.
+	selectGroup(gid: string) {
+		const ids = this.layout.layers.filter((l) => l.group === gid && !l.locked).map((l) => l.id);
+		if (ids.length) this.selectedIds = ids;
+	}
 	selectAll() {
-		this.selectedIds = this.layout.layers.filter((l) => !l.hidden).map((l) => l.id);
+		this.selectedIds = this.layout.layers.filter((l) => !l.hidden && !l.locked).map((l) => l.id);
 	}
 
 	// ── create / add / remove / duplicate ───────────────────────────────────────
@@ -315,6 +362,7 @@ export class EditorStore {
 		this.layout.layers = this.layout.layers.filter((l) => l.id !== id);
 		this.selectedIds = this.selectedIds.filter((x) => x !== id);
 		if (this.editId === id) this.exitEdit();
+		this.#pruneGroupMeta();
 	}
 
 	removeSelected() {
@@ -323,15 +371,21 @@ export class EditorStore {
 		this.layout.layers = this.layout.layers.filter((l) => !ids.has(l.id));
 		this.selectedIds = [];
 		if (this.editId && ids.has(this.editId)) this.exitEdit();
+		this.#pruneGroupMeta();
 	}
 
 	duplicateLayer(id: string) {
 		if (this.atLimit) return;
-		const i = this.layout.layers.findIndex((l) => l.id === id);
+		const arr = this.layout.layers;
+		const i = arr.findIndex((l) => l.id === id);
 		if (i < 0) return;
-		const copy = this.#clone(this.layout.layers[i], 24, 24);
-		copy.name = `${this.layout.layers[i].name} copy`;
-		this.layout.layers.splice(i + 1, 0, copy);
+		const src = arr[i];
+		const copy = this.#clone(src, 24, 24); // #clone strips the group → ungrouped copy
+		copy.name = `${src.name} copy`;
+		// Insert after the run end if the source is grouped, so the ungrouped copy
+		// never lands inside a group's contiguous span (invariant C).
+		const at = src.group ? this.#groupSpan(src.group)[1] : i + 1;
+		arr.splice(at, 0, copy);
 		this.selectedIds = [copy.id];
 	}
 
@@ -377,21 +431,153 @@ export class EditorStore {
 		if (ids.length) this.selectedIds = ids;
 	}
 
-	// ── grouping (soft: a shared id; selecting one selects all, move/delete together) ─
+	// ── grouping (soft: a shared id; members are kept CONTIGUOUS in `layers` so the
+	// panel renders them as one tree container and the mask loop stays correct) ────
 	get canGroup(): boolean {
 		return this.selectedIds.length >= 2;
 	}
 	get canUngroup(): boolean {
 		return this.selectedLayers.some((l) => !!l.group);
 	}
+	// group gathers the selection into ONE contiguous run (preserving relative
+	// order) under a fresh group id, and registers a default name — so a group is
+	// always a clean block (the contiguity fix the tree + mask loop depend on).
 	group() {
-		const sel = this.selectedLayers;
-		if (sel.length < 2) return;
+		const arr = this.layout.layers;
+		const idxs = this.selectedIds
+			.map((id) => arr.findIndex((l) => l.id === id))
+			.filter((i) => i >= 0)
+			.sort((a, b) => a - b);
+		if (idxs.length < 2) return;
+		const block = idxs.map((i) => arr[i]); // bottom → top
+		const blockSet = new Set(block);
 		const gid = `g${++this.#seq}`;
-		for (const l of sel) l.group = gid;
+		for (const l of block) l.group = gid;
+		const anchor = idxs[0];
+		const below = arr.slice(0, anchor).filter((l) => !blockSet.has(l)).length;
+		const rest = arr.filter((l) => !blockSet.has(l));
+		rest.splice(below, 0, ...block);
+		this.layout.layers = rest;
+		this.layout.groups = { ...(this.layout.groups ?? {}), [gid]: { name: 'Group' } };
+		this.selectedIds = block.map((l) => l.id);
 	}
+	// ungroup dissolves the group of every selected layer (un-clipping any stencil
+	// so a released mask doesn't dangle), then prunes now-empty group metadata.
 	ungroup() {
-		for (const l of this.selectedLayers) delete l.group;
+		for (const l of this.selectedLayers) {
+			delete l.group;
+			if (l.clip) {
+				l.clip = false;
+				delete l.clip_mode;
+				l.clip_invert = false;
+			}
+		}
+		this.#pruneGroupMeta();
+	}
+
+	// #groupSpan returns the [lo, hi) flat index range of a group's contiguous run.
+	#groupSpan(gid: string): [number, number] {
+		const arr = this.layout.layers;
+		const lo = arr.findIndex((l) => l.group === gid);
+		if (lo < 0) return [-1, -1];
+		let hi = lo;
+		while (hi < arr.length && arr[hi].group === gid) hi++;
+		return [lo, hi];
+	}
+	// isMaskGroup: a group whose bottom-most (lowest-index) member is a stencil.
+	isMaskGroup(gid: string): boolean {
+		const bottom = this.layout.layers.find((l) => l.group === gid);
+		return !!bottom?.clip;
+	}
+	// isBoolGroup: a group whose metadata carries a boolean operation.
+	isBoolGroup(gid: string): boolean {
+		return !!this.layout.groups?.[gid]?.bool_op;
+	}
+	groupName(gid: string): string {
+		const stored = this.layout.groups?.[gid]?.name;
+		if (stored) return stored;
+		const op = this.layout.groups?.[gid]?.bool_op;
+		if (op) return op[0].toUpperCase() + op.slice(1); // dynamic label tracks the op
+		return this.isMaskGroup(gid) ? 'Mask group' : 'Group';
+	}
+	renameGroup(gid: string, name: string) {
+		this.layout.groups = {
+			...(this.layout.groups ?? {}),
+			[gid]: { ...this.layout.groups?.[gid], name: name.trim() || 'Group' }
+		};
+	}
+	toggleCollapse(gid: string) {
+		this.collapsed = { ...this.collapsed, [gid]: !this.collapsed[gid] };
+	}
+	isCollapsed(gid: string): boolean {
+		return !!this.collapsed[gid];
+	}
+	// #pruneGroupMeta dissolves any group left with fewer than 2 members (un-clipping
+	// a lone stencil) and drops names/collapse for groups that no longer exist — so
+	// the panel tree never shows a stray one-item container. Run after structural
+	// mutations (delete, ungroup, move).
+	#pruneGroupMeta() {
+		const counts = new Map<string, number>();
+		for (const l of this.layout.layers) if (l.group) counts.set(l.group, (counts.get(l.group) ?? 0) + 1);
+		for (const l of this.layout.layers) {
+			if (l.group && (counts.get(l.group) ?? 0) < 2) {
+				delete l.group;
+				if (l.clip) {
+					l.clip = false;
+					delete l.clip_mode;
+					l.clip_invert = false;
+				}
+			}
+		}
+		const live = new Set(this.layout.layers.map((l) => l.group).filter((g): g is string => !!g));
+		if (this.layout.groups) {
+			for (const gid of Object.keys(this.layout.groups)) if (!live.has(gid)) delete this.layout.groups[gid];
+		}
+		for (const gid of Object.keys(this.collapsed)) if (!live.has(gid)) delete this.collapsed[gid];
+	}
+
+	// tree derives the layers-panel render list (display order, front-most first)
+	// from the flat layer list: each contiguous group run becomes a container row
+	// with its members nested one level under it; a mask group's stencil is shown
+	// last (the run's bottom). Relies on invariant C (groups are contiguous).
+	get tree(): LayerRow[] {
+		const arr = this.layout.layers;
+		const rows: LayerRow[] = [];
+		let i = arr.length - 1; // walk top (front) → bottom (back)
+		while (i >= 0) {
+			const g = arr[i].group;
+			if (!g) {
+				rows.push({ kind: 'leaf', id: arr[i].id, layer: arr[i], depth: 0, group: null, isStencil: false, masked: false });
+				i--;
+				continue;
+			}
+			let lo = i;
+			while (lo >= 0 && arr[lo].group === g) lo--;
+			lo++; // lo..i is the whole run (invariant C)
+			const stencil = arr[lo].clip ? arr[lo] : null;
+			const isMask = !!stencil;
+			const run = arr.slice(lo, i + 1);
+			rows.push({
+				kind: 'group',
+				id: g,
+				depth: 0,
+				isMask,
+				isBoolean: this.isBoolGroup(g),
+				collapsed: this.isCollapsed(g),
+				name: this.groupName(g),
+				childIds: run.map((l) => l.id),
+				hidden: run.every((l) => l.hidden),
+				locked: run.every((l) => l.locked)
+			});
+			if (!this.isCollapsed(g)) {
+				for (let k = i; k >= lo; k--) {
+					const l = arr[k];
+					rows.push({ kind: 'leaf', id: l.id, layer: l, depth: 1, group: g, isStencil: l === stencil, masked: isMask && l !== stencil });
+				}
+			}
+			i = lo - 1;
+		}
+		return rows;
 	}
 
 	// ── geometry helpers ─────────────────────────────────────────────────────────
@@ -475,27 +661,44 @@ export class EditorStore {
 		}
 	}
 
-	// ── stacking order ────────────────────────────────────────────────────────────
+	// ── stacking order (group-aware: a grouped layer moves as its whole run so
+	// groups stay contiguous; a loose layer hops over a neighbouring group's run) ──
+	// reorder nudges a layer (or its whole group) one step toward the front (dir 1)
+	// or back (-1), swapping with the adjacent unit (a loose layer or a whole group).
 	reorder(id: string, dir: -1 | 1) {
-		const i = this.layout.layers.findIndex((l) => l.id === id);
-		const j = i + dir;
-		if (i < 0 || j < 0 || j >= this.layout.layers.length) return;
 		const arr = this.layout.layers;
-		[arr[i], arr[j]] = [arr[j], arr[i]];
+		const i = arr.findIndex((l) => l.id === id);
+		if (i < 0) return;
+		const [lo, hi] = arr[i].group ? this.#groupSpan(arr[i].group!) : [i, i + 1];
+		if (dir === 1) {
+			if (hi >= arr.length) return;
+			const nb = arr[hi];
+			const [nlo, nhi] = nb.group ? this.#groupSpan(nb.group) : [hi, hi + 1];
+			this.layout.layers = [...arr.slice(0, lo), ...arr.slice(nlo, nhi), ...arr.slice(lo, hi), ...arr.slice(nhi)];
+		} else {
+			if (lo <= 0) return;
+			const pb = arr[lo - 1];
+			const [plo, phi] = pb.group ? this.#groupSpan(pb.group) : [lo - 1, lo];
+			this.layout.layers = [...arr.slice(0, plo), ...arr.slice(lo, hi), ...arr.slice(plo, phi), ...arr.slice(phi)];
+		}
 	}
 	bringToFront(id: string) {
 		const arr = this.layout.layers;
-		const i = arr.findIndex((l) => l.id === id);
-		if (i < 0 || i === arr.length - 1) return;
-		const [l] = arr.splice(i, 1);
-		arr.push(l);
+		const l = arr.find((x) => x.id === id);
+		if (!l) return;
+		const i = arr.indexOf(l);
+		const [lo, hi] = l.group ? this.#groupSpan(l.group) : [i, i + 1];
+		if (hi >= arr.length) return;
+		this.layout.layers = [...arr.slice(0, lo), ...arr.slice(hi), ...arr.slice(lo, hi)];
 	}
 	sendToBack(id: string) {
 		const arr = this.layout.layers;
-		const i = arr.findIndex((l) => l.id === id);
-		if (i <= 0) return;
-		const [l] = arr.splice(i, 1);
-		arr.unshift(l);
+		const l = arr.find((x) => x.id === id);
+		if (!l) return;
+		const i = arr.indexOf(l);
+		const [lo, hi] = l.group ? this.#groupSpan(l.group) : [i, i + 1];
+		if (lo <= 0) return;
+		this.layout.layers = [...arr.slice(lo, hi), ...arr.slice(0, lo), ...arr.slice(hi)];
 	}
 	rename(id: string, name: string) {
 		this.patch(id, { name: name.trim() || 'Layer' });
@@ -504,12 +707,72 @@ export class EditorStore {
 		const l = this.layout.layers.find((x) => x.id === id);
 		if (l) l.locked = !l.locked;
 	}
-	setOrder(frontToBackIds: string[]) {
-		const byId = new Map(this.layout.layers.map((l) => [l.id, l]));
-		const next = frontToBackIds.map((id) => byId.get(id)).filter((l): l is Layer => !!l);
-		if (next.length !== this.layout.layers.length) return;
-		next.reverse();
-		this.layout.layers = next;
+	// moveLayer relocates ONE layer to a new flat index (bottom→top order),
+	// optionally re-parenting it into a group (intoGroup) or out (null). It upholds
+	// invariant C: a layer joining a group is clamped inside that group's run (above
+	// its stencil), a stencil dragged within its group stays pinned to the bottom,
+	// and a loose layer never lands inside another group's run. Drives panel drag.
+	moveLayer(id: string, flatIndex: number, intoGroup: string | null) {
+		const arr = [...this.layout.layers];
+		const from = arr.findIndex((l) => l.id === id);
+		if (from < 0) return;
+		const [l] = arr.splice(from, 1);
+		let idx = from < flatIndex ? flatIndex - 1 : flatIndex;
+		idx = Math.max(0, Math.min(arr.length, idx));
+		const joiningNew = !!intoGroup && intoGroup !== l.group;
+		if (intoGroup) {
+			l.group = intoGroup;
+			if (joiningNew && l.clip) {
+				l.clip = false;
+				delete l.clip_mode;
+				l.clip_invert = false;
+			}
+		} else if (l.group) {
+			delete l.group;
+			if (l.clip) {
+				l.clip = false;
+				delete l.clip_mode;
+				l.clip_invert = false;
+			}
+		}
+		if (intoGroup) {
+			const lo = arr.findIndex((x) => x.group === intoGroup);
+			if (lo >= 0) {
+				let hi = lo;
+				while (hi < arr.length && arr[hi].group === intoGroup) hi++;
+				if (l.clip) idx = lo; // a stencil stays at its run's bottom
+				else idx = Math.max(arr[lo]?.clip ? lo + 1 : lo, Math.min(hi, idx));
+			}
+		} else if (idx > 0 && idx < arr.length && arr[idx - 1].group && arr[idx - 1].group === arr[idx].group) {
+			// don't split a group: snap past the front edge of the run we'd land in
+			const g = arr[idx - 1].group!;
+			let hi = idx;
+			while (hi < arr.length && arr[hi].group === g) hi++;
+			idx = hi;
+		}
+		arr.splice(idx, 0, l);
+		this.layout.layers = arr;
+		this.#pruneGroupMeta();
+		this.selectedIds = [id];
+	}
+	// moveGroup relocates a whole group's run to a new flat boundary, never landing
+	// inside another group's run.
+	moveGroup(gid: string, flatIndex: number) {
+		const arr = [...this.layout.layers];
+		const [lo, hi] = this.#groupSpan(gid);
+		if (lo < 0) return;
+		const block = arr.slice(lo, hi);
+		const rest = [...arr.slice(0, lo), ...arr.slice(hi)];
+		let idx = lo < flatIndex ? flatIndex - block.length : flatIndex;
+		idx = Math.max(0, Math.min(rest.length, idx));
+		if (idx > 0 && idx < rest.length && rest[idx - 1].group && rest[idx - 1].group === rest[idx].group) {
+			const g = rest[idx - 1].group!;
+			let h2 = idx;
+			while (h2 < rest.length && rest[h2].group === g) h2++;
+			idx = h2;
+		}
+		rest.splice(idx, 0, ...block);
+		this.layout.layers = rest;
 	}
 
 	// ── path edit mode + node operations ────────────────────────────────────────
@@ -536,7 +799,7 @@ export class EditorStore {
 			// Single-select (not the whole group) so selectedId === editId and the
 			// canvas's "selection changed → exit edit" guard doesn't immediately trip
 			// for a grouped layer.
-			this.selectedIds = [id];
+			this.selectOne(id);
 			this.editId = id;
 			this.activeNode = null;
 		} else {
@@ -719,70 +982,200 @@ export class EditorStore {
 	}
 
 	// ── masking ("use as mask") ──────────────────────────────────────────────────
+	// isMask: the current selection is (or belongs to) a mask group — drives the
+	// inspector's mask section + the Use-as-mask / Release-mask branch.
 	get isMask(): boolean {
-		return !!this.selected?.clip;
-	}
-	// toggleMask flips the selected layer between a normal layer and a stencil that
-	// clips the layers above it.
-	toggleMask() {
 		const l = this.selected;
-		if (!l) return;
-		l.clip = !l.clip;
-		if (l.clip && !l.clip_mode) l.clip_mode = 'alpha';
+		if (!l) return false;
+		if (l.clip) return true;
+		return l.group ? this.isMaskGroup(l.group) : false;
 	}
-	setClipMode(mode: ClipMode) {
+	// maskStencil: the actual stencil layer (the group's bottom member) of the
+	// current selection's mask group, so the inspector can edit clip_mode / invert /
+	// release even when the whole group is selected (selectedId is a top member).
+	get maskStencil(): Layer | null {
 		const l = this.selected;
-		if (l?.clip) l.clip_mode = mode;
-	}
-	// maskFor returns the mask layer that clips the given layer, or null. A mask
-	// scopes to its group when it has one (a "mask group", created by useAsMask);
-	// a groupless mask clips everything above it until the next mask.
-	maskFor(layer: Layer): Layer | null {
-		if (layer.clip) return null; // a mask isn't masked by itself / another mask
-		const arr = this.layout.layers;
-		const i = arr.findIndex((l) => l.id === layer.id);
-		for (let k = i - 1; k >= 0; k--) {
-			const c = arr[k];
-			if (!c.clip) continue;
-			if (!c.group) return c; // groupless mask → clips everything above it
-			return c.group === layer.group ? c : null; // grouped mask → same group only
+		if (!l) return null;
+		if (l.clip) return l;
+		if (l.group && this.isMaskGroup(l.group)) {
+			return this.layout.layers.find((x) => x.group === l.group && x.clip) ?? null;
 		}
 		return null;
 	}
+	// toggleMask routes to the two real mask operations — build a mask group from
+	// the selection (Use as mask) or release the current one. Masks are always a
+	// group (≥2 layers), so there's no raw single-layer clip flip anymore.
+	toggleMask() {
+		const stencil = this.maskStencil;
+		if (stencil) this.releaseMask(stencil.id);
+		else this.useAsMask();
+	}
+	get clipMode(): ClipMode {
+		return (this.maskStencil?.clip_mode as ClipMode) ?? 'alpha';
+	}
+	setClipMode(mode: ClipMode) {
+		const s = this.maskStencil;
+		if (s) s.clip_mode = mode;
+	}
+	get clipInvert(): boolean {
+		return !!this.maskStencil?.clip_invert;
+	}
+	setClipInvert(v: boolean) {
+		const s = this.maskStencil;
+		if (s) s.clip_invert = v;
+	}
+	// maskFor returns the stencil that clips the given layer, or null. Masks are
+	// strictly group-scoped: a layer is clipped only by its OWN group's stencil
+	// (the group's bottom member) and only when it sits above that stencil.
+	maskFor(layer: Layer): Layer | null {
+		if (layer.clip || !layer.group) return null;
+		const arr = this.layout.layers;
+		const [lo] = this.#groupSpan(layer.group);
+		if (lo < 0 || !arr[lo].clip) return null;
+		return arr.findIndex((l) => l.id === layer.id) > lo ? arr[lo] : null;
+	}
 
 	// useAsMask is Figma's "Use as mask": the bottom-most selected layer becomes a
-	// stencil for the others. The selection is gathered into one contiguous mask
-	// group so the mask clips exactly those layers (and nothing else).
+	// stencil for the layers above it. The selection is gathered into one contiguous
+	// mask group so the mask clips exactly those layers. With a single selection,
+	// the contiguous layers above it are pulled into the group (so it's never a no-op).
 	useAsMask() {
+		if (this.isMask) return; // selection already forms a mask group → no-op
 		const arr = this.layout.layers;
-		const idxs = this.selectedIds
+		let idxs = this.selectedIds
 			.map((id) => arr.findIndex((l) => l.id === id))
 			.filter((i) => i >= 0)
 			.sort((a, b) => a - b);
 		if (!idxs.length) return;
+		// Single layer chosen as mask → gather the contiguous run above it (until the
+		// next existing mask) so there's actually something to clip.
+		if (idxs.length === 1) {
+			const start = idxs[0];
+			const extra: number[] = [];
+			for (let k = start + 1; k < arr.length && !arr[k].clip; k++) extra.push(k);
+			if (!extra.length) return; // nothing above to mask → no-op (guarded in UI too)
+			idxs = [start, ...extra];
+		}
 		const block = idxs.map((i) => arr[i]); // bottom → top
 		const blockSet = new Set(block);
 		const gid = `mask${++this.#seq}`;
 		for (const l of block) l.group = gid;
 		block[0].clip = true; // the lowest layer is the mask
-		if (!block[0].clip_mode) block[0].clip_mode = 'alpha';
+		if (!block[0].clip_mode) block[0].clip_mode = 'vector'; // hard-edged crop by default
 		// Reinsert the block contiguously at the bottom-most selected position.
 		const anchor = idxs[0];
 		const below = arr.slice(0, anchor).filter((l) => !blockSet.has(l)).length;
 		const rest = arr.filter((l) => !blockSet.has(l));
 		rest.splice(below, 0, ...block);
 		this.layout.layers = rest;
+		this.layout.groups = { ...(this.layout.groups ?? {}), [gid]: { name: 'Mask group' } };
+		this.#pruneGroupMeta(); // drop any group names orphaned by the re-grouping
 		this.selectedIds = block.map((l) => l.id);
 	}
+	// canMask: "Use as mask" is meaningful only when there's a layer above the
+	// prospective stencil within its run (else it would clip nothing).
+	get canMask(): boolean {
+		if (this.isMask) return false; // already a mask group → the menu shows Release
+		const arr = this.layout.layers;
+		const idxs = this.selectedIds
+			.map((id) => arr.findIndex((l) => l.id === id))
+			.filter((i) => i >= 0);
+		if (!idxs.length) return false;
+		if (idxs.length > 1) return true;
+		const start = idxs[0];
+		return start + 1 < arr.length && !arr[start + 1].clip;
+	}
 
-	// releaseMask turns a stencil back into a normal layer and dissolves its group.
+	// releaseMask un-masks the stencil but KEEPS the layers grouped (Figma's "remove
+	// mask"): the run stays a plain group. Ungroup is a separate action.
 	releaseMask(id: string) {
 		const l = this.layout.layers.find((x) => x.id === id);
 		if (!l?.clip) return;
-		const gid = l.group;
 		l.clip = false;
 		l.clip_invert = false;
-		if (gid) for (const m of this.layout.layers) if (m.group === gid) delete m.group;
+		// Reset the auto "Mask group" name so the now-plain group reads as "Group"
+		// (a user-chosen name is left untouched).
+		if (l.group && this.layout.groups?.[l.group]?.name === 'Mask group') {
+			this.layout.groups = { ...this.layout.groups, [l.group]: { name: 'Group' } };
+		}
+	}
+
+	// ── boolean ops (union / subtract / intersect / exclude) ─────────────────────
+	// A boolean group is a normal contiguous group whose metadata carries a bool op;
+	// the renderer composites its (vector) members' silhouettes with that op. It's
+	// mutually exclusive with a mask group, and applies to vector members only.
+	get isBoolean(): boolean {
+		const l = this.selected;
+		return !!(l?.group && this.isBoolGroup(l.group));
+	}
+	get boolOp(): BoolOp {
+		const l = this.selected;
+		return (l?.group && (this.layout.groups?.[l.group]?.bool_op as BoolOp)) || 'union';
+	}
+	// canBoolean: ≥2 selected VECTOR layers (rect/ellipse/path), not already a mask.
+	get canBoolean(): boolean {
+		if (this.isMask) return false;
+		const sel = this.selectedLayers;
+		if (sel.length < 2) return false;
+		return sel.every((l) => l.type === 'rect' || l.type === 'ellipse' || l.type === 'path');
+	}
+	// applyBoolean gathers the selection into one contiguous group tagged with the op
+	// (clearing any mask state — mutual exclusivity). On an existing boolean group it
+	// just switches the op in place.
+	applyBoolean(op: BoolOp) {
+		const sel = this.selectedLayers;
+		if (!sel.length) return;
+		// If the selection already forms ONE existing group, convert it in place —
+		// preserving the group's id + (user) name and just setting the op. Covers both
+		// switching the op on a boolean group and promoting a named plain group, and
+		// clears any mask state on the members (boolean ⇄ mask are mutually exclusive).
+		const g0 = sel[0].group;
+		if (g0 && sel.every((l) => l.group === g0)) {
+			for (const l of sel) {
+				if (l.clip) {
+					l.clip = false;
+					delete l.clip_mode;
+					l.clip_invert = false;
+				}
+			}
+			const meta = { ...this.layout.groups?.[g0], bool_op: op };
+			if (meta.name === 'Mask group') delete meta.name; // the auto mask name shouldn't stick on a bool group
+			this.layout.groups = { ...(this.layout.groups ?? {}), [g0]: meta };
+			return;
+		}
+		const arr = this.layout.layers;
+		const idxs = this.selectedIds
+			.map((id) => arr.findIndex((l) => l.id === id))
+			.filter((i) => i >= 0)
+			.sort((a, b) => a - b);
+		if (idxs.length < 2) return;
+		const block = idxs.map((i) => arr[i]); // bottom → top
+		const blockSet = new Set(block);
+		const gid = `bool${++this.#seq}`;
+		for (const l of block) {
+			l.group = gid;
+			if (l.clip) {
+				l.clip = false;
+				delete l.clip_mode;
+				l.clip_invert = false;
+			}
+		}
+		const anchor = idxs[0];
+		const below = arr.slice(0, anchor).filter((l) => !blockSet.has(l)).length;
+		const rest = arr.filter((l) => !blockSet.has(l));
+		rest.splice(below, 0, ...block);
+		this.layout.layers = rest;
+		this.layout.groups = { ...(this.layout.groups ?? {}), [gid]: { bool_op: op } };
+		this.#pruneGroupMeta(); // drop any group names orphaned by the re-grouping
+		this.selectedIds = block.map((l) => l.id);
+	}
+	// clearBoolean removes the op but KEEPS the group (a plain group again).
+	clearBoolean(gid?: string) {
+		const id = gid ?? this.selected?.group;
+		if (!id || !this.layout.groups?.[id]) return;
+		const next = { ...this.layout.groups[id] };
+		delete next.bool_op;
+		this.layout.groups = { ...this.layout.groups, [id]: next };
 	}
 
 	// ── undo / redo ────────────────────────────────────────────────────────────────
@@ -827,6 +1220,10 @@ export class EditorStore {
 	#pruneSelection() {
 		const ids = new Set(this.layout.layers.map((l) => l.id));
 		this.selectedIds = this.selectedIds.filter((id) => ids.has(id));
+		// Drop collapse state for any group that vanished in the restored snapshot
+		// (group names live in layout.groups, so they restore with the snapshot).
+		const groups = new Set(this.layout.layers.map((l) => l.group).filter((g): g is string => !!g));
+		for (const gid of Object.keys(this.collapsed)) if (!groups.has(gid)) delete this.collapsed[gid];
 		// A restored snapshot is a different node array; drop into a clean view so
 		// the editing overlay can't point at a stale node index.
 		if (this.editId && !ids.has(this.editId)) this.exitEdit();
