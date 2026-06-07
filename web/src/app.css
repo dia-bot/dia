@@ -248,34 +248,64 @@ body {
 	}
 }
 
-/* Motion for Bits UI popovers / dropdowns / command dialog. Subtle entrance
-   only (exit is instant) — keeps menus feeling immediate, not animated. */
-@keyframes menu-pop {
+/* Motion for Bits UI popovers / dropdowns / command dialog — smooth scale+slide
+   in, and a quick scale+fade out (Bits UI keeps the node mounted for the exit
+   animation), anchored to the floating transform-origin so menus grow from their
+   trigger. */
+@keyframes menu-in {
 	from {
 		opacity: 0;
-		transform: scale(0.97) translateY(-2px);
+		transform: scale(0.95) translateY(-6px);
+	}
+	to {
+		opacity: 1;
+		transform: scale(1) translateY(0);
+	}
+}
+@keyframes menu-out {
+	from {
+		opacity: 1;
+		transform: scale(1) translateY(0);
+	}
+	to {
+		opacity: 0;
+		transform: scale(0.96) translateY(-4px);
 	}
 }
 @keyframes dialog-pop {
 	from {
 		opacity: 0;
-		transform: translate(-50%, 4px) scale(0.985);
+		transform: translate(-50%, 6px) scale(0.98);
 	}
 }
 @layer components {
 	.menu-pop {
-		animation: menu-pop 120ms cubic-bezier(0.16, 1, 0.3, 1);
 		transform-origin: var(--bits-floating-transform-origin, top);
+		will-change: transform, opacity;
+	}
+	.menu-pop[data-state='open'] {
+		animation: menu-in 180ms cubic-bezier(0.16, 1, 0.3, 1);
+	}
+	.menu-pop[data-state='closed'] {
+		animation: menu-out 130ms cubic-bezier(0.4, 0, 0.9, 0.2);
 	}
 	.dialog-pop {
-		animation: dialog-pop 140ms cubic-bezier(0.16, 1, 0.3, 1);
+		animation: dialog-pop 160ms cubic-bezier(0.16, 1, 0.3, 1);
 	}
 }
 @media (prefers-reduced-motion: reduce) {
-	.menu-pop,
+	.menu-pop[data-state='open'],
+	.menu-pop[data-state='closed'],
 	.dialog-pop {
 		animation: none;
 	}
+}
+
+/* While dragging a scrubby number field, force the resize cursor everywhere. */
+body.is-scrubbing,
+body.is-scrubbing * {
+	cursor: ew-resize !important;
+	user-select: none !important;
 }
 
 /* Thin, unobtrusive scrollbars */
