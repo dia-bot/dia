@@ -2,11 +2,37 @@
 	// The layer list — a Figma-style stack with drag-to-reorder. The store keeps
 	// layers back-to-front (index 0 draws first); here we render the REVERSE so the
 	// front-most layer sits at the top, matching designer expectations.
-	import { getContext } from 'svelte';
-	import { DropdownMenu } from 'bits-ui';
+	import { getContext, tick } from 'svelte';
+	import { DropdownMenu, ContextMenu } from 'bits-ui';
 	import { EditorStore, EDITOR_CTX } from '$lib/layout/editor.svelte';
 	import { MAX_LAYERS, type Layer, type LayerType } from '$lib/layout/schema';
-	import { Type, Image, UserCircle, Square, Circle, PenTool, Plus, Eye, EyeOff, Copy, Trash2, GripVertical, Frame } from 'lucide-svelte';
+	import {
+		Type,
+		Image,
+		UserCircle,
+		Square,
+		Circle,
+		PenTool,
+		Plus,
+		Eye,
+		EyeOff,
+		Copy,
+		Trash2,
+		GripVertical,
+		Frame,
+		Scissors,
+		CornerDownRight,
+		ArrowUpToLine,
+		ArrowDownToLine,
+		ChevronUp,
+		ChevronDown,
+		Group,
+		Ungroup,
+		PencilLine,
+		ClipboardPaste,
+		Lock,
+		Unlock
+	} from 'lucide-svelte';
 
 	const editor = getContext<EditorStore>(EDITOR_CTX);
 	const ordered = $derived([...editor.layout.layers].reverse()); // front-most first
@@ -22,10 +48,10 @@
 		ellipse: Circle,
 		path: PenTool
 	};
-	const addItems: { type: LayerType; label: string; icon: typeof Type }[] = [
+	const addItems: { type: LayerType; label: string; icon: typeof Type; avatar?: boolean }[] = [
 		{ type: 'text', label: 'Text', icon: Type },
 		{ type: 'image', label: 'Image', icon: Image },
-		{ type: 'avatar', label: 'Avatar', icon: UserCircle },
+		{ type: 'image', label: 'Avatar', icon: UserCircle, avatar: true },
 		{ type: 'rect', label: 'Rectangle', icon: Square },
 		{ type: 'ellipse', label: 'Ellipse', icon: Circle }
 	];
@@ -70,6 +96,29 @@
 	function stop(e: MouseEvent) {
 		e.stopPropagation();
 	}
+
+	// ── context-menu helpers ─────────────────────────────────────────────────────
+	// Right-clicking a row acts on the current multi-selection if the row is part of
+	// it; otherwise it selects just that row first (Figma's behaviour).
+	function ensureSelected(id: string) {
+		if (!editor.isSelected(id)) editor.select(id);
+	}
+
+	// inline rename (double-click the name)
+	let renamingId = $state<string | null>(null);
+	async function startRename(id: string) {
+		renamingId = id;
+		await tick();
+		const el = document.getElementById(`rn-${id}`) as HTMLInputElement | null;
+		el?.focus();
+		el?.select();
+	}
+	function commitRename(id: string, value: string) {
+		editor.rename(id, value);
+		renamingId = null;
+	}
+	const menuItem =
+		'flex cursor-pointer items-center gap-2.5 rounded-md px-2 py-1.5 text-[13px] text-muted outline-none transition-colors data-[highlighted]:bg-ink-2 data-[highlighted]:text-ink data-[disabled]:pointer-events-none data-[disabled]:opacity-40';
 </script>
 
 <div class="flex h-full flex-col">
@@ -97,7 +146,7 @@
 						{#each addItems as item (item.type)}
 							{@const Icon = item.icon}
 							<DropdownMenu.Item
-								onSelect={() => editor.addLayer(item.type)}
+								onSelect={() => (item.avatar ? editor.addAvatar() : editor.addLayer(item.type))}
 								class="flex cursor-pointer items-center gap-2.5 rounded-lg px-2 py-1.5 text-[13px] text-muted outline-none transition-colors data-[highlighted]:bg-ink-2 data-[highlighted]:text-ink"
 							>
 								<Icon size={14} class="text-faint" />
@@ -136,76 +185,214 @@
 				{#each ordered as layer (layer.id)}
 					{@const Icon = icons[layer.type]}
 					{@const selected = editor.isSelected(layer.id)}
+					{@const masked = !!editor.maskFor(layer)}
 					<li>
-						<div
-							role="button"
-							tabindex="0"
-							onclick={(e) => editor.select(layer.id, e.shiftKey || e.metaKey || e.ctrlKey)}
-							onkeydown={(e) => {
-								if (e.key === 'Enter' || e.key === ' ') {
-									e.preventDefault();
-									editor.select(layer.id);
-								}
-							}}
-							class="group mx-1.5 flex h-8 cursor-pointer items-center gap-1.5 rounded-lg pr-1 pl-1 text-[13px] outline-none transition-all duration-100 {selected
-								? 'bg-surface text-ink ring-1 ring-line-strong'
-								: 'text-muted hover:bg-surface/60'} {dragId === layer.id ? 'opacity-40' : ''}"
-						>
-							<!-- drag grip -->
-							<button
-								type="button"
-								onpointerdown={(e) => startDrag(e, layer.id)}
-								onpointermove={updateGap}
-								onpointerup={endDrag}
-								onpointercancel={endDrag}
-								onclick={stop}
-								aria-label="Drag to reorder"
-								class="flex h-6 w-4 shrink-0 cursor-grab touch-none items-center justify-center text-faint opacity-0 transition-opacity group-hover:opacity-100 active:cursor-grabbing"
-							>
-								<GripVertical size={13} />
-							</button>
+						<ContextMenu.Root>
+							<ContextMenu.Trigger>
+								{#snippet child({ props })}
+									<div
+										{...props}
+										role="button"
+										tabindex="0"
+										onclick={(e) => editor.select(layer.id, e.shiftKey || e.metaKey || e.ctrlKey)}
+										onkeydown={(e) => {
+											if (e.key === 'Enter' || e.key === ' ') {
+												e.preventDefault();
+												editor.select(layer.id);
+											}
+										}}
+										class="group mx-1.5 flex h-8 cursor-pointer items-center gap-1.5 rounded-lg pr-1 text-[13px] outline-none transition-all duration-100 {masked
+											? 'pl-6'
+											: 'pl-1'} {selected
+											? 'bg-surface text-ink ring-1 ring-line-strong'
+											: 'text-muted hover:bg-surface/60'} {dragId === layer.id ? 'opacity-40' : ''} {layer.locked
+											? 'opacity-70'
+											: ''}"
+									>
+										<!-- drag grip -->
+										<button
+											type="button"
+											onpointerdown={(e) => startDrag(e, layer.id)}
+											onpointermove={updateGap}
+											onpointerup={endDrag}
+											onpointercancel={endDrag}
+											onclick={stop}
+											aria-label="Drag to reorder"
+											class="flex h-6 w-4 shrink-0 cursor-grab touch-none items-center justify-center text-faint opacity-0 transition-opacity group-hover:opacity-100 active:cursor-grabbing"
+										>
+											<GripVertical size={13} />
+										</button>
 
-							<Icon size={14} class="shrink-0 {selected ? 'text-ink' : 'text-faint group-hover:text-muted'}" />
-							<span class="min-w-0 flex-1 truncate {layer.hidden ? 'opacity-50' : ''} {selected ? 'font-medium' : ''}">{layer.name}</span>
+										{#if masked}<CornerDownRight size={12} class="-ml-0.5 shrink-0 text-faint" />{/if}
+										<Icon
+											size={14}
+											class="shrink-0 {layer.clip
+												? 'text-accent-ink'
+												: selected
+													? 'text-ink'
+													: 'text-faint group-hover:text-muted'}"
+										/>
 
-							<div class="flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 {selected ? 'opacity-100' : ''}">
-								<button
-									type="button"
-									onclick={(e) => {
-										stop(e);
-										editor.duplicateLayer(layer.id);
-									}}
-									disabled={editor.atLimit}
-									aria-label="Duplicate"
-									class="flex h-6 w-6 items-center justify-center rounded-md text-faint transition-colors hover:bg-ink-2 hover:text-ink disabled:opacity-30 disabled:hover:bg-transparent"
+										{#if renamingId === layer.id}
+											<input
+												id="rn-{layer.id}"
+												value={layer.name}
+												onpointerdown={(e) => e.stopPropagation()}
+												onclick={(e) => e.stopPropagation()}
+												onblur={(e) => commitRename(layer.id, e.currentTarget.value)}
+												onkeydown={(e) => {
+													e.stopPropagation();
+													if (e.key === 'Enter') e.currentTarget.blur();
+													else if (e.key === 'Escape') renamingId = null;
+												}}
+												class="min-w-0 flex-1 rounded border border-line-strong bg-ink-2 px-1 py-0.5 text-[13px] text-ink outline-none focus:border-faint"
+											/>
+										{:else}
+											<span
+												role="button"
+												tabindex="-1"
+												class="min-w-0 flex-1 truncate {layer.hidden ? 'opacity-50' : ''} {selected
+													? 'font-medium'
+													: ''}"
+												ondblclick={(e) => {
+													stop(e);
+													startRename(layer.id);
+												}}>{layer.name}</span
+											>
+										{/if}
+
+										{#if layer.clip}<Scissors size={11} class="shrink-0 text-accent-ink" />{/if}
+
+										<div
+											class="flex items-center gap-0.5 transition-opacity {layer.hidden ||
+											layer.locked ||
+											selected
+												? 'opacity-100'
+												: 'opacity-0 group-hover:opacity-100'}"
+										>
+											<button
+												type="button"
+												onclick={(e) => {
+													stop(e);
+													editor.toggleLock(layer.id);
+												}}
+												aria-label={layer.locked ? 'Unlock' : 'Lock'}
+												class="flex h-6 w-6 items-center justify-center rounded-md text-faint transition-colors hover:bg-ink-2 hover:text-ink"
+											>
+												{#if layer.locked}<Lock size={12} />{:else}<Unlock size={12} />{/if}
+											</button>
+											<button
+												type="button"
+												onclick={(e) => {
+													stop(e);
+													editor.patch(layer.id, { hidden: !layer.hidden });
+												}}
+												aria-label={layer.hidden ? 'Show layer' : 'Hide layer'}
+												class="flex h-6 w-6 items-center justify-center rounded-md text-muted transition-colors hover:bg-ink-2 hover:text-ink"
+											>
+												{#if layer.hidden}<EyeOff size={13} />{:else}<Eye size={13} />{/if}
+											</button>
+										</div>
+									</div>
+								{/snippet}
+							</ContextMenu.Trigger>
+							<ContextMenu.Portal>
+								<ContextMenu.Content
+									class="menu-pop z-50 min-w-[210px] rounded-xl border border-line-strong bg-surface p-1.5 shadow-2xl outline-none"
 								>
-									<Copy size={13} />
-								</button>
-								<button
-									type="button"
-									onclick={(e) => {
-										stop(e);
-										editor.removeLayer(layer.id);
-									}}
-									aria-label="Delete"
-									class="flex h-6 w-6 items-center justify-center rounded-md text-faint transition-colors hover:bg-ink-2 hover:text-danger"
-								>
-									<Trash2 size={13} />
-								</button>
-							</div>
+									{#if layer.clip}
+										<ContextMenu.Item class={menuItem} onSelect={() => editor.releaseMask(layer.id)}>
+											<Scissors size={14} class="text-faint" /> Release mask
+										</ContextMenu.Item>
+									{:else}
+										<ContextMenu.Item
+											class={menuItem}
+											onSelect={() => {
+												ensureSelected(layer.id);
+												editor.useAsMask();
+											}}
+										>
+											<Scissors size={14} class="text-faint" /> Use as mask
+										</ContextMenu.Item>
+									{/if}
 
-							<button
-								type="button"
-								onclick={(e) => {
-									stop(e);
-									editor.patch(layer.id, { hidden: !layer.hidden });
-								}}
-								aria-label={layer.hidden ? 'Show layer' : 'Hide layer'}
-								class="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted transition-colors hover:bg-ink-2 hover:text-ink"
-							>
-								{#if layer.hidden}<EyeOff size={13} />{:else}<Eye size={13} />{/if}
-							</button>
-						</div>
+									<ContextMenu.Separator class="my-1 h-px bg-line" />
+
+									<ContextMenu.Item class={menuItem} onSelect={() => editor.bringToFront(layer.id)}>
+										<ArrowUpToLine size={14} class="text-faint" /> Bring to front
+									</ContextMenu.Item>
+									<ContextMenu.Item class={menuItem} onSelect={() => editor.reorder(layer.id, 1)}>
+										<ChevronUp size={14} class="text-faint" /> Bring forward
+									</ContextMenu.Item>
+									<ContextMenu.Item class={menuItem} onSelect={() => editor.reorder(layer.id, -1)}>
+										<ChevronDown size={14} class="text-faint" /> Send backward
+									</ContextMenu.Item>
+									<ContextMenu.Item class={menuItem} onSelect={() => editor.sendToBack(layer.id)}>
+										<ArrowDownToLine size={14} class="text-faint" /> Send to back
+									</ContextMenu.Item>
+
+									<ContextMenu.Separator class="my-1 h-px bg-line" />
+
+									<ContextMenu.Item
+										class={menuItem}
+										disabled={!editor.canGroup}
+										onSelect={() => editor.group()}
+									>
+										<Group size={14} class="text-faint" /> Group selection
+									</ContextMenu.Item>
+									<ContextMenu.Item
+										class={menuItem}
+										disabled={!editor.canUngroup}
+										onSelect={() => editor.ungroup()}
+									>
+										<Ungroup size={14} class="text-faint" /> Ungroup
+									</ContextMenu.Item>
+
+									<ContextMenu.Separator class="my-1 h-px bg-line" />
+
+									<ContextMenu.Item class={menuItem} onSelect={() => startRename(layer.id)}>
+										<PencilLine size={14} class="text-faint" /> Rename
+									</ContextMenu.Item>
+									<ContextMenu.Item
+										class={menuItem}
+										disabled={editor.atLimit}
+										onSelect={() => editor.duplicateLayer(layer.id)}
+									>
+										<Copy size={14} class="text-faint" /> Duplicate
+									</ContextMenu.Item>
+									<ContextMenu.Item class={menuItem} onSelect={() => editor.paste()}>
+										<ClipboardPaste size={14} class="text-faint" /> Paste
+									</ContextMenu.Item>
+									<ContextMenu.Item class={menuItem} onSelect={() => editor.toggleLock(layer.id)}>
+										{#if layer.locked}<Unlock size={14} class="text-faint" /> Unlock{:else}<Lock
+												size={14}
+												class="text-faint"
+											/> Lock{/if}
+									</ContextMenu.Item>
+									<ContextMenu.Item
+										class={menuItem}
+										onSelect={() => editor.patch(layer.id, { hidden: !layer.hidden })}
+									>
+										{#if layer.hidden}<Eye size={14} class="text-faint" /> Show{:else}<EyeOff
+												size={14}
+												class="text-faint"
+											/> Hide{/if}
+									</ContextMenu.Item>
+
+									<ContextMenu.Separator class="my-1 h-px bg-line" />
+
+									<ContextMenu.Item
+										class="{menuItem} data-[highlighted]:!bg-danger/15 data-[highlighted]:!text-danger"
+										onSelect={() => {
+											ensureSelected(layer.id);
+											editor.removeSelected();
+										}}
+									>
+										<Trash2 size={14} /> Delete
+									</ContextMenu.Item>
+								</ContextMenu.Content>
+							</ContextMenu.Portal>
+						</ContextMenu.Root>
 					</li>
 				{/each}
 
