@@ -28,6 +28,28 @@ type Config struct {
 	API      APIConfig
 	Imaging  ImagingConfig
 	Storage  StorageConfig
+	Premium  PremiumConfig
+	Billing  BillingConfig
+}
+
+// BillingConfig configures Stripe billing for the $3.99/mo premium plan. Empty
+// (no secret/price) disables billing; the dashboard then hides upgrade UI and
+// premium falls back to the PREMIUM_GUILD_IDS allowlist.
+type BillingConfig struct {
+	SecretKey     string // sk_live_… / sk_test_…
+	WebhookSecret string // whsec_… (verifies inbound webhooks)
+	PriceID       string // the $3.99/mo recurring Price id
+}
+
+// Enabled reports whether checkout can be offered.
+func (b BillingConfig) Enabled() bool {
+	return b.SecretKey != "" && b.PriceID != ""
+}
+
+// PremiumConfig is a placeholder entitlement source until a real billing system
+// exists: an allowlist of premium guild IDs (env PREMIUM_GUILD_IDS, comma-sep).
+type PremiumConfig struct {
+	GuildIDs []string
 }
 
 // StorageConfig configures an S3-compatible object store for user uploads
@@ -137,6 +159,14 @@ func Load() (*Config, error) {
 		Imaging: ImagingConfig{
 			FontsDir: env("FONTS_DIR", "./assets/fonts"),
 		},
+		Premium: PremiumConfig{
+			GuildIDs: splitList(env("PREMIUM_GUILD_IDS", "")),
+		},
+		Billing: BillingConfig{
+			SecretKey:     env("STRIPE_SECRET_KEY", ""),
+			WebhookSecret: env("STRIPE_WEBHOOK_SECRET", ""),
+			PriceID:       env("STRIPE_PRICE_ID", ""),
+		},
 		Storage: StorageConfig{
 			Endpoint:       env("S3_ENDPOINT", ""),
 			Region:         env("S3_REGION", "us-east-1"),
@@ -193,6 +223,17 @@ func missingErr(missing []string) error {
 
 // IsProd reports whether the service is running in production mode.
 func (c *Config) IsProd() bool { return c.Env == "production" }
+
+// IsPremiumGuild reports whether a guild has premium entitlements. This is a
+// stub (env allowlist) until a real billing/entitlement system lands.
+func (c *Config) IsPremiumGuild(id string) bool {
+	for _, g := range c.Premium.GuildIDs {
+		if g == id {
+			return true
+		}
+	}
+	return false
+}
 
 func env(key, def string) string {
 	if v, ok := os.LookupEnv(key); ok && v != "" {
