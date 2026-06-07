@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/dia-bot/dia/internal/billing"
 	"github.com/dia-bot/dia/internal/cache"
 	"github.com/dia-bot/dia/internal/config"
 	"github.com/dia-bot/dia/internal/discord"
@@ -35,7 +36,8 @@ type Deps struct {
 	Discord *discord.Client
 	Imaging *imaging.Renderer
 	Bus     eventbus.Bus
-	Storage *storage.Store // nil when uploads aren't configured
+	Storage *storage.Store  // nil when uploads aren't configured
+	Billing *billing.Client // nil when Stripe isn't configured
 }
 
 // Server is the dashboard API.
@@ -48,6 +50,7 @@ type Server struct {
 	imaging  *imaging.Renderer
 	bus      eventbus.Bus
 	storage  *storage.Store
+	billing  *billing.Client
 	gstate   *guildstate.Store
 	hub      *realtime.Hub
 	sessions *sessionStore
@@ -67,6 +70,7 @@ func New(d Deps) *Server {
 		imaging:  d.Imaging,
 		bus:      d.Bus,
 		storage:  d.Storage,
+		billing:  d.Billing,
 		gstate:   guildstate.New(d.Cache),
 		hub:      realtime.NewHub(d.Log),
 		sessions: newSessionStore(d.Cache, sessionTTL),
@@ -107,6 +111,9 @@ func (s *Server) Handler() http.Handler {
 	// Realtime WebSocket (auth checked inside the handler off the cookie).
 	r.GET("/realtime/:id", s.handleRealtime)
 
+	// Stripe webhook (no session/CSRF — verified by Stripe-Signature instead).
+	r.POST("/billing/webhook", s.handleStripeWebhook)
+
 	api := r.Group("/api")
 	api.GET("/me", s.handleMe) // self-handles the unauthenticated case
 	api.POST("/auth/logout", s.handleLogout)
@@ -123,11 +130,20 @@ func (s *Server) Handler() http.Handler {
 	g.GET("/features/:key", s.handleGetFeature)
 	g.PUT("/features/:key", s.handlePutFeature)
 	g.POST("/uploads", s.handleUpload)
+	g.GET("/fonts", s.handleListFonts)
+	g.POST("/fonts", s.handleUploadFont)
+	g.DELETE("/fonts/:family", s.handleDeleteFont)
+	g.GET("/assets", s.handleListAssets)
+	g.DELETE("/assets/:aid", s.handleDeleteAsset)
+	g.GET("/billing", s.handleBillingStatus)
+	g.POST("/billing/checkout", s.handleCheckout)
+	g.POST("/billing/portal", s.handlePortal)
 	g.POST("/welcome/preview", s.handleWelcomePreview)
 	g.POST("/welcome/test", s.handleWelcomeTest)
 	g.GET("/welcome/variables", s.handleWelcomeVariables)
 	g.POST("/rank/preview", s.handleRankPreview)
 	g.POST("/layout/preview", s.handleLayoutPreview)
+	g.POST("/layout/resolve", s.handleResolveCard)
 	g.POST("/templating/preview", s.handleTemplatingPreview)
 	g.GET("/leveling/variables", s.handleLevelingVariables)
 
