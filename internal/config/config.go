@@ -27,6 +27,26 @@ type Config struct {
 	Redis    RedisConfig
 	API      APIConfig
 	Imaging  ImagingConfig
+	Storage  StorageConfig
+}
+
+// StorageConfig configures an S3-compatible object store for user uploads
+// (images, custom fonts). Works with AWS S3, Cloudflare R2, MinIO and
+// DigitalOcean Spaces. Uploads are disabled unless Bucket+keys+endpoint are set.
+type StorageConfig struct {
+	Endpoint       string
+	Region         string
+	Bucket         string
+	AccessKey      string
+	SecretKey      string
+	PublicBaseURL  string
+	ForcePathStyle bool
+	ACL            string
+}
+
+// Enabled reports whether uploads can be served.
+func (s StorageConfig) Enabled() bool {
+	return s.Endpoint != "" && s.Bucket != "" && s.AccessKey != "" && s.SecretKey != ""
 }
 
 // DiscordConfig holds Discord application credentials.
@@ -117,6 +137,16 @@ func Load() (*Config, error) {
 		Imaging: ImagingConfig{
 			FontsDir: env("FONTS_DIR", "./assets/fonts"),
 		},
+		Storage: StorageConfig{
+			Endpoint:       env("S3_ENDPOINT", ""),
+			Region:         env("S3_REGION", "us-east-1"),
+			Bucket:         env("S3_BUCKET", ""),
+			AccessKey:      env("S3_ACCESS_KEY_ID", ""),
+			SecretKey:      env("S3_SECRET_ACCESS_KEY", ""),
+			PublicBaseURL:  env("S3_PUBLIC_BASE_URL", ""),
+			ForcePathStyle: envBool("S3_FORCE_PATH_STYLE", false),
+			ACL:            env("S3_OBJECT_ACL", ""),
+		},
 	}
 	return c, nil
 }
@@ -167,6 +197,18 @@ func (c *Config) IsProd() bool { return c.Env == "production" }
 func env(key, def string) string {
 	if v, ok := os.LookupEnv(key); ok && v != "" {
 		return v
+	}
+	return def
+}
+
+func envBool(key string, def bool) bool {
+	if v, ok := os.LookupEnv(key); ok && v != "" {
+		switch strings.ToLower(strings.TrimSpace(v)) {
+		case "1", "true", "yes", "on":
+			return true
+		case "0", "false", "no", "off":
+			return false
+		}
 	}
 	return def
 }
