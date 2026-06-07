@@ -348,15 +348,7 @@
 				</div>
 				{#if cfg[tab].card.enabled}
 					<div class="mt-5 space-y-4">
-						<div class="overflow-hidden rounded-xl border border-line bg-ink-2">
-							{#if previewUrl}
-								<img src={previewUrl} alt="Card preview" class="block w-full" />
-							{:else}
-								<div class="grid aspect-[1024/450] place-items-center text-sm text-faint">
-									{cfg[tab].card.layout ? 'Rendering…' : 'Pick a starter to begin'}
-								</div>
-							{/if}
-						</div>
+						<!-- The card render lives in the Preview rail on the right; no duplicate here. -->
 						<div>
 							<div class="label">Starter</div>
 							<div class="flex flex-wrap gap-2">
