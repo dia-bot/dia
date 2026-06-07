@@ -5,6 +5,7 @@
 	// open ({#if}), so a fresh EditorStore is seeded from a COPY of the incoming
 	// layout each time — Cancel always discards, Apply commits via onApply.
 	import { setContext, untrack, onMount } from 'svelte';
+	import { fade } from 'svelte/transition';
 	import { EditorStore, EDITOR_CTX } from '$lib/layout/editor.svelte';
 	import type { Layout } from '$lib/layout/schema';
 	import { guildFonts } from '$lib/api';
@@ -46,7 +47,10 @@
 <!-- Fixed to the dashboard work area (below the 3.5rem header, right of the 260px
      sidebar) so it stays put regardless of page scroll — never anchored to the
      scrolled content. Full-bleed on mobile where the sidebar is off-canvas. -->
-<div class="fixed inset-x-0 bottom-0 top-14 z-40 overflow-hidden bg-bg md:left-[260px] md:rounded-tl-2xl">
+<div
+	transition:fade={{ duration: 120 }}
+	class="fixed inset-x-0 bottom-0 top-14 z-40 overflow-hidden bg-bg md:left-[260px] md:rounded-tl-2xl"
+>
 	<LayoutEditor {guildId} {extraVars} title="Card Studio">
 		{#snippet actions()}
 			<button

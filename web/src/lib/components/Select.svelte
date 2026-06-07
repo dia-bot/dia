@@ -17,7 +17,7 @@
 
 <Select.Root type="single" bind:value items={options}>
 	<Select.Trigger
-		class="group flex h-9 w-full items-center justify-between gap-2 rounded-lg border border-line-strong bg-ink-2 px-3 text-sm outline-none transition-all hover:border-faint focus-visible:border-faint focus-visible:ring-2 focus-visible:ring-line-strong data-[state=open]:border-faint data-[state=open]:ring-2 data-[state=open]:ring-line-strong"
+		class="group flex h-9 w-full items-center justify-between gap-2 rounded-lg border border-line bg-ink-2 px-3 text-sm outline-none transition-all hover:border-faint focus-visible:border-faint focus-visible:ring-2 focus-visible:ring-line-strong data-[state=open]:border-faint data-[state=open]:ring-2 data-[state=open]:ring-line-strong"
 	>
 		<span class="truncate {selectedLabel ? 'text-ink' : 'text-faint'}">
 			{selectedLabel || placeholder}
