@@ -30,7 +30,16 @@ export interface PathNode {
 export type Fit = 'cover' | 'contain';
 export type Shape = 'circle' | 'rounded';
 export type Mask = '' | 'circle' | 'ellipse'; // image clip; '' = rounded-rect via radius
-export type ClipMode = 'alpha' | 'luminance'; // how a mask layer clips the layers above it
+// How a mask layer clips the layers above it (Figma's three mask types):
+//   'alpha'     — the stencil's opacity sets the reveal (soft edges from a PNG/gradient)
+//   'vector'    — any covered pixel is fully revealed (hard-edged shape crop; the default for cards)
+//   'luminance' — the stencil's brightness × opacity sets the reveal (white reveals, black hides)
+export type ClipMode = 'alpha' | 'vector' | 'luminance';
+
+// Boolean shape operations (Figma's Union/Subtract/Intersect/Exclude). Set on a
+// group's metadata to combine its (vector) members into one composited silhouette.
+// Non-destructive: the member shapes stay editable; the op can change anytime.
+export type BoolOp = 'union' | 'subtract' | 'intersect' | 'exclude';
 
 // The card renders server-side on every member join, so we cap layer count to
 // keep that cheap — masking + vector shapes mean you rarely need many layers.
@@ -89,7 +98,10 @@ export interface Layer {
 	opacity: number; // 0..1
 	rotation?: number; // degrees, about the layer centre
 	hidden: boolean;
-	group?: string; // soft-group id: layers sharing one select/move/delete together
+	// soft-group id: layers sharing it select/move/delete together AND scope a mask
+	// group (the renderer reads it). Members of one group MUST be contiguous in
+	// `layers`; a mask group's stencil (clip=true) sits at the run's bottom.
+	group?: string;
 	locked?: boolean; // editor-only: can't be selected/moved on the canvas
 	// text
 	text?: string; // supports {variables}
@@ -133,11 +145,23 @@ export interface Background {
 	blur?: number; // px
 }
 
+// Metadata for a soft group, keyed by the group id used on layers. Membership and
+// z-order are NOT here — they live in the flat `layers` list (a contiguous run of
+// layers sharing a group id = one group). Mask-ness is derived (the run's bottom
+// layer has clip=true). `name` round-trips for display; `bool_op`, when set, makes
+// the group a boolean group that the renderer DOES read (it composites the run's
+// member shapes with that operation).
+export interface LayoutGroup {
+	name?: string;
+	bool_op?: BoolOp; // present ⇒ a boolean group (mutually exclusive with a mask group)
+}
+
 export interface Layout {
 	width: number;
 	height: number;
 	background: Background;
 	layers: Layer[];
+	groups?: Record<string, LayoutGroup>; // editor-only; keyed by Layer.group id
 }
 
 let counter = 0;

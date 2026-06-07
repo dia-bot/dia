@@ -18,7 +18,7 @@ type Layer struct {
 	Opacity  *float64 `json:"opacity"`            // pointer so an explicit 0 (fully transparent) is distinct from unset (=1)
 	Rotation float64  `json:"rotation,omitempty"` // degrees, about the layer centre
 	Hidden   bool     `json:"hidden"`
-	Group    string   `json:"group,omitempty"`  // soft-group id (editor-only; ignored when rendering)
+	Group    string   `json:"group,omitempty"`  // soft-group id; scopes a mask group (read by the mask loop). Members must be contiguous.
 	Locked   bool     `json:"locked,omitempty"` // editor-only; ignored when rendering
 
 	// text
@@ -81,12 +81,22 @@ type Background struct {
 	Blur     float64 `json:"blur,omitempty"`
 }
 
+// LayoutGroup is metadata for a soft group, keyed by Layer.Group id. Name
+// round-trips for display. BoolOp, when set ("union"|"subtract"|"intersect"|
+// "exclude"), makes the group a boolean group: the renderer composites the run's
+// member shapes with that operation. Kept in sync with web/src/lib/layout/schema.ts.
+type LayoutGroup struct {
+	Name   string `json:"name,omitempty"`
+	BoolOp string `json:"bool_op,omitempty"` // union|subtract|intersect|exclude
+}
+
 // Layout is a canvas plus an ordered list of layers (first = back-most).
 type Layout struct {
-	Width      int        `json:"width"`
-	Height     int        `json:"height"`
-	Background Background `json:"background"`
-	Layers     []Layer    `json:"layers"`
+	Width      int                    `json:"width"`
+	Height     int                    `json:"height"`
+	Background Background             `json:"background"`
+	Layers     []Layer                `json:"layers"`
+	Groups     map[string]LayoutGroup `json:"groups,omitempty"` // editor-only; keyed by Layer.Group id
 }
 
 // Canvas size limits — keep server-side allocation bounded. Mirrors the web
