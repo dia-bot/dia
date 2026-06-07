@@ -137,9 +137,17 @@
 
 	// Undo history recorder: coalesce a burst of edits (a drag, a run of
 	// keystrokes) into one checkpoint by committing 350ms after activity settles.
+	// `touch` deep-reads the layout to register reactive deps WITHOUT allocating a
+	// big JSON string every frame (the stringify was the drag-lag culprit on cards
+	// with images / long template strings).
+	function touch(v: unknown) {
+		if (v && typeof v === 'object') {
+			for (const k in v as Record<string, unknown>) touch((v as Record<string, unknown>)[k]);
+		}
+	}
 	let histTimer: ReturnType<typeof setTimeout>;
 	$effect(() => {
-		JSON.stringify(store.layout); // track every nested change
+		touch(store.layout);
 		clearTimeout(histTimer);
 		histTimer = setTimeout(() => store.record(), 350);
 	});
@@ -214,7 +222,7 @@
 
 	<!-- Three-pane body -->
 	<div class="flex min-h-0 flex-1">
-		<aside class="w-56 shrink-0 overflow-y-auto border-r border-line bg-surface">
+		<aside class="studio-rail w-60 shrink-0 overflow-y-auto border-r border-line bg-surface">
 			<LayersPanel />
 		</aside>
 
@@ -310,7 +318,7 @@
 			{/if}
 		</div>
 
-		<aside class="w-72 shrink-0 overflow-y-auto border-l border-line bg-surface">
+		<aside class="studio-rail w-72 shrink-0 overflow-y-auto border-l border-line bg-surface">
 			<PropertiesPanel />
 		</aside>
 	</div>
@@ -324,6 +332,12 @@
 	/* Toolbar: a faint top sheen for depth (over bg-surface). */
 	.studio-bar {
 		background-image: linear-gradient(to bottom, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0));
+	}
+
+	/* Side rails: a faint lit top edge so the panels read as crafted, elevated
+	   surfaces (matches the toolbar sheen + the .card depth motif). */
+	.studio-rail {
+		box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
 	}
 
 	/* The canvas "pit": the dark recessed backdrop with a faint dot grid, so the

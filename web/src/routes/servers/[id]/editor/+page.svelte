@@ -17,9 +17,13 @@
 	const storageKey = $derived(`dia:layout:${guild.id}`);
 	let saved = $state(false);
 	let savedTimer: ReturnType<typeof setTimeout>;
-	// Snapshot of the last-saved document; the design is "dirty" when it differs.
+	// Snapshot of the last-saved document; "dirty" when it differs. Computed on
+	// demand (only at navigation time) — a $derived here would re-stringify the
+	// whole layout on every drag frame and make editing lag.
 	let savedJson = $state('');
-	const dirty = $derived(JSON.stringify(editor.layout) !== savedJson);
+	function isDirty() {
+		return JSON.stringify(editor.toJSON()) !== savedJson;
+	}
 
 	onMount(() => {
 		if (typeof window === 'undefined') return;
@@ -50,12 +54,12 @@
 	// Warn before leaving with unsaved changes — both in-app navigation (clicking
 	// another tab in the sidebar) and closing/reloading the browser tab.
 	beforeNavigate((nav) => {
-		if (dirty && !confirm('You have unsaved changes to this card. Leave without saving?')) {
+		if (isDirty() && !confirm('You have unsaved changes to this card. Leave without saving?')) {
 			nav.cancel();
 		}
 	});
 	function onBeforeUnload(e: BeforeUnloadEvent) {
-		if (dirty) {
+		if (isDirty()) {
 			e.preventDefault();
 			e.returnValue = ''; // shows the browser's native "leave site?" prompt
 		}
