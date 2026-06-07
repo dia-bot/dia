@@ -49,6 +49,40 @@
 		};
 	}
 
+	// ── masking preview: a white stencil shape (in canvas coords) for a mask layer.
+	// The exact alpha/luminance compositing happens in the Go renderer; this CSS
+	// mask reflects shape masks (rect/ellipse/circle/path) faithfully and falls
+	// back to the mask's bounding box for image/text masks. ───────────────────────
+	function shapeEl(m: Layer, fill: string): string {
+		if (m.type === 'image' && m.mask === 'circle') {
+			const r = Math.min(m.w, m.h) / 2;
+			return `<circle cx='${m.x + m.w / 2}' cy='${m.y + m.h / 2}' r='${r}' fill='${fill}'/>`;
+		}
+		if (m.type === 'ellipse' || (m.type === 'image' && m.mask === 'ellipse')) {
+			return `<ellipse cx='${m.x + m.w / 2}' cy='${m.y + m.h / 2}' rx='${m.w / 2}' ry='${m.h / 2}' fill='${fill}'/>`;
+		}
+		if (m.type === 'path') {
+			const d = pathD(m.nodes, m.closed);
+			return d ? `<path d='${d}' fill='${fill}'/>` : '';
+		}
+		const rad = m.radius ?? 0;
+		return `<rect x='${m.x}' y='${m.y}' width='${m.w}' height='${m.h}' rx='${rad}' fill='${fill}'/>`;
+	}
+	function maskCss(l: Layer): string {
+		const m = editor.maskFor(l);
+		if (!m) return '';
+		const shape = shapeEl(m, '#fff');
+		if (!shape) return '';
+		// Inverted: white everywhere except the shape (a stencil with a hole).
+		const inner = m.clip_invert
+			? `<defs><mask id='im'><rect x='${l.x}' y='${l.y}' width='${l.w}' height='${l.h}' fill='#fff'/>${shapeEl(m, '#000')}</mask></defs><rect x='${l.x}' y='${l.y}' width='${l.w}' height='${l.h}' fill='#fff' mask='url(#im)'/>`
+			: shape;
+		// viewBox = THIS layer's box, so the canvas-space stencil maps onto it.
+		const svg = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='${l.x} ${l.y} ${l.w} ${l.h}' preserveAspectRatio='none'>${inner}</svg>`;
+		const url = `url("data:image/svg+xml,${encodeURIComponent(svg)}")`;
+		return `-webkit-mask:${url} center/100% 100% no-repeat; mask:${url} center/100% 100% no-repeat;`;
+	}
+
 	// ── Pointer interaction ──────────────────────────────────────────────────
 	// One gesture model for move + resize. `handle` is null for a body drag, or
 	// one of the 8 directions for a resize. We capture the pointer on the moving
@@ -66,6 +100,8 @@
 		pointerId: number;
 		target: HTMLElement;
 		startNodes?: PathNode[]; // for moving a path: node positions at gesture start
+		// intrinsic props at gesture start, for the Scale tool (scales them too)
+		startProps?: { fontSize?: number; stroke?: number; radius?: number; ring?: number };
 		// for a multi-selection body drag: every selected layer's start geometry
 		multi?: { id: string; x: number; y: number; nodes: PathNode[] | null }[];
 	};
@@ -85,6 +121,7 @@
 
 	function beginBody(e: PointerEvent, l: Layer) {
 		if (spaceDown) return; // space-pan: let the viewport handle the drag
+		if (l.locked) return; // locked layers aren't selectable/movable on the canvas
 		if (editor.tool !== 'select') return; // a draw tool is active → let the stage draw
 		if (editor.editId === l.id) return; // editing this layer (text inline / path nodes) → no body-drag
 		if (e.button !== 0) return;
@@ -100,7 +137,10 @@
 	}
 
 	function beginHandle(e: PointerEvent, l: Layer, handle: Dir) {
-		if (editor.tool !== 'select') return;
+		if (l.locked) return;
+		// Handles are live for the Select tool (resize) and the Scale tool (resize +
+		// scale intrinsic properties).
+		if (editor.tool !== 'select' && editor.tool !== 'scale') return;
 		if (e.button !== 0) return;
 		e.stopPropagation();
 		start(e, l, handle);
@@ -121,6 +161,12 @@
 			pointerId: e.pointerId,
 			target,
 			startNodes: l.type === 'path' && l.nodes ? l.nodes.map((n) => ({ ...n })) : undefined,
+			startProps: {
+				fontSize: l.font_size,
+				stroke: l.stroke_width,
+				radius: l.radius,
+				ring: l.ring_width
+			},
 			multi:
 				handle === null && editor.selectedIds.length > 1
 					? editor.selectedLayers.map((s) => ({
@@ -193,29 +239,51 @@
 
 		const h = g.handle;
 		const MIN = 8;
-		let x = g.startX;
-		let y = g.startY;
+		const scaleMode = editor.tool === 'scale';
+		const aspect = g.startH !== 0 ? g.startW / g.startH : 1;
+		// Scale tool is always uniform; Shift constrains aspect; Alt resizes from the
+		// centre. (Figma's resize modifiers.)
+		const constrain = scaleMode || e.shiftKey;
+		const fromCenter = e.altKey;
+
+		// Unconstrained edges from the dragged handle.
 		let w = g.startW;
 		let hgt = g.startH;
+		if (h.includes('e')) w = g.startW + dx;
+		if (h.includes('w')) w = g.startW - dx;
+		if (h.includes('s')) hgt = g.startH + dy;
+		if (h.includes('n')) hgt = g.startH - dy;
 
-		if (h.includes('e')) w = Math.max(MIN, g.startW + dx);
-		if (h.includes('s')) hgt = Math.max(MIN, g.startH + dy);
-		if (h.includes('w')) {
-			// Left edge: round x first, then derive width so the anchored right edge
-			// stays pinned exactly (no 1px jitter from rounding x and w separately).
-			const right = g.startX + g.startW;
-			x = Math.round(Math.min(g.startX + dx, right - MIN));
-			w = right - x;
+		if (constrain) {
+			const horiz = h === 'e' || h === 'w';
+			const vert = h === 'n' || h === 's';
+			if (horiz) hgt = w / aspect;
+			else if (vert) w = hgt * aspect;
+			else if (Math.abs(w / g.startW) >= Math.abs(hgt / g.startH)) hgt = w / aspect;
+			else w = hgt * aspect;
 		}
-		if (h.includes('n')) {
-			const bottom = g.startY + g.startH;
-			y = Math.round(Math.min(g.startY + dy, bottom - MIN));
-			hgt = bottom - y;
+		w = Math.max(MIN, Math.round(w));
+		hgt = Math.max(MIN, Math.round(hgt));
+
+		// Position: keep the opposite edge/corner pinned, unless resizing from centre.
+		let x: number;
+		let y: number;
+		if (fromCenter) {
+			const cx = g.startX + g.startW / 2;
+			const cy = g.startY + g.startH / 2;
+			x = Math.round(cx - w / 2);
+			y = Math.round(cy - hgt / 2);
+		} else {
+			x = h.includes('w') ? Math.round(g.startX + g.startW - w) : g.startX;
+			y = h.includes('n') ? Math.round(g.startY + g.startH - hgt) : g.startY;
 		}
 
-		// A path/shape layer has no box of its own — resize by scaling its nodes
-		// from the start bbox to the new one (so shapes resize like a rectangle).
-		if (g.startNodes) {
+		if (scaleMode) {
+			// Uniform factor (aspect is locked above), scaling intrinsic props too.
+			const f = g.startW !== 0 ? w / g.startW : 1;
+			editor.scaleLayer(g.id, g.startProps ?? {}, g.startNodes, g.startX, g.startY, g.startW, g.startH, x, y, w, hgt, f);
+		} else if (g.startNodes) {
+			// A path/shape has no box of its own — scale its nodes to the new bbox.
 			editor.scalePath(g.id, g.startNodes, g.startX, g.startY, g.startW, g.startH, x, y, w, hgt);
 		} else {
 			editor.resize(g.id, w, hgt);
@@ -247,6 +315,11 @@
 	let panX = $state(0);
 	let panY = $state(0);
 	let spaceDown = $state(false);
+	// A draw/insert tool is active → the canvas shows a crosshair (Figma); Select
+	// shows the normal arrow, the hand tool (space) shows grab.
+	const drawCursor = $derived(
+		['rect', 'ellipse', 'text', 'image', 'shape', 'pen', 'pencil'].includes(editor.tool)
+	);
 	let viewportEl = $state<HTMLElement>();
 	let pan: { ptrId: number; x0: number; y0: number; px: number; py: number } | null = null;
 
@@ -345,6 +418,10 @@
 			case 'pencil':
 				pencilDown(e, p, el);
 				return;
+			case 'bend':
+				return; // the Bend tool only acts on a path (handled in pathDown)
+			case 'scale':
+				return; // the Scale tool acts on the selection's handles (beginHandle)
 			case 'shape': {
 				if (e.button !== 0) return;
 				const layer = editor.createShape(editor.shapeKind, p.x, p.y);
@@ -553,6 +630,8 @@
 	let textEl = $state<HTMLTextAreaElement>();
 	// $state so the closeNode $derived re-tracks when a node drag starts/ends.
 	let nodeDrag = $state<{ node: number; kind: 'anchor' | 'h1' | 'h2'; ptrId: number; target: Element } | null>(null);
+	// The bezier handle most recently grabbed (for Delete = remove that bend).
+	let activeHandle = $state<{ node: number; kind: 'h1' | 'h2' } | null>(null);
 	let segDrag: { ptrId: number; target: Element; seg: number; sx: number; sy: number; start: PathNode[] } | null = null;
 	let closeHint = $state(false); // dragging an endpoint within range of the other end
 
@@ -702,6 +781,9 @@
 		if (e.button !== 0) return;
 		e.stopPropagation();
 		editor.setActiveNode(idx);
+		// Track which bezier handle was grabbed so Delete removes THAT bend (not the
+		// node or the whole layer). Grabbing the anchor clears it.
+		activeHandle = kind === 'anchor' ? null : { node: idx, kind };
 		(e.currentTarget as Element).setPointerCapture(e.pointerId);
 		nodeDrag = { node: idx, kind, ptrId: e.pointerId, target: e.currentTarget as Element };
 	}
@@ -831,27 +913,6 @@
 		}
 		return best;
 	}
-	function beginSegDrag(e: PointerEvent, l: Layer) {
-		if (e.button !== 0) return;
-		e.stopPropagation();
-		if (!stageEl || !l.nodes || l.nodes.length < 2) return;
-		const p = toLocal(canvasPoint(e, stageEl), l);
-		const { seg, d } = nearestOnPath(l, p);
-		// Only bend when the press is actually near the outline — not deep inside a
-		// filled shape (pressing the fill shouldn't warp the curve). Drag the line.
-		const near = 8 / (scale || 1);
-		if (Math.sqrt(d) > near) return;
-		(e.currentTarget as Element).setPointerCapture(e.pointerId);
-		segDrag = {
-			ptrId: e.pointerId,
-			target: e.currentTarget as Element,
-			seg,
-			sx: p.x,
-			sy: p.y,
-			start: l.nodes.map((n) => ({ ...n }))
-		};
-		editor.setActiveNode(null);
-	}
 	function moveSegDrag(e: PointerEvent) {
 		if (!segDrag || !stageEl) return;
 		const path = editor.editPath;
@@ -889,18 +950,96 @@
 		segDrag = null;
 	}
 
-	// Path stroke pointer routing: in edit mode the line bends a segment; otherwise
-	// it moves the whole layer.
+	// ── Bend tool: click anywhere on a path and drag — near a point it pulls that
+	// point into a curve (symmetric handles); on a segment it bows the curve. An
+	// explicit palette tool (Figma's Bend), not an implicit edit-mode drag. ───────
+	let bend: { node: number; ptrId: number; target: Element } | null = null;
+
+	function beginBend(e: PointerEvent, l: Layer) {
+		if (e.button !== 0) return;
+		e.stopPropagation();
+		if (!stageEl || !l.nodes || l.nodes.length < 2) return;
+		const p = toLocal(canvasPoint(e, stageEl), l);
+		// nearest node — grab it to curve that point
+		let ni = -1;
+		let nd = Infinity;
+		l.nodes.forEach((n, i) => {
+			const dd = Math.hypot(n.x - p.x, n.y - p.y);
+			if (dd < nd) {
+				nd = dd;
+				ni = i;
+			}
+		});
+		if (ni >= 0 && nd <= 12 / (scale || 1)) {
+			if (editor.editId !== l.id) editor.enterEdit(l.id);
+			(e.currentTarget as Element).setPointerCapture(e.pointerId);
+			bend = { node: ni, ptrId: e.pointerId, target: e.currentTarget as Element };
+			editor.setActiveNode(ni);
+			return;
+		}
+		// otherwise only bow a segment if the press is actually ON the line — clicking
+		// the fill interior or off the outline does nothing (Figma's bend behaviour).
+		const { seg, d } = nearestOnPath(l, p);
+		if (Math.sqrt(d) > 8 / (scale || 1)) return;
+		if (editor.editId !== l.id) editor.enterEdit(l.id);
+		(e.currentTarget as Element).setPointerCapture(e.pointerId);
+		segDrag = {
+			ptrId: e.pointerId,
+			target: e.currentTarget as Element,
+			seg,
+			sx: p.x,
+			sy: p.y,
+			start: l.nodes.map((n) => ({ ...n }))
+		};
+		editor.setActiveNode(null);
+	}
+	function moveBend(e: PointerEvent) {
+		if (!bend || !stageEl) return;
+		const path = editor.editPath;
+		const n = path?.nodes?.[bend.node];
+		if (!n) return;
+		const p = toLocal(canvasPoint(e, stageEl), path!);
+		// pull symmetric handles toward the cursor — a corner becomes a smooth curve
+		n.h2x = Math.round(p.x);
+		n.h2y = Math.round(p.y);
+		n.h1x = Math.round(2 * n.x - p.x);
+		n.h1y = Math.round(2 * n.y - p.y);
+		n.m = 'mirror';
+	}
+	function endBend() {
+		if (!bend) return;
+		try {
+			bend.target.releasePointerCapture(bend.ptrId);
+		} catch {
+			/* gone */
+		}
+		const path = editor.editPath;
+		if (path) editor.fitPath(path);
+		bend = null;
+	}
+
+	// Path stroke pointer routing. With the Bend tool, clicking the path bends it;
+	// in edit mode the stroke is inert (edit via points / use Bend); otherwise it
+	// moves the whole layer.
 	function pathDown(e: PointerEvent, l: Layer) {
-		if (l.id === editor.editId) beginSegDrag(e, l);
-		else beginBody(e, l);
+		if (editor.tool === 'bend') {
+			beginBend(e, l);
+			return;
+		}
+		if (l.id === editor.editId) {
+			e.stopPropagation(); // don't deselect; points/handles handle editing
+			return;
+		}
+		beginBody(e, l);
 	}
 	function pathMove(e: PointerEvent) {
-		if (segDrag) moveSegDrag(e);
+		if (bend) moveBend(e);
+		else if (segDrag) moveSegDrag(e);
 		else onMove(e);
 	}
 	function pathUp(e: PointerEvent) {
-		if (segDrag) endSegDrag();
+		if (bend) endBend();
+		else if (segDrag) endSegDrag();
 		else endGesture(e);
 	}
 
@@ -1089,6 +1228,12 @@
 				case 'p':
 					editor.setTool('pen');
 					return;
+				case 'b':
+					editor.setTool('bend');
+					return;
+				case 'k':
+					editor.setTool('scale');
+					return;
 			}
 		}
 
@@ -1132,8 +1277,14 @@
 			case 'Backspace':
 				e.preventDefault();
 				if (editor.editId) {
-					// In edit mode only ever remove a node — never the whole layer.
-					editor.deleteActiveNode();
+					// In edit mode never remove the whole layer. If a bezier handle is the
+					// active selection, delete just THAT bend; otherwise remove the point.
+					if (activeHandle) {
+						editor.deleteHandle(activeHandle.node, activeHandle.kind);
+						activeHandle = null;
+					} else {
+						editor.deleteActiveNode();
+					}
 				} else {
 					editor.removeSelected();
 				}
@@ -1154,6 +1305,7 @@
 	bind:this={viewportEl}
 	class="viewport"
 	class:grab={spaceDown}
+	class:draw={drawCursor && !spaceDown}
 	role="presentation"
 	onwheel={onWheel}
 	onpointerdown={onViewportDown}
@@ -1229,7 +1381,7 @@
 				class="path-layer"
 				viewBox="0 0 {layout.width} {layout.height}"
 				preserveAspectRatio="none"
-				style="opacity:{l.opacity ?? 1};"
+				style="opacity:{l.opacity ?? 1}; {l.id === editor.editId ? '' : maskCss(l)}"
 			>
 				<g transform="rotate({l.rotation ?? 0} {cx} {cy})">
 					{#if d}
@@ -1241,7 +1393,7 @@
 							stroke-linecap="round"
 							stroke-linejoin="round"
 							class="path-stroke"
-							class:editing={l.id === editor.editId}
+							class:editing={l.id === editor.editId || editor.tool === 'bend'}
 							role="button"
 							tabindex="-1"
 							aria-label={l.name}
@@ -1355,7 +1507,7 @@
 			class="layer"
 			class:selected={isSel}
 			style="left:{b.left}; top:{b.top}; width:{b.width}; height:{b.height}; opacity:{l.opacity ??
-				1}; transform:rotate({l.rotation ?? 0}deg);"
+				1}; transform:rotate({l.rotation ?? 0}deg); {isSel ? '' : maskCss(l)}"
 			onpointerdown={(e) => beginBody(e, l)}
 			onpointermove={onMove}
 			onpointerup={endGesture}
@@ -1479,15 +1631,21 @@
 		/* Vector-editing overlay colours: a high-contrast cool blue + white that
 		   reads on any card background (the rose accent vanishes on the gradient).
 		   Scoped to the canvas editing UI only — never page chrome. */
-		--vec: #2da9ff;
+		--vec: #0d99ff; /* Figma selection blue */
 		--vec-ink: #0b3a63;
 		--vec-close: #34d399;
+		--vec-guide: #f24822; /* Figma's red snap/alignment guide */
 	}
 	.viewport.grab {
 		cursor: grab;
 	}
 	.viewport.grab:active {
 		cursor: grabbing;
+	}
+	/* A draw tool active → crosshair across the canvas, even over existing layers. */
+	.viewport.draw,
+	.viewport.draw :is(.layer, .path-stroke) {
+		cursor: crosshair;
 	}
 	.zoomwrap {
 		width: 100%;
@@ -1550,17 +1708,17 @@
 
 	.layer {
 		position: absolute;
-		cursor: grab;
+		cursor: default;
 		touch-action: none;
 		outline: none;
 		/* fractional % positions land mid-pixel; this keeps edges crisp */
 		will-change: left, top, width, height;
 	}
-	.layer:active {
-		cursor: grabbing;
+	.layer.selected {
+		cursor: move;
 	}
 	.selected {
-		outline: 1px solid var(--color-accent);
+		outline: 1px solid var(--vec);
 		outline-offset: 0;
 		z-index: 2;
 	}
@@ -1575,7 +1733,7 @@
 	}
 	.path-stroke {
 		pointer-events: visiblePainted;
-		cursor: grab;
+		cursor: default;
 	}
 	.path-node {
 		fill: var(--vec);
@@ -1655,8 +1813,7 @@
 	.guide {
 		position: absolute;
 		z-index: 4;
-		background: var(--vec);
-		box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.35);
+		background: var(--vec-guide);
 		pointer-events: none;
 	}
 	.guide-v {
@@ -1672,14 +1829,14 @@
 
 	.handle {
 		position: absolute;
-		width: 9px;
-		height: 9px;
+		width: 8px;
+		height: 8px;
 		margin: -1px;
 		padding: 0;
-		background: var(--color-bg);
-		border: 1px solid var(--color-accent);
-		border-radius: 2px;
-		box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+		background: #fff;
+		border: 1px solid var(--vec);
+		border-radius: 1px;
+		box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
 		touch-action: none;
 		z-index: 3;
 		/* re-enable hit-testing inside the pointer-events:none .path-sel outline */
