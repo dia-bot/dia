@@ -83,8 +83,63 @@ export const api = {
 		req('DELETE', `/api/guilds/${id}/reaction-roles/${mid}`),
 
 	cases: (id: string) => req<{ cases: any[] }>('GET', `/api/guilds/${id}/cases`),
-	welcomePresets: () => req<{ presets: any[] }>('GET', '/api/welcome/presets')
+	welcomePresets: () => req<{ presets: any[] }>('GET', '/api/welcome/presets'),
+	welcomeVariables: (id: string) =>
+		req<{ variables: { token: string; desc: string }[] }>('GET', `/api/guilds/${id}/welcome/variables`),
+	welcomeTest: (id: string, kind: 'welcome' | 'goodbye') =>
+		req<{ ok: boolean }>('POST', `/api/guilds/${id}/welcome/test`, { kind }),
+	levelingVariables: (id: string) =>
+		req<{ variables: { token: string; desc: string }[] }>('GET', `/api/guilds/${id}/leveling/variables`),
+	// templatingPreview renders one template string and returns the text + any error.
+	templatingPreview: (id: string, template: string, extraVars?: Record<string, string>) =>
+		req<{ rendered: string; error: string }>('POST', `/api/guilds/${id}/templating/preview`, {
+			template,
+			extra_vars: extraVars
+		})
 };
+
+// layoutPreview posts a layout document and returns an object URL for the
+// server-rendered PNG (the exact image the bot would post).
+export async function layoutPreview(
+	id: string,
+	layout: unknown,
+	extraVars?: Record<string, string>
+): Promise<string> {
+	const res = await fetch(`${API_URL}/api/guilds/${id}/layout/preview`, {
+		method: 'POST',
+		credentials: 'include',
+		headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+		body: JSON.stringify({ layout, extra_vars: extraVars })
+	});
+	if (!res.ok) throw new ApiError(res.status, 'layout preview failed');
+	return URL.createObjectURL(await res.blob());
+}
+
+// uploadImage sends a file to the guild's upload endpoint (multipart) and
+// returns the stored public URL. Throws ApiError (e.g. 503 when uploads aren't
+// configured, 415 for a non-image, 413 when too large).
+export async function uploadImage(id: string, file: File): Promise<string> {
+	const form = new FormData();
+	form.append('file', file);
+	const res = await fetch(`${API_URL}/api/guilds/${id}/uploads`, {
+		method: 'POST',
+		credentials: 'include',
+		headers: { 'X-CSRF-Token': csrfToken }, // no Content-Type: the browser sets the multipart boundary
+		body: form
+	});
+	if (!res.ok) {
+		let msg = 'upload failed';
+		try {
+			const j = await res.json();
+			if (j?.error) msg = j.error;
+		} catch {
+			/* non-JSON */
+		}
+		throw new ApiError(res.status, msg);
+	}
+	const j = (await res.json()) as { url: string };
+	return j.url;
+}
 
 // previewImage posts a config and returns an object URL for an <img src>.
 export async function previewImage(

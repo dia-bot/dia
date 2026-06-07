@@ -16,6 +16,7 @@
 		ShieldCheck,
 		ShieldAlert,
 		Wand2,
+		Frame,
 		ChevronRight,
 		Search,
 		Menu,
@@ -58,7 +59,13 @@
 				{ label: 'Automod', path: 'automod', icon: ShieldAlert }
 			]
 		},
-		{ section: 'Advanced', items: [{ label: 'Custom Commands', path: 'commands', icon: Wand2 }] }
+		{
+			section: 'Advanced',
+			items: [
+				{ label: 'Custom Commands', path: 'commands', icon: Wand2 },
+				{ label: 'Card Studio', path: 'editor', icon: Frame }
+			]
+		}
 	];
 	const flatPages = nav.flatMap((s) => s.items).map((i) => ({ label: i.label, path: i.path }));
 
@@ -71,6 +78,10 @@
 	// Breadcrumb tail: the current page's label.
 	const currentSeg = $derived($page.url.pathname.replace(base, '').replace(/^\//, '').split('/')[0]);
 	const pageTitle = $derived(flatPages.find((p) => p.path === currentSeg)?.label ?? 'Overview');
+
+	// A few builder pages want the whole content width (no centered column).
+	const fullWidthPages = ['welcome', 'editor'];
+	const fullWidth = $derived(fullWidthPages.includes(currentSeg));
 
 	let paletteOpen = $state(false);
 	let navOpen = $state(false); // mobile drawer
@@ -209,9 +220,10 @@
 			</div>
 		</aside>
 
-		<!-- Content: the lighter framed work surface -->
+		<!-- Content: the lighter framed work surface. `relative` so an in-context
+		     overlay (e.g. the Card Studio) can fill exactly this area, not the page. -->
 		<main
-			class="min-w-0 flex-1 overflow-auto border-line bg-bg md:rounded-tl-2xl md:border-l md:border-t"
+			class="relative min-w-0 flex-1 overflow-auto border-line bg-bg md:rounded-tl-2xl md:border-l md:border-t"
 		>
 			{#if store.error}
 				<div class="px-6 py-7">
@@ -241,7 +253,9 @@
 					</div>
 				</div>
 			{:else}
-				<div class="mx-auto max-w-3xl px-6 py-7">{@render children()}</div>
+				<div class="{fullWidth ? 'max-w-none' : 'mx-auto max-w-3xl'} px-6 py-7">
+					{@render children()}
+				</div>
 			{/if}
 		</main>
 	</div>

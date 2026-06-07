@@ -6,6 +6,7 @@ import { connectRealtime } from './realtime';
 import {
 	CHANNEL_TEXT,
 	CHANNEL_ANNOUNCEMENT,
+	CHANNEL_CATEGORY,
 	type Channel,
 	type GuildDetail,
 	type RealtimeMessage,
@@ -69,6 +70,30 @@ export class GuildStore {
 			.filter((c) => c.type === CHANNEL_TEXT || c.type === CHANNEL_ANNOUNCEMENT)
 			.sort((a, b) => a.position - b.position)
 			.map((c) => ({ value: c.id, label: '# ' + c.name }));
+	}
+
+	// channelGroups returns postable (text/announcement) channels organised the
+	// way Discord shows them: top-level channels first, then each category with
+	// its own channels nested under it — both ordered by Discord position.
+	channelGroups(): { id: string; name: string; channels: { value: string; label: string }[] }[] {
+		const text = this.channels
+			.filter((c) => c.type === CHANNEL_TEXT || c.type === CHANNEL_ANNOUNCEMENT)
+			.sort((a, b) => a.position - b.position);
+		const inCat = (catId: string) =>
+			text
+				.filter((c) => (c.parent_id ?? '') === catId)
+				.map((c) => ({ value: c.id, label: c.name }));
+
+		const groups: { id: string; name: string; channels: { value: string; label: string }[] }[] = [];
+		const uncategorised = inCat('');
+		if (uncategorised.length) groups.push({ id: '', name: '', channels: uncategorised });
+		for (const cat of this.channels
+			.filter((c) => c.type === CHANNEL_CATEGORY)
+			.sort((a, b) => a.position - b.position)) {
+			const channels = inCat(cat.id);
+			if (channels.length) groups.push({ id: cat.id, name: cat.name, channels });
+		}
+		return groups;
 	}
 
 	roleOptions(includeManaged = false) {
