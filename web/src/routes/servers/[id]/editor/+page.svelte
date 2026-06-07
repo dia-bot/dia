@@ -2,8 +2,10 @@
 	// Standalone Card Studio: owns an EditorStore, persists to localStorage per
 	// guild, and embeds the reusable LayoutEditor chrome.
 	import { getContext, setContext, onMount, onDestroy } from 'svelte';
+	import { beforeNavigate } from '$app/navigation';
 	import { EditorStore, EDITOR_CTX } from '$lib/layout/editor.svelte';
 	import { GuildStore, GUILD_CTX } from '$lib/guild.svelte';
+	import { guildFonts } from '$lib/api';
 	import LayoutEditor from '$lib/components/editor/LayoutEditor.svelte';
 	import { Save, Check } from 'lucide-svelte';
 
@@ -15,6 +17,9 @@
 	const storageKey = $derived(`dia:layout:${guild.id}`);
 	let saved = $state(false);
 	let savedTimer: ReturnType<typeof setTimeout>;
+	// Snapshot of the last-saved document; the design is "dirty" when it differs.
+	let savedJson = $state('');
+	const dirty = $derived(JSON.stringify(editor.layout) !== savedJson);
 
 	onMount(() => {
 		if (typeof window === 'undefined') return;
@@ -24,6 +29,10 @@
 		} catch {
 			/* corrupt or missing — keep the default layout */
 		}
+		savedJson = JSON.stringify(editor.toJSON()); // baseline: nothing to save yet
+		guildFonts(guild.id)
+			.then((r) => editor.setFonts(r.fonts, r.premium))
+			.catch(() => {});
 	});
 
 	function save() {
@@ -32,9 +41,24 @@
 		} catch {
 			/* storage blocked — fail quietly */
 		}
+		savedJson = JSON.stringify(editor.toJSON());
 		saved = true;
 		clearTimeout(savedTimer);
 		savedTimer = setTimeout(() => (saved = false), 1800);
+	}
+
+	// Warn before leaving with unsaved changes — both in-app navigation (clicking
+	// another tab in the sidebar) and closing/reloading the browser tab.
+	beforeNavigate((nav) => {
+		if (dirty && !confirm('You have unsaved changes to this card. Leave without saving?')) {
+			nav.cancel();
+		}
+	});
+	function onBeforeUnload(e: BeforeUnloadEvent) {
+		if (dirty) {
+			e.preventDefault();
+			e.returnValue = ''; // shows the browser's native "leave site?" prompt
+		}
 	}
 
 	function onKeydown(e: KeyboardEvent) {
@@ -47,7 +71,7 @@
 </script>
 
 <svelte:head><title>Card Studio · {guild.name} · Dia</title></svelte:head>
-<svelte:window onkeydown={onKeydown} />
+<svelte:window onkeydown={onKeydown} onbeforeunload={onBeforeUnload} />
 
 <!-- Break out of the dashboard column for an edge-to-edge editor. -->
 <div class="-m-6 -my-7 h-[calc(100vh-3.5rem-1px)]">
