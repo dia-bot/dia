@@ -248,21 +248,27 @@ func handleRank(c *interactions.Context, d plugin.Deps) error {
 	cfg, _, _ := plugin.LoadConfig[Config](c.Ctx, d, gid, FeatureKey)
 	card := cfg.RankCard
 
-	png, err := d.Imaging.RenderRank(c.Ctx, imaging.RankInput{
-		Background:   card.Background,
-		AccentColor:  card.AccentColor,
-		TextColor:    card.TextColor,
-		SubTextColor: card.SubTextColor,
-		BarColor:     card.BarColor,
-		BarBgColor:   card.BarBgColor,
-		AvatarURL:    discord.AvatarURL(target.ID, target.Avatar, 256),
-		Username:     displayName(target),
-		Rank:         rank,
-		Level:        level,
-		LevelXP:      into,
-		NeededXP:     span,
-		TotalXP:      lu.XP,
-	})
+	var png []byte
+	if card.Layout != nil {
+		// Studio-designed card: render the declarative layout with rank variables.
+		png, err = d.Imaging.RenderLayout(c.Ctx, *card.Layout, rankVars(target, level, rank, into, span, lu.XP))
+	} else {
+		png, err = d.Imaging.RenderRank(c.Ctx, imaging.RankInput{
+			Background:   card.Background,
+			AccentColor:  card.AccentColor,
+			TextColor:    card.TextColor,
+			SubTextColor: card.SubTextColor,
+			BarColor:     card.BarColor,
+			BarBgColor:   card.BarBgColor,
+			AvatarURL:    discord.AvatarURL(target.ID, target.Avatar, 256),
+			Username:     displayName(target),
+			Rank:         rank,
+			Level:        level,
+			LevelXP:      into,
+			NeededXP:     span,
+			TotalXP:      lu.XP,
+		})
+	}
 	if err != nil {
 		_, e := c.FollowupContent("Failed to render rank card: " + err.Error())
 		return e

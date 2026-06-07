@@ -1,6 +1,9 @@
 package leveling
 
-import "github.com/dia-bot/dia/internal/imaging"
+import (
+	"github.com/dia-bot/dia/internal/imaging"
+	"github.com/dia-bot/dia/internal/layout"
+)
 
 // FeatureKey is the stable identifier (matches guild_feature_configs.feature_key
 // and the dashboard route).
@@ -33,6 +36,10 @@ type Config struct {
 
 // RankCardConfig describes the generated /rank image.
 type RankCardConfig struct {
+	// Layout is a Card Studio design; when set it takes precedence over the
+	// legacy preset colours below and is rendered via imaging.RenderLayout.
+	Layout *layout.Layout `json:"layout,omitempty"`
+
 	Background   imaging.Background `json:"background"`
 	AccentColor  string             `json:"accent_color"`
 	TextColor    string             `json:"text_color"`
