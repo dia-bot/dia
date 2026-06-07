@@ -54,28 +54,58 @@ func (r *Renderer) RenderLayout(ctx context.Context, in layout.Layout, vars map[
 	dc := gg.NewContext(w, h)
 
 	fallbackBG := parseHex(BrandInk, color.Black)
-	// Image backgrounds are painted here (not via drawBackground) so the blur
-	// radius is the numeric, canvas-px value the editor's slider sets — matching
-	// the DOM preview rather than a hardcoded bool. Gradient/solid delegate.
-	if in.Background.ImageURL != "" {
-		if img := r.fetchImage(ctx, in.Background.ImageURL); img != nil {
-			fitted := xdraw.Fill(img, w, h, xdraw.Center, xdraw.Lanczos)
-			if b := in.Background.Blur; b > 0 {
-				fitted = xdraw.Blur(fitted, b)
-			}
-			dc.DrawImage(fitted, 0, 0)
-		} else {
-			dc.SetColor(fallbackBG)
-			dc.DrawRectangle(0, 0, float64(w), float64(h))
-			dc.Fill()
+	imgFallback := parseHex("#0b0b0e", color.Black) // matches the DOM's image-bg base
+	fillRect := func(c color.Color) {
+		dc.SetColor(c)
+		dc.DrawRectangle(0, 0, float64(w), float64(h))
+		dc.Fill()
+	}
+	// drawImageBG paints a cover-fitted, optionally-blurred background image. The
+	// blur radius is the numeric canvas-px value the editor's slider sets, matching
+	// the DOM preview. Returns false if there's no usable image.
+	drawImageBG := func(url string) bool {
+		if url == "" {
+			return false
 		}
-	} else {
+		img := r.fetchImage(ctx, url)
+		if img == nil {
+			return false
+		}
+		fitted := xdraw.Fill(img, w, h, xdraw.Center, xdraw.Lanczos)
+		if b := in.Background.Blur; b > 0 {
+			fitted = xdraw.Blur(fitted, b)
+		}
+		dc.DrawImage(fitted, 0, 0)
+		return true
+	}
+	// Branch on the declared background Type (matching the DOM's type-first logic);
+	// fall back to field-presence only for legacy documents with no Type set.
+	switch in.Background.Type {
+	case "image":
+		if !drawImageBG(in.Background.ImageURL) {
+			fillRect(imgFallback)
+		}
+	case "solid":
+		r.drawBackground(ctx, dc, w, h, Background{Color: in.Background.Color}, fallbackBG)
+	case "gradient":
 		r.drawBackground(ctx, dc, w, h, Background{
-			Color: in.Background.Color,
 			From:  in.Background.From,
 			To:    in.Background.To,
 			Angle: in.Background.Angle,
 		}, fallbackBG)
+	default:
+		if in.Background.ImageURL != "" {
+			if !drawImageBG(in.Background.ImageURL) {
+				fillRect(fallbackBG)
+			}
+		} else {
+			r.drawBackground(ctx, dc, w, h, Background{
+				Color: in.Background.Color,
+				From:  in.Background.From,
+				To:    in.Background.To,
+				Angle: in.Background.Angle,
+			}, fallbackBG)
+		}
 	}
 
 	for i, l := range in.Layers {
@@ -174,7 +204,7 @@ func (r *Renderer) RenderLayout(ctx context.Context, in layout.Layout, vars map[
 			if size <= 0 {
 				size = 32
 			}
-			r.setFont(dc, l.FontWeight >= 700, size)
+			r.setFont(dc, l.FontFamily, l.FontWeight >= 700, size)
 			dc.SetColor(withAlpha(parseHex(l.Color, color.White), opacity))
 
 			width := l.W

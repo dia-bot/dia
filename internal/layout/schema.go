@@ -9,7 +9,7 @@ import "math"
 // relevant to Type are used. Geometry is in canvas pixels.
 type Layer struct {
 	ID       string   `json:"id"`
-	Type     string   `json:"type"` // text | image | avatar | rect
+	Type     string   `json:"type"` // text | image | avatar | rect | ellipse | path
 	Name     string   `json:"name"`
 	X        float64  `json:"x"`
 	Y        float64  `json:"y"`
@@ -24,6 +24,7 @@ type Layer struct {
 	Text       string  `json:"text,omitempty"`
 	FontSize   float64 `json:"font_size,omitempty"`
 	FontWeight int     `json:"font_weight,omitempty"`
+	FontFamily string  `json:"font_family,omitempty"` // picker family name; "" = default
 	Color      string  `json:"color,omitempty"`
 	Align      string  `json:"align,omitempty"`
 
