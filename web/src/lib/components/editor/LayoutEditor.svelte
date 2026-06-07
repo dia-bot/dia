@@ -13,7 +13,7 @@
 	import Canvas from '$lib/components/editor/Canvas.svelte';
 	import LayersPanel from '$lib/components/editor/LayersPanel.svelte';
 	import PropertiesPanel from '$lib/components/editor/PropertiesPanel.svelte';
-	import { Image, X, Loader2, AlertTriangle, MousePointer2, Square, Circle, Type, UserCircle, PenTool, Pencil, Undo2, Redo2, Frame, Shapes, Triangle, Diamond, Pentagon, Hexagon, Star, Minus } from 'lucide-svelte';
+	import { Image, X, Loader2, AlertTriangle, MousePointer2, Scaling, Square, Circle, Type, PenTool, Pencil, Spline, Undo2, Redo2, Frame, Shapes, Triangle, Diamond, Pentagon, Hexagon, Star, Minus } from 'lucide-svelte';
 
 	const shapeItems: { kind: ShapeKind; label: string; icon: typeof Image }[] = [
 		{ kind: 'triangle', label: 'Triangle', icon: Triangle },
@@ -28,13 +28,14 @@
 	// the group changes, for a calmer, more pro tool palette.
 	const tools: { id: Tool; label: string; key: string; icon: typeof Image; group: number }[] = [
 		{ id: 'select', label: 'Select', key: 'V', icon: MousePointer2, group: 0 },
+		{ id: 'scale', label: 'Scale — scales size, text & strokes (K)', key: 'K', icon: Scaling, group: 0 },
 		{ id: 'pen', label: 'Pen', key: 'P', icon: PenTool, group: 1 },
 		{ id: 'pencil', label: 'Pencil', key: '', icon: Pencil, group: 1 },
+		{ id: 'bend', label: 'Bend — click a path/point and drag', key: 'B', icon: Spline, group: 1 },
 		{ id: 'rect', label: 'Rectangle', key: 'R', icon: Square, group: 2 },
 		{ id: 'ellipse', label: 'Ellipse', key: 'O', icon: Circle, group: 2 },
 		{ id: 'text', label: 'Text', key: 'T', icon: Type, group: 2 },
-		{ id: 'image', label: 'Image', key: '', icon: Image, group: 3 },
-		{ id: 'avatar', label: 'Avatar', key: '', icon: UserCircle, group: 3 }
+		{ id: 'image', label: 'Image', key: '', icon: Image, group: 3 }
 	];
 
 	// The store owner (the page or the modal) publishes the EditorStore on
@@ -48,6 +49,15 @@
 		$props();
 
 	const store = getContext<EditorStore>(EDITOR_CTX);
+
+	// The Bend tool only appears when there's a path to bend (a path is selected or
+	// being edited) — like Figma, where bend belongs to vector-edit mode.
+	const canBend = $derived(store.selected?.type === 'path' || !!store.editId);
+	const visibleTools = $derived(tools.filter((t) => t.id !== 'bend' || canBend));
+	// If the bend target goes away, fall back to Select (don't strand a hidden tool).
+	$effect(() => {
+		if (!canBend && store.tool === 'bend') store.setTool('select');
+	});
 
 	let previewUrl = $state('');
 	let previewing = $state(false);
@@ -216,9 +226,9 @@
 				<div
 					class="pointer-events-auto flex items-center gap-0.5 rounded-2xl border border-line-strong bg-surface/70 p-1 shadow-2xl backdrop-blur-xl"
 				>
-					{#each tools as t, i (t.id)}
+					{#each visibleTools as t, i (t.id)}
 						{@const Icon = t.icon}
-						{#if i > 0 && t.group !== tools[i - 1].group}
+						{#if i > 0 && t.group !== visibleTools[i - 1].group}
 							<span class="mx-0.5 h-5 w-px shrink-0 bg-line-strong"></span>
 						{/if}
 						<button
@@ -308,26 +318,8 @@
 
 <style>
 	/* The studio uses the dashboard's own clean palette (white text on neutral
-	   charcoal surfaces, like the sidebar) — no custom colour overrides, just the
-	   structural polish + a soft entrance. */
-	.studio-theme {
-		animation: studio-in 0.24s cubic-bezier(0.16, 1, 0.3, 1);
-	}
-	@keyframes studio-in {
-		from {
-			opacity: 0;
-			transform: scale(0.985) translateY(4px);
-		}
-		to {
-			opacity: 1;
-			transform: scale(1) translateY(0);
-		}
-	}
-	@media (prefers-reduced-motion: reduce) {
-		.studio-theme {
-			animation: none;
-		}
-	}
+	   charcoal surfaces, like the sidebar) — no custom colour overrides. Open/close
+	   motion lives on the modal container (a subtle fade), not here. */
 
 	/* Toolbar: a faint top sheen for depth (over bg-surface). */
 	.studio-bar {

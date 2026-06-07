@@ -367,7 +367,7 @@
 					</button>
 				</div>
 				<p class="mt-2 text-[11px] text-faint">
-					Card variables: <span class="font-mono">{'{{.User.Username}}'} {'{{.Level}}'} {'{{.Rank}}'} {'{{.XP}}'} {'{{.Progress}}'}</span>
+					Card variables: <span class="font-mono">{'{{.User.Username}}'} {'{{.User.Avatar}}'} {'{{.Level}}'} {'{{.Rank}}'} {'{{.XP}}'} {'{{.Progress}}'} {'{{.Guild.Name}}'} {'{{.Guild.Icon}}'}</span>
 				</p>
 			{:else}
 				<Field label="Background">

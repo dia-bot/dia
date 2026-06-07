@@ -7,7 +7,7 @@
 	import { EditorStore, EDITOR_CTX, type AlignEdge } from '$lib/layout/editor.svelte';
 	import { SIZE_PRESETS, clampCanvas } from '$lib/layout/schema';
 	import { CARD_FONTS } from '$lib/layout/fonts';
-	import type { BackgroundType, Mask, HandleMode } from '$lib/layout/schema';
+	import type { BackgroundType, Mask, HandleMode, ClipMode } from '$lib/layout/schema';
 	import Select from '$lib/components/Select.svelte';
 	import ColorPicker from '$lib/components/ui/ColorPicker.svelte';
 	import Toggle from '$lib/components/Toggle.svelte';
@@ -126,7 +126,7 @@
 			min={opts.min}
 			step={opts.step ?? 1}
 			oninput={(e) => set(e.currentTarget.valueAsNumber || 0)}
-			class="h-8 w-full rounded-lg border border-line-strong bg-ink-2 px-2.5 text-sm tabular-nums text-ink outline-none transition-all hover:border-faint focus:border-faint focus:ring-2 focus:ring-line-strong"
+			class="h-8 w-full rounded-lg border border-line bg-ink-2 px-2.5 text-sm tabular-nums text-ink outline-none transition-all hover:border-faint focus:border-faint focus:ring-2 focus:ring-line-strong"
 		/>
 	</label>
 {/snippet}
@@ -154,7 +154,7 @@
 			{step}
 			value={value ?? 0}
 			oninput={(e) => set(e.currentTarget.valueAsNumber || 0)}
-			class="h-8 w-14 shrink-0 rounded-lg border border-line-strong bg-ink-2 px-1.5 text-center text-xs tabular-nums text-ink outline-none transition-all hover:border-faint focus:border-faint focus:ring-2 focus:ring-line-strong"
+			class="h-8 w-14 shrink-0 rounded-lg border border-line bg-ink-2 px-1.5 text-center text-xs tabular-nums text-ink outline-none transition-all hover:border-faint focus:border-faint focus:ring-2 focus:ring-line-strong"
 		/>
 	</div>
 {/snippet}
@@ -170,7 +170,7 @@
 
 <!-- Generic 2..3-way segmented control. items: [value, label][] -->
 {#snippet segmented(current: string, items: [string, string][], set: (v: string) => void)}
-	<div class="flex gap-0.5 rounded-lg border border-line-strong bg-ink-2 p-1">
+	<div class="flex gap-0.5 rounded-lg border border-line bg-ink-2 p-1">
 		{#each items as [val, lbl] (val)}
 			<button
 				type="button"
@@ -370,6 +370,34 @@
 			{@render num('°', layer.rotation ?? 0, (n) => (layer.rotation = n))}
 		</div>
 
+		<!-- Masking: turn this layer into a stencil that clips the layers above it. -->
+		<div class="flex items-center justify-between gap-3 px-4 pb-3">
+			{@render row('Mask')}
+			<Toggle
+				bind:checked={() => editor.isMask,
+				(v) => {
+					if (v !== editor.isMask) editor.toggleMask();
+				}}
+			/>
+		</div>
+		{#if editor.isMask}
+			<div class="space-y-2.5 px-4 pb-3">
+				{@render segmented(
+					layer.clip_mode ?? 'alpha',
+					[
+						['alpha', 'Alpha'],
+						['luminance', 'Luminance']
+					],
+					(v) => editor.setClipMode(v as ClipMode)
+				)}
+				<div class="flex items-center justify-between gap-3">
+					<span class="text-xs text-muted">Invert</span>
+					<Toggle bind:checked={() => layer.clip_invert ?? false, (v) => (layer.clip_invert = v)} />
+				</div>
+				<p class="text-[11px] text-faint">Clips the layers above it to this shape.</p>
+			</div>
+		{/if}
+
 		<div class="border-t border-line"></div>
 
 		{#if layer.type === 'text'}
@@ -380,11 +408,11 @@
 						rows="3"
 						value={layer.text ?? ''}
 						oninput={(e) => (layer.text = e.currentTarget.value)}
-						class="w-full resize-y rounded-lg border border-line-strong bg-ink-2 px-2.5 py-2 text-sm leading-snug text-ink outline-none transition-all hover:border-faint focus:border-faint focus:ring-2 focus:ring-line-strong"
+						class="w-full resize-y rounded-lg border border-line bg-ink-2 px-2.5 py-2 text-sm leading-snug text-ink outline-none transition-all hover:border-faint focus:border-faint focus:ring-2 focus:ring-line-strong"
 					></textarea>
 					<p class="mt-1 text-[11px] text-faint">
-						Variables: <span class="font-mono text-muted">{'{{.User.Username}}'} {'{{.Count}}'} {'{{.User.Avatar}}'}</span> · supports
-						<span class="font-mono text-muted">{'{{if}}'}</span> logic
+						Variables: <span class="font-mono text-muted">{'{{.User.Username}}'} {'{{.User.Avatar}}'} {'{{.Guild.Name}}'} {'{{.Guild.Icon}}'} {'{{.Guild.MemberCount}}'}</span>
+						· supports <span class="font-mono text-muted">{'{{if}}'}</span> logic
 					</p>
 				</div>
 				<div class="flex items-center justify-between gap-3">
@@ -491,7 +519,7 @@
 						placeholder="https://… or {'{{.User.Avatar}}'}"
 					/>
 					<span class="mt-1 block text-[11px] text-faint">
-						Supports <span class="font-mono text-muted">{'{{.User.Avatar}}'}</span>
+						Supports <span class="font-mono text-muted">{'{{.User.Avatar}}'}</span>, <span class="font-mono text-muted">{'{{.Guild.Icon}}'}</span>
 					</span>
 				</div>
 				<div class="flex items-center justify-between gap-3">
@@ -524,6 +552,14 @@
 				<div class="flex items-center justify-between gap-3">
 					{@render row('Radius')}
 					{@render num('px', layer.radius ?? 0, (n) => (layer.radius = Math.max(0, n)), { min: 0 })}
+				</div>
+				<div class="flex items-center justify-between gap-3">
+					{@render row('Ring')}
+					{@render color(layer.ring_color, (v) => (layer.ring_color = v))}
+				</div>
+				<div class="flex items-center justify-between gap-3">
+					{@render row('Ring W')}
+					{@render num('px', layer.ring_width ?? 0, (n) => (layer.ring_width = Math.max(0, n)), { min: 0 })}
 				</div>
 			</div>
 		{:else if layer.type === 'avatar'}
