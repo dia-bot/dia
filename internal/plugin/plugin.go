@@ -17,6 +17,7 @@ import (
 	"github.com/dia-bot/dia/internal/discord"
 	"github.com/dia-bot/dia/internal/event"
 	"github.com/dia-bot/dia/internal/eventbus"
+	"github.com/dia-bot/dia/internal/guildstate"
 	"github.com/dia-bot/dia/internal/imaging"
 	"github.com/dia-bot/dia/internal/interactions"
 	"github.com/dia-bot/dia/internal/store"
@@ -50,6 +51,9 @@ type Deps struct {
 	Discord *discord.Client
 	Imaging *imaging.Renderer
 	Bus     eventbus.Bus
+	// GuildState exposes the cached per-guild roles/channels snapshot for
+	// read-only template lookups (getRole/getChannel).
+	GuildState *guildstate.Store
 }
 
 // EventHandler reacts to a decoded gateway event envelope.

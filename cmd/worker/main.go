@@ -17,6 +17,7 @@ import (
 	"github.com/dia-bot/dia/internal/discord"
 	"github.com/dia-bot/dia/internal/event"
 	"github.com/dia-bot/dia/internal/eventbus"
+	"github.com/dia-bot/dia/internal/guildstate"
 	"github.com/dia-bot/dia/internal/imaging"
 	"github.com/dia-bot/dia/internal/logging"
 	"github.com/dia-bot/dia/internal/plugin"
@@ -73,13 +74,14 @@ func main() {
 	defer bus.Close()
 
 	deps := plugin.Deps{
-		Config:  cfg,
-		Log:     log,
-		Store:   st,
-		Cache:   caches,
-		Discord: dg,
-		Imaging: imaging.New(cfg.Imaging.FontsDir, log),
-		Bus:     bus,
+		Config:     cfg,
+		Log:        log,
+		Store:      st,
+		Cache:      caches,
+		Discord:    dg,
+		Imaging:    imaging.New(cfg.Imaging.FontsDir, log),
+		Bus:        bus,
+		GuildState: guildstate.New(caches),
 	}
 
 	b := bot.New(deps)
