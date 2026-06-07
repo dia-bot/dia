@@ -7,7 +7,7 @@
 	import { EditorStore, EDITOR_CTX, type AlignEdge } from '$lib/layout/editor.svelte';
 	import { SIZE_PRESETS, clampCanvas } from '$lib/layout/schema';
 	import { CARD_FONTS } from '$lib/layout/fonts';
-	import type { BackgroundType, Mask, HandleMode, ClipMode } from '$lib/layout/schema';
+	import type { BackgroundType, Mask, HandleMode, ClipMode, BoolOp } from '$lib/layout/schema';
 	import Select from '$lib/components/Select.svelte';
 	import ColorPicker from '$lib/components/ui/ColorPicker.svelte';
 	import Toggle from '$lib/components/Toggle.svelte';
@@ -30,8 +30,11 @@
 		Repeat2,
 		Upload,
 		Loader2,
+		Scissors,
 		X
 	} from 'lucide-svelte';
+	import { slide, fade } from 'svelte/transition';
+	import { cubicOut } from 'svelte/easing';
 
 	const alignButtons: { edge: AlignEdge; label: string; icon: typeof Group }[] = [
 		{ edge: 'left', label: 'Align left', icon: AlignStartVertical },
@@ -44,10 +47,27 @@
 
 	const editor = getContext<EditorStore>(EDITOR_CTX);
 
+	// Identity of the current inspector context, so the panel body cross-fades when
+	// the selection changes (the Svelte-native equivalent of motion's AnimatePresence).
+	const panelKey = $derived(
+		editor.selectedIds.length > 1
+			? `multi:${editor.selectedIds.length}`
+			: (editor.selected?.id ?? 'canvas')
+	);
+
 	const bgTypes: { value: BackgroundType; label: string }[] = [
 		{ value: 'solid', label: 'Solid' },
 		{ value: 'gradient', label: 'Gradient' },
 		{ value: 'image', label: 'Image' }
+	];
+
+	// Boolean ops for the multi-select "Combine" control (a separate feature from
+	// masks: it merges the selected vector shapes into one composited silhouette).
+	const boolOps: [BoolOp, string][] = [
+		['union', 'Union'],
+		['subtract', 'Subtract'],
+		['intersect', 'Intersect'],
+		['exclude', 'Exclude']
 	];
 
 	// Background sub-objects can be undefined on first switch; ensure a default so
@@ -186,10 +206,46 @@
 	</div>
 {/snippet}
 
+<!-- Boolean "Combine" control: a 2×2 op grid + release. applyBoolean both creates
+     the group (when ≥2 vector layers are selected) and switches the op in place. -->
+{#snippet boolControls()}
+	<div class="space-y-2" transition:slide={{ duration: 160, easing: cubicOut }}>
+		<div class="flex items-center justify-between">
+			<span class="text-[10px] font-medium uppercase tracking-[0.09em] text-faint">Combine</span>
+			{#if editor.isBoolean}
+				<button
+					type="button"
+					onclick={() => editor.clearBoolean()}
+					class="text-[11px] text-muted transition-colors hover:text-ink"
+				>
+					Release
+				</button>
+			{/if}
+		</div>
+		<div class="grid grid-cols-2 gap-1">
+			{#each boolOps as [val, lbl] (val)}
+				<button
+					type="button"
+					onclick={() => editor.applyBoolean(val)}
+					class="h-8 rounded-md border text-xs font-medium transition-colors {editor.isBoolean &&
+					editor.boolOp === val
+						? 'border-faint bg-surface text-ink'
+						: 'border-line-strong text-muted hover:border-faint hover:text-ink'}"
+				>
+					{lbl}
+				</button>
+			{/each}
+		</div>
+		<p class="text-[11px] text-faint">Merge the selected shapes with a boolean operation.</p>
+	</div>
+{/snippet}
+
 <!-- Panel ──────────────────────────────────────────────────────────────────── -->
 
 <aside class="flex h-full w-full flex-col overflow-y-auto bg-surface text-sm">
-	{#if editor.selectedIds.length > 1}
+	{#key panelKey}
+		<div class="flex min-h-full flex-col" in:fade={{ duration: 120, easing: cubicOut }}>
+			{#if editor.selectedIds.length > 1}
 		<!-- ── Multiple layers selected: align / distribute / group ──────────── -->
 		<header class="border-b border-line px-4 py-3">
 			<h2 class="text-sm font-semibold text-ink">{editor.selectedIds.length} layers selected</h2>
@@ -235,23 +291,64 @@
 		</div>
 
 		<div class="border-t border-line"></div>
-		<div class="flex gap-2 px-4 py-3">
-			{#if editor.canUngroup}
-				<button
-					type="button"
-					onclick={() => editor.ungroup()}
-					class="flex flex-1 items-center justify-center gap-1.5 rounded-md border border-line-strong px-2 py-1.5 text-xs font-medium text-ink transition-colors hover:bg-ink-2"
-				>
-					<Ungroup size={13} /> Ungroup
-				</button>
-			{:else}
-				<button
-					type="button"
-					onclick={() => editor.group()}
-					class="flex flex-1 items-center justify-center gap-1.5 rounded-md border border-line-strong px-2 py-1.5 text-xs font-medium text-ink transition-colors hover:bg-ink-2"
-				>
-					<Group size={13} /> Group
-				</button>
+		<div class="space-y-2.5 px-4 py-3">
+			<div class="flex gap-2">
+				{#if editor.canUngroup}
+					<button
+						type="button"
+						onclick={() => editor.ungroup()}
+						class="flex flex-1 items-center justify-center gap-1.5 rounded-md border border-line-strong px-2 py-1.5 text-xs font-medium text-ink transition-colors hover:bg-ink-2"
+					>
+						<Ungroup size={13} /> Ungroup
+					</button>
+				{:else}
+					<button
+						type="button"
+						onclick={() => editor.group()}
+						class="flex flex-1 items-center justify-center gap-1.5 rounded-md border border-line-strong px-2 py-1.5 text-xs font-medium text-ink transition-colors hover:bg-ink-2"
+					>
+						<Group size={13} /> Group
+					</button>
+				{/if}
+				{#if editor.isMask}
+					<button
+						type="button"
+						onclick={() => editor.toggleMask()}
+						class="flex flex-1 items-center justify-center gap-1.5 rounded-md border border-line-strong px-2 py-1.5 text-xs font-medium text-ink transition-colors hover:bg-ink-2"
+					>
+						<Scissors size={13} /> Release mask
+					</button>
+				{:else}
+					<button
+						type="button"
+						onclick={() => editor.useAsMask()}
+						disabled={!editor.canMask}
+						class="flex flex-1 items-center justify-center gap-1.5 rounded-md border border-line-strong px-2 py-1.5 text-xs font-medium text-ink transition-colors hover:bg-ink-2 disabled:opacity-40"
+					>
+						<Scissors size={13} /> Use as mask
+					</button>
+				{/if}
+			</div>
+			{#if editor.isMask}
+				<div class="space-y-2.5" transition:slide={{ duration: 160, easing: cubicOut }}>
+					{@render segmented(
+						editor.clipMode,
+						[
+							['alpha', 'Alpha'],
+							['vector', 'Vector'],
+							['luminance', 'Luminance']
+						],
+						(v) => editor.setClipMode(v as ClipMode)
+					)}
+					<div class="flex items-center justify-between gap-3">
+						<span class="text-xs text-muted">Invert</span>
+						<Toggle bind:checked={() => editor.clipInvert, (v) => editor.setClipInvert(v)} />
+					</div>
+					<p class="text-[11px] text-faint">The bottom layer clips the ones above it to its shape.</p>
+				</div>
+			{/if}
+			{#if editor.canBoolean || editor.isBoolean}
+				{@render boolControls()}
 			{/if}
 		</div>
 
@@ -370,32 +467,39 @@
 			{@render num('°', layer.rotation ?? 0, (n) => (layer.rotation = n))}
 		</div>
 
-		<!-- Masking: turn this layer into a stencil that clips the layers above it. -->
-		<div class="flex items-center justify-between gap-3 px-4 pb-3">
-			{@render row('Mask')}
-			<Toggle
-				bind:checked={() => editor.isMask,
-				(v) => {
-					if (v !== editor.isMask) editor.toggleMask();
-				}}
-			/>
-		</div>
-		{#if editor.isMask}
-			<div class="space-y-2.5 px-4 pb-3">
-				{@render segmented(
-					layer.clip_mode ?? 'alpha',
-					[
-						['alpha', 'Alpha'],
-						['luminance', 'Luminance']
-					],
-					(v) => editor.setClipMode(v as ClipMode)
-				)}
-				<div class="flex items-center justify-between gap-3">
-					<span class="text-xs text-muted">Invert</span>
-					<Toggle bind:checked={() => layer.clip_invert ?? false, (v) => (layer.clip_invert = v)} />
-				</div>
-				<p class="text-[11px] text-faint">Clips the layers above it to this shape.</p>
+		<!-- Masking: build a mask group from this layer + the layers above it, with
+		     this layer as the bottom stencil (a mask needs at least one layer above). -->
+		{#if editor.canMask || editor.isMask}
+			<div class="flex items-center justify-between gap-3 px-4 pb-3">
+				{@render row('Mask')}
+				<Toggle
+					bind:checked={() => editor.isMask,
+					(v) => {
+						if (v !== editor.isMask) editor.toggleMask();
+					}}
+				/>
 			</div>
+			{#if editor.isMask}
+				<div class="space-y-2.5 px-4 pb-3" transition:slide={{ duration: 160, easing: cubicOut }}>
+					{@render segmented(
+						editor.clipMode,
+						[
+							['alpha', 'Alpha'],
+							['vector', 'Vector'],
+							['luminance', 'Luminance']
+						],
+						(v) => editor.setClipMode(v as ClipMode)
+					)}
+					<div class="flex items-center justify-between gap-3">
+						<span class="text-xs text-muted">Invert</span>
+						<Toggle bind:checked={() => editor.clipInvert, (v) => editor.setClipInvert(v)} />
+					</div>
+					<p class="text-[11px] text-faint">Clips the layers above it to this shape.</p>
+				</div>
+			{/if}
+		{/if}
+		{#if editor.isBoolean}
+			<div class="px-4 pb-3">{@render boolControls()}</div>
 		{/if}
 
 		<div class="border-t border-line"></div>
@@ -693,7 +797,7 @@
 					<Toggle bind:checked={() => editor.fillEnabled, (v) => editor.setFillEnabled(v)} />
 				</div>
 				{#if editor.fillEnabled}
-					<div class="flex items-center justify-between gap-3">
+					<div class="flex items-center justify-between gap-3" transition:slide={{ duration: 150, easing: cubicOut }}>
 						{@render row('Fill color')}
 						{@render color(layer.fill, (v) => (layer.fill = v))}
 					</div>
@@ -729,6 +833,8 @@
 			</button>
 		</footer>
 	{/if}
+		</div>
+	{/key}
 </aside>
 
 <style>
