@@ -17,6 +17,7 @@
 		ShieldAlert,
 		Wand2,
 		Frame,
+		CreditCard,
 		ChevronRight,
 		Search,
 		Menu,
@@ -65,6 +66,10 @@
 				{ label: 'Custom Commands', path: 'commands', icon: Wand2 },
 				{ label: 'Card Studio', path: 'editor', icon: Frame }
 			]
+		},
+		{
+			section: 'Settings',
+			items: [{ label: 'Billing & Storage', path: 'billing', icon: CreditCard }]
 		}
 	];
 	const flatPages = nav.flatMap((s) => s.items).map((i) => ({ label: i.label, path: i.path }));
