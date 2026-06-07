@@ -19,6 +19,7 @@ type Vars struct {
 	server  string
 	count   int
 	lookup  templating.Lookup // read-only guild data for getRole/getChannel; nil in previews
+	fonts   map[string]string // guild custom fonts (family → URL) for the card renderer
 }
 
 // NewVars builds a template context for a member in a guild.
@@ -30,6 +31,13 @@ func NewVars(user event.User, guildID, server string, count int) Vars {
 // the API "send test" path resolves them exactly like the live worker does.
 func (v Vars) WithLookup(l templating.Lookup) Vars {
 	v.lookup = l
+	return v
+}
+
+// WithFonts attaches the guild's custom fonts (family → URL) so a studio card
+// that uses an uploaded font renders with it.
+func (v Vars) WithFonts(f map[string]string) Vars {
+	v.fonts = f
 	return v
 }
 

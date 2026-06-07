@@ -10,7 +10,21 @@ import (
 	"github.com/fogleman/gg"
 
 	"github.com/dia-bot/dia/internal/layout"
+	"github.com/dia-bot/dia/internal/templating"
 )
+
+// renderText renders a card layer's text/image-source as a pure Go template
+// against the nested card data. On a malformed template it returns the raw
+// string so a bad template never crashes the render.
+func (r *Renderer) renderText(ctx context.Context, s string, data map[string]any) string {
+	if s == "" {
+		return ""
+	}
+	if out, err := r.tmpl.RenderCard(ctx, s, data); err == nil {
+		return out
+	}
+	return s
+}
 
 // applyVars replaces every occurrence of each key in vars with its value.
 func applyVars(s string, vars map[string]string) string {
@@ -41,7 +55,10 @@ func withAlpha(c color.Color, mul float64) color.Color {
 // RenderLayout renders a declarative layout document to a PNG. Text and image
 // sources are substituted with vars before drawing; the renderer is otherwise a
 // pure projection of the layout schema onto a gg canvas.
-func (r *Renderer) RenderLayout(ctx context.Context, in layout.Layout, vars map[string]string) ([]byte, error) {
+// fonts is an optional family → URL map of the guild's uploaded custom fonts;
+// a text layer naming one of those families renders with it. Pass nil when there
+// are none.
+func (r *Renderer) RenderLayout(ctx context.Context, in layout.Layout, vars map[string]string, fonts map[string]string) ([]byte, error) {
 	if err := r.acquire(ctx); err != nil {
 		return nil, err
 	}
@@ -108,6 +125,9 @@ func (r *Renderer) RenderLayout(ctx context.Context, in layout.Layout, vars map[
 		}
 	}
 
+	// Card data root (pure Go template): {{.User.Username}}, {{.User.Avatar}}, …
+	data := templating.DataFromVars(vars)
+
 	for i, l := range in.Layers {
 		if i >= 50 { // safety backstop; the editor caps layers well below this
 			break
@@ -128,8 +148,8 @@ func (r *Renderer) RenderLayout(ctx context.Context, in layout.Layout, vars map[
 			opacity = 1
 		}
 
-		text := applyVars(l.Text, vars)
-		src := applyVars(l.Src, vars)
+		text := r.renderText(ctx, l.Text, data)
+		src := r.renderText(ctx, l.Src, data)
 
 		rotate := l.Rotation != 0
 		if rotate {
@@ -204,7 +224,9 @@ func (r *Renderer) RenderLayout(ctx context.Context, in layout.Layout, vars map[
 			if size <= 0 {
 				size = 32
 			}
-			r.setFont(dc, l.FontFamily, l.FontWeight >= 700, size)
+			if f := r.faceFor(ctx, l.FontFamily, l.FontWeight >= 700, size, fonts); f != nil {
+				dc.SetFontFace(f)
+			}
 			dc.SetColor(withAlpha(parseHex(l.Color, color.White), opacity))
 
 			width := l.W

@@ -64,7 +64,7 @@ func handleJoin(ctx context.Context, d plugin.Deps, env *event.Envelope) error {
 		return err
 	}
 	name, count := guildInfo(ctx, d, gid, ma.MemberCount)
-	v := Vars{user: ma.Member.User, guildID: ma.GuildID, server: name, count: count, lookup: tmpllookup.New(ctx, d.GuildState, ma.GuildID)}
+	v := Vars{user: ma.Member.User, guildID: ma.GuildID, server: name, count: count, lookup: tmpllookup.New(ctx, d.GuildState, ma.GuildID), fonts: guildFonts(ctx, d, gid)}
 	return sendConfigured(ctx, d, cfg.Welcome, v)
 }
 
@@ -79,7 +79,7 @@ func handleLeave(ctx context.Context, d plugin.Deps, env *event.Envelope) error 
 		return err
 	}
 	name, count := guildInfo(ctx, d, gid, mr.MemberCount)
-	v := Vars{user: mr.User, guildID: mr.GuildID, server: name, count: count, lookup: tmpllookup.New(ctx, d.GuildState, mr.GuildID)}
+	v := Vars{user: mr.User, guildID: mr.GuildID, server: name, count: count, lookup: tmpllookup.New(ctx, d.GuildState, mr.GuildID), fonts: guildFonts(ctx, d, gid)}
 	return sendConfigured(ctx, d, cfg.Goodbye, v)
 }
 
@@ -96,7 +96,7 @@ func handleTest(c *interactions.Context, d plugin.Deps) error {
 		return err
 	}
 	name, count := guildInfo(c.Ctx, d, gid, 0)
-	v := Vars{user: c.User, guildID: c.GuildID, server: name, count: count, lookup: tmpllookup.New(c.Ctx, d.GuildState, c.GuildID)}
+	v := Vars{user: c.User, guildID: c.GuildID, server: name, count: count, lookup: tmpllookup.New(c.Ctx, d.GuildState, c.GuildID), fonts: guildFonts(c.Ctx, d, gid)}
 	if err := sendConfigured(c.Ctx, d, cfg.Welcome, v); err != nil {
 		_, e := c.FollowupContent("Failed to send test welcome: " + err.Error())
 		return e
@@ -193,11 +193,18 @@ func buildEmbed(e EmbedConfig, v Vars, cardAttached bool) *discordgo.MessageEmbe
 	return em
 }
 
+// guildFonts loads a guild's custom (premium) fonts for the card renderer; a
+// failure is non-fatal (the card just falls back to the bundled fonts).
+func guildFonts(ctx context.Context, d plugin.Deps, gid int64) map[string]string {
+	m, _ := d.Store.Uploads.FontMap(ctx, gid)
+	return m
+}
+
 func renderCard(ctx context.Context, img *imaging.Renderer, card CardConfig, v Vars) ([]byte, error) {
 	// Card Studio layout is the primary path; the legacy preset model only
 	// renders for configs created before the studio existed.
 	if card.Layout != nil {
-		return img.RenderLayout(ctx, *card.Layout, v.Map())
+		return img.RenderLayout(ctx, *card.Layout, v.Map(), v.fonts)
 	}
 	return img.RenderWelcome(ctx, imaging.WelcomeInput{
 		Background:   card.Background,

@@ -251,7 +251,8 @@ func handleRank(c *interactions.Context, d plugin.Deps) error {
 	var png []byte
 	if card.Layout != nil {
 		// Studio-designed card: render the declarative layout with rank variables.
-		png, err = d.Imaging.RenderLayout(c.Ctx, *card.Layout, rankVars(target, level, rank, into, span, lu.XP))
+		fonts, _ := d.Store.Uploads.FontMap(c.Ctx, gid)
+		png, err = d.Imaging.RenderLayout(c.Ctx, *card.Layout, rankVars(target, level, rank, into, span, lu.XP), fonts)
 	} else {
 		png, err = d.Imaging.RenderRank(c.Ctx, imaging.RankInput{
 			Background:   card.Background,
