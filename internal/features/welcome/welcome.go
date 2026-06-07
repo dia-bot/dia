@@ -1,5 +1,5 @@
-// Package welcome posts configurable welcome/leave messages and renders
-// per-server welcome card images when a member joins.
+// Package welcome posts configurable welcome/goodbye messages — plain content,
+// a full embed, and/or a rendered card image — when members join or leave.
 package welcome
 
 import (
@@ -7,12 +7,14 @@ import (
 	"context"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/dia-bot/dia/internal/discord"
 	"github.com/dia-bot/dia/internal/event"
 	"github.com/dia-bot/dia/internal/imaging"
 	"github.com/dia-bot/dia/internal/interactions"
 	"github.com/dia-bot/dia/internal/plugin"
+	"github.com/dia-bot/dia/internal/tmpllookup"
 	"github.com/dia-bot/dia/pkg/discordgo"
 )
 
@@ -27,7 +29,7 @@ func (*Plugin) Info() plugin.Info {
 	return plugin.Info{
 		Key:         FeatureKey,
 		Name:        "Welcome",
-		Description: "Greet new members with custom messages and welcome card images.",
+		Description: "Greet joining members and bid farewell to leaving ones with custom messages, embeds and card images.",
 		Category:    plugin.CategoryEngagement,
 	}
 }
@@ -58,24 +60,12 @@ func handleJoin(ctx context.Context, d plugin.Deps, env *event.Envelope) error {
 	}
 	gid, _ := event.ParseID(ma.GuildID)
 	cfg, enabled, err := plugin.LoadConfig[Config](ctx, d, gid, FeatureKey)
-	if err != nil || !enabled {
+	if err != nil || !enabled || !cfg.Welcome.Enabled {
 		return err
 	}
-
 	name, count := guildInfo(ctx, d, gid, ma.MemberCount)
-	v := vars{user: ma.Member.User, server: name, count: count}
-
-	// Optional DM.
-	if cfg.DMMessage != "" {
-		if ch, err := d.Discord.Session().UserChannelCreate(ma.Member.User.ID); err == nil {
-			_, _ = d.Discord.SendMessage(ch.ID, &discordgo.MessageSend{Content: v.apply(cfg.DMMessage)})
-		}
-	}
-
-	if cfg.ChannelID == "" {
-		return nil
-	}
-	return sendWelcome(ctx, d, cfg, ma.Member, v)
+	v := Vars{user: ma.Member.User, guildID: ma.GuildID, server: name, count: count, lookup: tmpllookup.New(ctx, d.GuildState, ma.GuildID)}
+	return sendConfigured(ctx, d, cfg.Welcome, v)
 }
 
 func handleLeave(ctx context.Context, d plugin.Deps, env *event.Envelope) error {
@@ -85,13 +75,12 @@ func handleLeave(ctx context.Context, d plugin.Deps, env *event.Envelope) error 
 	}
 	gid, _ := event.ParseID(mr.GuildID)
 	cfg, enabled, err := plugin.LoadConfig[Config](ctx, d, gid, FeatureKey)
-	if err != nil || !enabled || !cfg.LeaveEnabled || cfg.LeaveChannelID == "" {
+	if err != nil || !enabled || !cfg.Goodbye.Enabled {
 		return err
 	}
 	name, count := guildInfo(ctx, d, gid, mr.MemberCount)
-	v := vars{user: mr.User, server: name, count: count}
-	_, err = d.Discord.SendMessage(cfg.LeaveChannelID, &discordgo.MessageSend{Content: v.apply(cfg.LeaveMessage)})
-	return err
+	v := Vars{user: mr.User, guildID: mr.GuildID, server: name, count: count, lookup: tmpllookup.New(ctx, d.GuildState, mr.GuildID)}
+	return sendConfigured(ctx, d, cfg.Goodbye, v)
 }
 
 func handleTest(c *interactions.Context, d plugin.Deps) error {
@@ -100,57 +89,122 @@ func handleTest(c *interactions.Context, d plugin.Deps) error {
 	if err != nil {
 		return err
 	}
-	if !enabled || cfg.ChannelID == "" {
+	if !enabled || !cfg.Welcome.Enabled || cfg.Welcome.ChannelID == "" {
 		return c.RespondEphemeral("Welcome is disabled or has no channel set. Configure it on the dashboard first.")
 	}
 	if err := c.Defer(true); err != nil {
 		return err
 	}
 	name, count := guildInfo(c.Ctx, d, gid, 0)
-	member := event.Member{User: c.User}
-	v := vars{user: c.User, server: name, count: count}
-	if err := sendWelcome(c.Ctx, d, cfg, member, v); err != nil {
+	v := Vars{user: c.User, guildID: c.GuildID, server: name, count: count, lookup: tmpllookup.New(c.Ctx, d.GuildState, c.GuildID)}
+	if err := sendConfigured(c.Ctx, d, cfg.Welcome, v); err != nil {
 		_, e := c.FollowupContent("Failed to send test welcome: " + err.Error())
 		return e
 	}
-	_, err = c.FollowupContent("✅ Sent a test welcome to <#" + cfg.ChannelID + ">.")
+	_, err = c.FollowupContent("✅ Sent a test welcome to <#" + cfg.Welcome.ChannelID + ">.")
 	return err
 }
 
-// sendWelcome composes and posts the welcome message (+ optional card image).
-func sendWelcome(ctx context.Context, d plugin.Deps, cfg Config, member event.Member, v vars) error {
+// sendConfigured posts one configured message (optionally DMing the member),
+// then sending the channel message built by BuildMessage.
+func sendConfigured(ctx context.Context, d plugin.Deps, mc MessageConfig, v Vars) error {
+	if mc.DM.Enabled && mc.DM.Content != "" {
+		if ch, err := d.Discord.Session().UserChannelCreate(v.user.ID); err == nil {
+			_, _ = d.Discord.SendMessage(ch.ID, &discordgo.MessageSend{Content: v.render(mc.DM.Content)})
+		}
+	}
+	if mc.ChannelID == "" {
+		return nil
+	}
+	send, err := BuildMessage(ctx, d.Imaging, mc, v)
+	if err != nil {
+		return err
+	}
+	_, err = d.Discord.SendMessage(mc.ChannelID, send)
+	return err
+}
+
+// BuildMessage composes the channel message (content + optional embed + optional
+// card image) for one MessageConfig. Exported so the dashboard's Test endpoint
+// reuses the exact same rendering the bot uses at runtime.
+func BuildMessage(ctx context.Context, img *imaging.Renderer, mc MessageConfig, v Vars) (*discordgo.MessageSend, error) {
 	send := &discordgo.MessageSend{}
 
-	if cfg.Card.Enabled && d.Imaging != nil {
-		if png, err := renderCard(ctx, d, cfg.Card, member.User, v); err == nil {
-			send.Files = []*discordgo.File{{Name: "welcome.png", ContentType: "image/png", Reader: bytes.NewReader(png)}}
-		} else {
-			d.Log.Warn("welcome card render failed", "err", err)
+	cardAttached := false
+	if mc.Card.Enabled && img != nil {
+		if png, err := renderCard(ctx, img, mc.Card, v); err == nil {
+			send.Files = []*discordgo.File{{Name: "card.png", ContentType: "image/png", Reader: bytes.NewReader(png)}}
+			cardAttached = true
 		}
 	}
 
-	text := v.apply(cfg.Message)
-	if cfg.UseEmbed {
-		embed := &discordgo.MessageEmbed{Description: text, Color: colorInt(cfg.EmbedColor, 0xB244FC)}
-		if len(send.Files) > 0 {
-			embed.Image = &discordgo.MessageEmbedImage{URL: "attachment://welcome.png"}
-		}
-		send.Embeds = []*discordgo.MessageEmbed{embed}
-	} else if text != "" {
-		send.Content = text
+	if c := v.render(mc.Content); c != "" {
+		send.Content = c
 	}
-
-	_, err := d.Discord.SendMessage(cfg.ChannelID, send)
-	return err
+	for _, e := range mc.Embeds {
+		if !e.Enabled {
+			continue
+		}
+		send.Embeds = append(send.Embeds, buildEmbed(e, v, cardAttached))
+	}
+	if !mc.PingUser {
+		// Render mentions as text without pinging anyone.
+		send.AllowedMentions = &discordgo.MessageAllowedMentions{Parse: []discordgo.AllowedMentionType{}}
+	}
+	return send, nil
 }
 
-func renderCard(ctx context.Context, d plugin.Deps, card CardConfig, user event.User, v vars) ([]byte, error) {
-	return d.Imaging.RenderWelcome(ctx, imaging.WelcomeInput{
+func buildEmbed(e EmbedConfig, v Vars, cardAttached bool) *discordgo.MessageEmbed {
+	em := &discordgo.MessageEmbed{
+		Title:       v.render(e.Title),
+		URL:         e.URL,
+		Description: v.render(e.Description),
+		Color:       colorInt(e.Color, 0xB244FC),
+	}
+	if e.AuthorName != "" {
+		em.Author = &discordgo.MessageEmbedAuthor{Name: v.render(e.AuthorName), IconURL: v.apply(e.AuthorIcon)}
+	}
+	if t := v.apply(e.Thumbnail); t != "" {
+		em.Thumbnail = &discordgo.MessageEmbedThumbnail{URL: t}
+	}
+	if e.FooterText != "" {
+		em.Footer = &discordgo.MessageEmbedFooter{Text: v.render(e.FooterText), IconURL: v.apply(e.FooterIcon)}
+	}
+	for _, f := range e.Fields {
+		if f.Name == "" && f.Value == "" {
+			continue
+		}
+		em.Fields = append(em.Fields, &discordgo.MessageEmbedField{
+			Name: v.render(f.Name), Value: v.render(f.Value), Inline: f.Inline,
+		})
+	}
+	// Image: the literal token {card} embeds the generated card; any other value
+	// is treated as a URL. (A card with no embed referencing it shows standalone.)
+	if u := strings.TrimSpace(e.ImageURL); u == "{card}" {
+		if cardAttached {
+			em.Image = &discordgo.MessageEmbedImage{URL: "attachment://card.png"}
+		}
+	} else if u != "" {
+		em.Image = &discordgo.MessageEmbedImage{URL: v.apply(u)}
+	}
+	if e.Timestamp {
+		em.Timestamp = time.Now().Format(time.RFC3339)
+	}
+	return em
+}
+
+func renderCard(ctx context.Context, img *imaging.Renderer, card CardConfig, v Vars) ([]byte, error) {
+	// Card Studio layout is the primary path; the legacy preset model only
+	// renders for configs created before the studio existed.
+	if card.Layout != nil {
+		return img.RenderLayout(ctx, *card.Layout, v.Map())
+	}
+	return img.RenderWelcome(ctx, imaging.WelcomeInput{
 		Background:   card.Background,
 		AccentColor:  card.AccentColor,
 		TextColor:    card.TextColor,
 		SubTextColor: card.SubTextColor,
-		AvatarURL:    discord.AvatarURL(user.ID, user.Avatar, 256),
+		AvatarURL:    discord.AvatarURL(v.user.ID, v.user.Avatar, 256),
 		Title:        v.apply(card.Title),
 		Subtitle:     v.apply(card.Subtitle),
 		Footer:       v.apply(card.Footer),
@@ -168,30 +222,6 @@ func guildInfo(ctx context.Context, d plugin.Deps, guildID int64, fallbackCount 
 		name = "the server"
 	}
 	return name, count
-}
-
-// vars holds the substitution context for message/card templates.
-type vars struct {
-	user   event.User
-	server string
-	count  int
-}
-
-func (v vars) apply(s string) string {
-	if s == "" {
-		return ""
-	}
-	name := v.user.GlobalName
-	if name == "" {
-		name = v.user.Username
-	}
-	return strings.NewReplacer(
-		"{user.mention}", "<@"+v.user.ID+">",
-		"{username}", v.user.Username,
-		"{user}", name,
-		"{server}", v.server,
-		"{count}", strconv.Itoa(v.count),
-	).Replace(s)
 }
 
 // colorInt converts a #RRGGBB string to a Discord embed color int.
