@@ -13,6 +13,30 @@
 
 	const editor = getContext<EditorStore>(EDITOR_CTX);
 	const layout = $derived(editor.layout);
+	// Only pay the per-layer CSS-mask cost when the document actually uses masks.
+	const hasMasks = $derived(layout.layers.some((l) => l.clip));
+
+	// Boolean groups: the visible members (bottom→top) of each group whose metadata
+	// carries a bool op, so the canvas can render the whole group as ONE composited
+	// shape instead of separate layers.
+	const boolGroups = $derived.by(() => {
+		const m = new Map<string, Layer[]>();
+		for (const l of layout.layers) {
+			if (l.hidden) continue;
+			const g = l.group;
+			if (g && layout.groups?.[g]?.bool_op) {
+				const a = m.get(g);
+				if (a) a.push(l);
+				else m.set(g, [l]);
+			}
+		}
+		// A group with <2 visible members can't composite — its lone survivor draws as
+		// a normal layer (mirrors the Go renderer's renderBoolean fallback).
+		for (const [g, arr] of m) if (arr.length < 2) m.delete(g);
+		return m;
+	});
+	const boolMemberIds = $derived(new Set([...boolGroups.values()].flat().map((l) => l.id)));
+	const boolMembers = (gid: string): Layer[] => boolGroups.get(gid) ?? [];
 
 	// Display helpers: card text/src are pure Go templates, resolved on the server
 	// (editor.resolved) so the live canvas matches the bot. Plain (non-template)
@@ -83,6 +107,108 @@
 		return `-webkit-mask:${url} center/100% 100% no-repeat; mask:${url} center/100% 100% no-repeat;`;
 	}
 
+	// ── boolean group preview ───────────────────────────────────────────────────
+	// Composite a boolean group's vector members into ONE shape per the group's op,
+	// mirroring the Go renderer (combineBoolean). Geometry is exact; anti-aliasing at
+	// overlapping edges can diverge slightly from the PNG (which is the source of
+	// truth). Each member becomes a filled path 'd' in canvas coords with rotation
+	// baked into the coordinates, so every op composes in one frame and the paths stay
+	// valid inside <clipPath>/<mask> (where <g transform> children are not). ─────────
+	function rotPair(x: number, y: number, cx: number, cy: number, sin: number, cos: number): string {
+		const dx = x - cx;
+		const dy = y - cy;
+		return `${cx + dx * cos - dy * sin} ${cy + dx * sin + dy * cos}`;
+	}
+	function shapeD(l: Layer): string {
+		const cx = l.x + l.w / 2;
+		const cy = l.y + l.h / 2;
+		const deg = l.rotation ?? 0;
+		const a = (deg * Math.PI) / 180;
+		const sin = Math.sin(a);
+		const cos = Math.cos(a);
+		const P = (x: number, y: number) => rotPair(x, y, cx, cy, sin, cos);
+		if (l.type === 'ellipse') {
+			const rx = l.w / 2;
+			const ry = l.h / 2;
+			// two 180° arcs; the ellipse's axes rotate with the layer (x-axis-rotation = deg).
+			return `M ${P(l.x, cy)} A ${rx} ${ry} ${deg} 1 0 ${P(l.x + l.w, cy)} A ${rx} ${ry} ${deg} 1 0 ${P(l.x, cy)} Z`;
+		}
+		if (l.type === 'path') {
+			const ns = l.nodes ?? [];
+			if (ns.length < 2) return '';
+			let d = `M ${P(ns[0].x, ns[0].y)}`;
+			for (let i = 1; i < ns.length; i++) {
+				const p = ns[i - 1];
+				const q = ns[i];
+				d += ` C ${P(p.h2x, p.h2y)} ${P(q.h1x, q.h1y)} ${P(q.x, q.y)}`;
+			}
+			// Always close for a filled silhouette (matches drawSilhouette, which closes
+			// any path with >=2 nodes — not pathD's >=3 open-shape rule).
+			if (ns.length >= 2) {
+				const p = ns[ns.length - 1];
+				const q = ns[0];
+				d += ` C ${P(p.h2x, p.h2y)} ${P(q.h1x, q.h1y)} ${P(q.x, q.y)} Z`;
+			}
+			return d;
+		}
+		// rect (optionally rounded) — clamp the corner radius like the renderer.
+		const r = Math.max(0, Math.min(l.radius ?? 0, Math.min(l.w, l.h) / 2));
+		const { x, y, w, h } = l;
+		if (r <= 0) return `M ${P(x, y)} L ${P(x + w, y)} L ${P(x + w, y + h)} L ${P(x, y + h)} Z`;
+		return (
+			`M ${P(x + r, y)} L ${P(x + w - r, y)} A ${r} ${r} ${deg} 0 1 ${P(x + w, y + r)}` +
+			` L ${P(x + w, y + h - r)} A ${r} ${r} ${deg} 0 1 ${P(x + w - r, y + h)}` +
+			` L ${P(x + r, y + h)} A ${r} ${r} ${deg} 0 1 ${P(x, y + h - r)}` +
+			` L ${P(x, y + r)} A ${r} ${r} ${deg} 0 1 ${P(x + r, y)} Z`
+		);
+	}
+	// One transparent silhouette spanning the whole group — the click/drag hit area.
+	function boolUnionD(members: Layer[]): string {
+		return members.map(shapeD).filter(Boolean).join(' ');
+	}
+	// boolSvgInner: the composited inner markup for a boolean group, in canvas coords
+	// (the wrapping <svg> uses viewBox "0 0 W H"). Mirrors combineBoolean per op:
+	//   union     – every member painted solid in one opacity group (overlaps = max)
+	//   intersect – the base clipped by every other member (nested clip-paths = min)
+	//   subtract  – the base with the others knocked out via a mask (base·∏(1−other))
+	//   exclude   – one even-odd path over all members (odd parity)
+	// The result takes the top member's fill (bottom member's for subtract), per Figma.
+	function boolSvgInner(gid: string): string {
+		const members = boolMembers(gid);
+		if (members.length < 2) return '';
+		const op = layout.groups?.[gid]?.bool_op ?? 'union';
+		const src = op === 'subtract' ? members[0] : members[members.length - 1];
+		// `||` not `??`: an unfilled path has fill==='' and must fall back to white, to
+		// match the Go renderer (parseHex('', white)). `??` would emit fill='' = black.
+		const fill = src.fill || '#FFFFFF';
+		const opacity = Math.min(1, src.opacity ?? 1);
+		if (opacity <= 0) return '';
+		const sid = gid.replace(/[^a-zA-Z0-9_-]/g, ''); // safe <defs> id fragment
+		const ds = members.map(shapeD);
+		if (op === 'exclude') {
+			return `<path d='${ds.join(' ')}' fill='${fill}' fill-rule='evenodd' opacity='${opacity}'/>`;
+		}
+		if (op === 'subtract') {
+			const holes = ds
+				.slice(1)
+				.map((d) => `<path d='${d}' fill='#000'/>`)
+				.join('');
+			return `<defs><mask id='bm_${sid}'><path d='${ds[0]}' fill='#fff'/>${holes}</mask></defs><path d='${ds[0]}' fill='${fill}' opacity='${opacity}' mask='url(#bm_${sid})'/>`;
+		}
+		if (op === 'intersect') {
+			let defs = '';
+			for (let k = 1; k < ds.length; k++) {
+				const ref = k > 1 ? ` clip-path='url(#bc_${sid}_${k - 1})'` : '';
+				defs += `<clipPath id='bc_${sid}_${k}'${ref}><path d='${ds[k]}'/></clipPath>`;
+			}
+			const clip = ds.length > 1 ? ` clip-path='url(#bc_${sid}_${ds.length - 1})'` : '';
+			return `<defs>${defs}</defs><path d='${ds[0]}' fill='${fill}' opacity='${opacity}'${clip}/>`;
+		}
+		// union
+		const paths = ds.map((d) => `<path d='${d}' fill='${fill}'/>`).join('');
+		return `<g opacity='${opacity}'>${paths}</g>`;
+	}
+
 	// ── Pointer interaction ──────────────────────────────────────────────────
 	// One gesture model for move + resize. `handle` is null for a body drag, or
 	// one of the 8 directions for a resize. We capture the pointer on the moving
@@ -98,6 +224,9 @@
 		ptrX: number; // screen px at gesture start
 		ptrY: number;
 		pointerId: number;
+		pointerType: string;
+		moved: boolean; // crossed the click→drag slop yet?
+		isolate: string | null; // on a click (no drag) collapse the multi-selection to this id
 		target: HTMLElement;
 		startNodes?: PathNode[]; // for moving a path: node positions at gesture start
 		// intrinsic props at gesture start, for the Scale tool (scales them too)
@@ -121,6 +250,7 @@
 
 	function beginBody(e: PointerEvent, l: Layer) {
 		if (spaceDown) return; // space-pan: let the viewport handle the drag
+		if (busy()) return; // a gesture is already in progress (ignore a 2nd finger)
 		if (l.locked) return; // locked layers aren't selectable/movable on the canvas
 		if (editor.tool !== 'select') return; // a draw tool is active → let the stage draw
 		if (editor.editId === l.id) return; // editing this layer (text inline / path nodes) → no body-drag
@@ -137,7 +267,7 @@
 	}
 
 	function beginHandle(e: PointerEvent, l: Layer, handle: Dir) {
-		if (l.locked) return;
+		if (l.locked || busy()) return;
 		// Handles are live for the Select tool (resize) and the Scale tool (resize +
 		// scale intrinsic properties).
 		if (editor.tool !== 'select' && editor.tool !== 'scale') return;
@@ -159,6 +289,10 @@
 			ptrX: e.clientX,
 			ptrY: e.clientY,
 			pointerId: e.pointerId,
+			pointerType: e.pointerType,
+			moved: false,
+			// A plain click (no drag) on a member of a multi-selection collapses to it.
+			isolate: handle === null && editor.selectedIds.length > 1 ? l.id : null,
 			target,
 			startNodes: l.type === 'path' && l.nodes ? l.nodes.map((n) => ({ ...n })) : undefined,
 			startProps: {
@@ -169,12 +303,14 @@
 			},
 			multi:
 				handle === null && editor.selectedIds.length > 1
-					? editor.selectedLayers.map((s) => ({
-							id: s.id,
-							x: s.x,
-							y: s.y,
-							nodes: s.nodes ? s.nodes.map((n) => ({ ...n })) : null
-						}))
+					? editor.selectedLayers
+							.filter((s) => !s.locked) // locked layers don't move with the group
+							.map((s) => ({
+								id: s.id,
+								x: s.x,
+								y: s.y,
+								nodes: s.nodes ? s.nodes.map((n) => ({ ...n })) : null
+							}))
 					: undefined
 		};
 		e.preventDefault();
@@ -182,6 +318,14 @@
 
 	function onMove(e: PointerEvent) {
 		if (!g || scale <= 0) return;
+		if (e.pointerId !== g.pointerId) return; // ignore other fingers mid-gesture
+		// Click→drag slop: don't move until the pointer travels past a threshold, so a
+		// click doesn't become a 1px move + undo step (bigger threshold on touch).
+		if (!g.moved) {
+			const slop = g.pointerType === 'touch' ? 10 : 4;
+			if (Math.hypot(e.clientX - g.ptrX, e.clientY - g.ptrY) < slop) return;
+			g.moved = true;
+		}
 		const dx = (e.clientX - g.ptrX) / scale; // canvas-px delta
 		const dy = (e.clientY - g.ptrY) / scale;
 
@@ -245,62 +389,106 @@
 		// centre. (Figma's resize modifiers.)
 		const constrain = scaleMode || e.shiftKey;
 		const fromCenter = e.altKey;
+		const hasE = h.includes('e');
+		const hasW = h.includes('w');
+		const hasS = h.includes('s');
+		const hasN = h.includes('n');
 
-		// Unconstrained edges from the dragged handle.
-		let w = g.startW;
-		let hgt = g.startH;
-		if (h.includes('e')) w = g.startW + dx;
-		if (h.includes('w')) w = g.startW - dx;
-		if (h.includes('s')) hgt = g.startH + dy;
-		if (h.includes('n')) hgt = g.startH - dy;
+		// Raw new size from the dragged edge.
+		let w = g.startW + (hasE ? dx : hasW ? -dx : 0);
+		let hgt = g.startH + (hasS ? dy : hasN ? -dy : 0);
 
+		// Constrain aspect by the DOMINANT pointer axis so the locked axis doesn't
+		// flip-flop near the start of the drag.
 		if (constrain) {
-			const horiz = h === 'e' || h === 'w';
-			const vert = h === 'n' || h === 's';
-			if (horiz) hgt = w / aspect;
-			else if (vert) w = hgt * aspect;
-			else if (Math.abs(w / g.startW) >= Math.abs(hgt / g.startH)) hgt = w / aspect;
+			const corner = (hasE || hasW) && (hasS || hasN);
+			if (corner ? Math.abs(dx) >= Math.abs(dy) : hasE || hasW) hgt = w / aspect;
 			else w = hgt * aspect;
 		}
-		w = Math.max(MIN, Math.round(w));
-		hgt = Math.max(MIN, Math.round(hgt));
 
-		// Position: keep the opposite edge/corner pinned, unless resizing from centre.
+		// Scale-tool factor from the UNROUNDED size (so font/stroke/radius scale
+		// smoothly, not in integer steps).
+		const f = g.startW !== 0 ? Math.max(0.01, w) / g.startW : 1;
+
+		w = Math.max(MIN, w);
+		hgt = Math.max(MIN, hgt);
+
+		// Position with the anchored (far) edge pinned EXACTLY — derive the moving
+		// edge from a single rounded far edge so the pinned side never jitters.
 		let x: number;
 		let y: number;
+		let fw: number;
+		let fh: number;
 		if (fromCenter) {
 			const cx = g.startX + g.startW / 2;
 			const cy = g.startY + g.startH / 2;
-			x = Math.round(cx - w / 2);
-			y = Math.round(cy - hgt / 2);
+			fw = Math.round(w);
+			fh = Math.round(hgt);
+			x = Math.round(cx - fw / 2);
+			y = Math.round(cy - fh / 2);
 		} else {
-			x = h.includes('w') ? Math.round(g.startX + g.startW - w) : g.startX;
-			y = h.includes('n') ? Math.round(g.startY + g.startH - hgt) : g.startY;
+			if (hasW) {
+				const far = Math.round(g.startX + g.startW);
+				x = Math.round(far - w);
+				fw = far - x;
+			} else {
+				x = g.startX;
+				fw = Math.round(w);
+			}
+			if (hasN) {
+				const far = Math.round(g.startY + g.startH);
+				y = Math.round(far - hgt);
+				fh = far - y;
+			} else {
+				y = g.startY;
+				fh = Math.round(hgt);
+			}
 		}
 
 		if (scaleMode) {
-			// Uniform factor (aspect is locked above), scaling intrinsic props too.
-			const f = g.startW !== 0 ? w / g.startW : 1;
-			editor.scaleLayer(g.id, g.startProps ?? {}, g.startNodes, g.startX, g.startY, g.startW, g.startH, x, y, w, hgt, f);
+			editor.scaleLayer(g.id, g.startProps ?? {}, g.startNodes, g.startX, g.startY, g.startW, g.startH, x, y, fw, fh, f);
 		} else if (g.startNodes) {
 			// A path/shape has no box of its own — scale its nodes to the new bbox.
-			editor.scalePath(g.id, g.startNodes, g.startX, g.startY, g.startW, g.startH, x, y, w, hgt);
+			editor.scalePath(g.id, g.startNodes, g.startX, g.startY, g.startW, g.startH, x, y, fw, fh);
 		} else {
-			editor.resize(g.id, w, hgt);
+			editor.resize(g.id, fw, fh);
 			if (x !== g.startX || y !== g.startY) editor.move(g.id, x, y);
 		}
 	}
 
 	function endGesture(e: PointerEvent) {
 		if (!g) return;
+		if (e.pointerId !== g.pointerId) return;
 		try {
 			g.target.releasePointerCapture(g.pointerId);
 		} catch {
 			/* capture may already be gone */
 		}
+		// A click (no drag) on a member of a multi-selection isolates it (Figma).
+		if (!g.moved && g.isolate) editor.select(g.isolate);
 		g = null;
 		guideX = null;
 		guideY = null;
+	}
+
+	// A gesture is in progress — used to ignore a second finger / stray pointerdown.
+	function busy(): boolean {
+		return !!(g || draw || marquee || pan || nodeDrag || segDrag || bend);
+	}
+	// Single hard reset for ALL canvas gestures — wired to window pointercancel/blur
+	// so a drag can never get stuck (the browser stealing the pointer, tab blur, the
+	// SVG implicit-capture drop on touch, etc.).
+	function cancelAllGestures() {
+		g = null;
+		draw = null;
+		marquee = null;
+		nodeDrag = null;
+		segDrag = null;
+		bend = null;
+		pan = null;
+		guideX = null;
+		guideY = null;
+		closeHint = false;
 	}
 
 	// ── draw-on-canvas: with a draw tool active, pointerdown creates a layer and
@@ -342,7 +530,7 @@
 		}
 	}
 	function onViewportDown(e: PointerEvent) {
-		if (!spaceDown || e.button !== 0) return;
+		if (!spaceDown || e.button !== 0 || busy()) return;
 		(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
 		pan = { ptrId: e.pointerId, x0: e.clientX, y0: e.clientY, px: panX, py: panY };
 		e.preventDefault();
@@ -365,6 +553,7 @@
 		if (e.key === ' ') spaceDown = false;
 	}
 
+	let marqueeBase: string[] = []; // selection to union with when a modifier is held
 	function marqueeMove(e: PointerEvent) {
 		if (!marquee || !stageEl) return;
 		const p = canvasPoint(e, stageEl);
@@ -374,9 +563,12 @@
 		const w = Math.abs(marquee.x1 - marquee.x0);
 		const h = Math.abs(marquee.y1 - marquee.y0);
 		const hits = layout.layers
-			.filter((l) => !l.hidden && l.x < x + w && l.x + l.w > x && l.y < y + h && l.y + l.h > y)
+			.filter(
+				(l) => !l.hidden && !l.locked && l.x < x + w && l.x + l.w > x && l.y < y + h && l.y + l.h > y
+			)
 			.map((l) => l.id);
-		editor.selectMany(hits);
+		// Shift/Cmd+marquee adds to the prior selection; plain marquee replaces.
+		editor.selectMany(marqueeBase.length ? [...new Set([...marqueeBase, ...hits])] : hits);
 	}
 	function marqueeUp(e: PointerEvent) {
 		if (!marquee) return;
@@ -398,6 +590,7 @@
 
 	function stageDown(e: PointerEvent) {
 		if (spaceDown) return; // space-pan: the viewport handles this drag
+		if (busy()) return; // ignore a second pointer while a gesture is active
 		const el = e.currentTarget as HTMLElement;
 		const p = canvasPoint(e, el);
 		switch (editor.tool) {
@@ -407,7 +600,9 @@
 				// pointerdown only reaches here when it's on the empty stage.
 				if (e.target === e.currentTarget || (e.target as HTMLElement).dataset.stage === 'bg') {
 					if (e.button !== 0) return;
-					if (!(e.shiftKey || e.metaKey || e.ctrlKey)) editor.select(null);
+					const additive = e.shiftKey || e.metaKey || e.ctrlKey;
+					marqueeBase = additive ? [...editor.selectedIds] : [];
+					if (!additive) editor.select(null);
 					el.setPointerCapture(e.pointerId);
 					marquee = { x0: p.x, y0: p.y, x1: p.x, y1: p.y, ptrId: e.pointerId };
 				}
@@ -1298,7 +1493,13 @@
 	}
 </script>
 
-<svelte:window onkeydown={onKeydown} onkeyup={onKeyup} />
+<svelte:window
+	onkeydown={onKeydown}
+	onkeyup={onKeyup}
+	onpointerup={cancelAllGestures}
+	onpointercancel={cancelAllGestures}
+	onblur={cancelAllGestures}
+/>
 
 <!-- Viewport: clips + centres the stage and owns zoom/pan (space-drag, ⌘-wheel). -->
 <div
@@ -1373,7 +1574,53 @@
 	{#each visible as l (l.id)}
 		{@const b = box(l)}
 		{@const isSel = editor.isSelected(l.id)}
-		{#if l.type === 'path'}
+		{#if boolMemberIds.has(l.id)}
+			{@const gid = l.group ?? ''}
+			{@const members = boolMembers(gid)}
+			<!-- Boolean group: the whole same-group run is composited as ONE shape,
+			     rendered once at the bottom member's z-position (groups are contiguous,
+			     so this matches the Go renderer's order). Other members render nothing. -->
+			{#if members[0] && l.id === members[0].id}
+				{@const grpSel = editor.isSelected(members[0].id)}
+				<svg class="path-layer" viewBox="0 0 {layout.width} {layout.height}" preserveAspectRatio="none">
+					{@html boolSvgInner(gid)}
+					<!-- transparent silhouette over the whole group = one select/drag target -->
+					<path
+						d={boolUnionD(members)}
+						class="bool-hit"
+						class:sel={grpSel}
+						fill-rule="nonzero"
+						role="button"
+						tabindex="-1"
+						aria-label={editor.groupName(gid)}
+						onpointerdown={(e) => beginBody(e, members[0])}
+						onpointermove={onMove}
+						onpointerup={endGesture}
+						onpointercancel={endGesture}
+					/>
+				</svg>
+				<!-- Resize handles per selected member (members scale individually for now). -->
+				{#each members as m (m.id)}
+					{#if editor.isSelected(m.id)}
+						{@const mb = box(m)}
+						<div class="path-sel" style="left:{mb.left}; top:{mb.top}; width:{mb.width}; height:{mb.height};">
+							{#each HANDLES as hd (hd.dir)}
+								<button
+									type="button"
+									aria-label="Resize {hd.dir}"
+									class="handle {hd.cls}"
+									style="cursor:{hd.cursor};"
+									onpointerdown={(e) => beginHandle(e, m, hd.dir)}
+									onpointermove={onMove}
+									onpointerup={endGesture}
+									onpointercancel={endGesture}
+								></button>
+							{/each}
+						</div>
+					{/if}
+				{/each}
+			{/if}
+		{:else if l.type === 'path'}
 			{@const cx = l.x + l.w / 2}
 			{@const cy = l.y + l.h / 2}
 			{@const d = pathD(l.nodes, l.closed) + (l.id === penId && cursor && (l.nodes?.length ?? 0) ? ` L ${cursor.x} ${cursor.y}` : '')}
@@ -1381,7 +1628,7 @@
 				class="path-layer"
 				viewBox="0 0 {layout.width} {layout.height}"
 				preserveAspectRatio="none"
-				style="opacity:{l.opacity ?? 1}; {l.id === editor.editId ? '' : maskCss(l)}"
+				style="opacity:{l.opacity ?? 1}; {!hasMasks || l.id === editor.editId ? '' : maskCss(l)}"
 			>
 				<g transform="rotate({l.rotation ?? 0} {cx} {cy})">
 					{#if d}
@@ -1507,7 +1754,7 @@
 			class="layer"
 			class:selected={isSel}
 			style="left:{b.left}; top:{b.top}; width:{b.width}; height:{b.height}; opacity:{l.opacity ??
-				1}; transform:rotate({l.rotation ?? 0}deg); {isSel ? '' : maskCss(l)}"
+				1}; transform:rotate({l.rotation ?? 0}deg); {hasMasks ? maskCss(l) : ''}"
 			onpointerdown={(e) => beginBody(e, l)}
 			onpointermove={onMove}
 			onpointerup={endGesture}
@@ -1644,7 +1891,7 @@
 	}
 	/* A draw tool active → crosshair across the canvas, even over existing layers. */
 	.viewport.draw,
-	.viewport.draw :is(.layer, .path-stroke) {
+	.viewport.draw :is(.layer, .path-stroke, .bool-hit) {
 		cursor: crosshair;
 	}
 	.zoomwrap {
@@ -1664,8 +1911,10 @@
 			0 0 0 1px var(--color-line-strong),
 			0 24px 60px -20px rgba(0, 0, 0, 0.7),
 			0 8px 24px -12px rgba(0, 0, 0, 0.6);
-		/* keep page scroll on touch; drags are handled per-layer */
-		touch-action: pan-y;
+		/* The editor owns all canvas gestures (draw/marquee/drag) — never let the
+		   browser claim a touch drag for scrolling (that fires pointercancel and
+		   kills the gesture). Pan/zoom is via space-drag + ctrl/⌘-wheel. */
+		touch-action: none;
 		user-select: none;
 	}
 
@@ -1734,6 +1983,16 @@
 	.path-stroke {
 		pointer-events: visiblePainted;
 		cursor: default;
+	}
+	/* The transparent silhouette of a composited boolean group — its fill region is
+	   the single hit target for selecting/dragging the whole group. */
+	.bool-hit {
+		fill: transparent;
+		pointer-events: fill;
+		cursor: default;
+	}
+	.bool-hit.sel {
+		cursor: move;
 	}
 	.path-node {
 		fill: var(--vec);
@@ -1841,6 +2100,18 @@
 		z-index: 3;
 		/* re-enable hit-testing inside the pointer-events:none .path-sel outline */
 		pointer-events: auto;
+	}
+	/* Invisible hit-slop so the 8px handle is grabbable by mouse, and much bigger by
+	   finger — resize is unusable on touch otherwise. */
+	.handle::before {
+		content: '';
+		position: absolute;
+		inset: -8px;
+	}
+	@media (pointer: coarse) {
+		.handle::before {
+			inset: -16px;
+		}
 	}
 	.handle:focus-visible {
 		outline: 2px solid var(--color-accent);
