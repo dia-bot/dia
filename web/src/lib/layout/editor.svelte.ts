@@ -341,10 +341,15 @@ export class EditorStore {
 	enterEdit(id: string) {
 		const l = this.layout.layers.find((x) => x.id === id);
 		if (!l) return;
-		this.select(id);
 		if (l.type === 'path' || l.type === 'text') {
+			// Single-select (not the whole group) so selectedId === editId and the
+			// canvas's "selection changed → exit edit" guard doesn't immediately trip
+			// for a grouped layer.
+			this.selectedIds = [id];
 			this.editId = id;
 			this.activeNode = null;
+		} else {
+			this.select(id);
 		}
 	}
 	exitEdit() {
@@ -412,9 +417,16 @@ export class EditorStore {
 				n.h2x = h.h2x;
 				n.h2y = h.h2y;
 			} else if (mode === 'mirror') {
-				// lock the in-handle to mirror the out-handle (angle + length)
-				n.h1x = Math.round(2 * n.x - n.h2x);
-				n.h1y = Math.round(2 * n.y - n.h2y);
+				// Mirror from whichever handle is real so we never wipe the node's only
+				// handle (e.g. a node with just an in-handle).
+				const h2real = n.h2x !== n.x || n.h2y !== n.y;
+				if (h2real) {
+					n.h1x = Math.round(2 * n.x - n.h2x);
+					n.h1y = Math.round(2 * n.y - n.h2y);
+				} else {
+					n.h2x = Math.round(2 * n.x - n.h1x);
+					n.h2y = Math.round(2 * n.y - n.h1y);
+				}
 			}
 		}
 		n.m = mode;
@@ -422,12 +434,14 @@ export class EditorStore {
 		this.fitPath(l);
 	}
 
-	// toggleNodeType is the double-click action: a flat corner becomes smooth, a
-	// curved point becomes a sharp corner.
+	// toggleNodeType is the double-click action: a corner becomes smooth, a smooth/
+	// asym point becomes a sharp corner. Keys off the stored type (falling back to
+	// geometry) so it stays consistent even if a tangent came out degenerate.
 	toggleNodeType(idx: number) {
 		const n = this.editPath?.nodes?.[idx];
 		if (!n) return;
-		this.setNodeType(idx, hasHandles(n) ? 'corner' : 'mirror');
+		const isSmooth = n.m ? n.m !== 'corner' : hasHandles(n);
+		this.setNodeType(idx, isSmooth ? 'corner' : 'mirror');
 	}
 
 	// setActiveNodeX/Y move the focused node (and its handles) to an absolute
