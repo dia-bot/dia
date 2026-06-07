@@ -5,7 +5,6 @@ import (
 	"image"
 	"image/color"
 	"math"
-	"net/http"
 	"strconv"
 	"strings"
 
@@ -136,23 +135,8 @@ func drawProgressBar(dc *gg.Context, x, y, w, h, pct float64, bg, fg color.Color
 	}
 }
 
-// fetchImage downloads and decodes an image, returning nil on any failure.
+// fetchImage downloads and decodes an image with strict size + pixel caps
+// (see fetchDecoded), returning nil on any failure.
 func (r *Renderer) fetchImage(ctx context.Context, url string) image.Image {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return nil
-	}
-	resp, err := r.http.Do(req)
-	if err != nil {
-		return nil
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil
-	}
-	img, _, err := image.Decode(resp.Body)
-	if err != nil {
-		return nil
-	}
-	return img
+	return r.fetchDecoded(ctx, url)
 }
