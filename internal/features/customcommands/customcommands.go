@@ -17,6 +17,8 @@ import (
 	"github.com/dia-bot/dia/internal/interactions"
 	"github.com/dia-bot/dia/internal/plugin"
 	"github.com/dia-bot/dia/internal/store"
+	"github.com/dia-bot/dia/internal/templating"
+	"github.com/dia-bot/dia/internal/tmpllookup"
 	"github.com/dia-bot/dia/pkg/discordgo"
 )
 
@@ -82,16 +84,16 @@ func handleInvoke(c *interactions.Context, d plugin.Deps) error {
 		}
 	}
 
-	v := vars{user: c.User, server: guildName(c.Ctx, d, gid)}
+	v := vars{user: c.User, server: guildName(c.Ctx, d, gid), guildID: c.GuildID, lookup: tmpllookup.New(c.Ctx, d.GuildState, c.GuildID)}
 
 	data := &discordgo.InteractionResponseData{}
 	if resp.Content != "" {
-		data.Content = v.apply(resp.Content)
+		data.Content = v.render(resp.Content)
 	}
 	if resp.Embed != nil {
 		embed := &discordgo.MessageEmbed{
-			Title:       v.apply(resp.Embed.Title),
-			Description: v.apply(resp.Embed.Description),
+			Title:       v.render(resp.Embed.Title),
+			Description: v.render(resp.Embed.Description),
 			Color:       colorInt(resp.Embed.Color, 0xB244FC),
 		}
 		if url := v.apply(resp.Embed.ImageURL); url != "" {
@@ -159,24 +161,50 @@ func guildName(ctx context.Context, d plugin.Deps, guildID int64) string {
 
 // vars holds the substitution context for response templates.
 type vars struct {
-	user   event.User
-	server string
+	user    event.User
+	server  string
+	guildID string
+	lookup  templating.Lookup // read-only guild data for getRole/getChannel
+}
+
+func (v vars) displayName() string {
+	if v.user.GlobalName != "" {
+		return v.user.GlobalName
+	}
+	return v.user.Username
+}
+
+func (v vars) tokenMap() map[string]string {
+	return map[string]string{
+		"{user.mention}": "<@" + v.user.ID + ">",
+		"{username}":     v.user.Username,
+		"{user}":         v.displayName(),
+		"{server}":       v.server,
+	}
 }
 
 func (v vars) apply(s string) string {
 	if s == "" {
 		return ""
 	}
-	name := v.user.GlobalName
-	if name == "" {
-		name = v.user.Username
+	pairs := make([]string, 0, 8)
+	for k, val := range v.tokenMap() {
+		pairs = append(pairs, k, val)
 	}
-	return strings.NewReplacer(
-		"{user.mention}", "<@"+v.user.ID+">",
-		"{username}", v.user.Username,
-		"{user}", name,
-		"{server}", v.server,
-	).Replace(s)
+	return strings.NewReplacer(pairs...).Replace(s)
+}
+
+// render runs the pure template engine (logic + functions, no actions) then the
+// {token} shorthands — so responses can use {{ }} logic as well as {tokens}.
+func (v vars) render(s string) string {
+	if s == "" {
+		return ""
+	}
+	data := &templating.Context{
+		User:  templating.User{ID: v.user.ID, Username: v.user.Username, GlobalName: v.user.GlobalName, Avatar: v.user.Avatar, Bot: v.user.Bot},
+		Guild: templating.Guild{ID: v.guildID, Name: v.server},
+	}
+	return templating.RenderMessage(context.Background(), s, data, v.lookup, v.tokenMap())
 }
 
 // colorInt converts a #RRGGBB string to a Discord embed color int.
