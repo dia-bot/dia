@@ -3,8 +3,9 @@
 // with {variable} bindings, so it works for any member out of the box.
 import type { Layout } from './schema';
 
+// The avatar is just a circular image bound to {{.User.Avatar}}.
 function avatar(x: number, y: number, size: number, ring: string, rw = 6): Layout['layers'][number] {
-	return { id: 'avatar', type: 'avatar', name: 'Avatar', x, y, w: size, h: size, opacity: 1, hidden: false, src: '{{.User.Avatar}}', shape: 'circle', ring_color: ring, ring_width: rw, radius: 24 };
+	return { id: 'avatar', type: 'image', name: 'Avatar', x, y, w: size, h: size, opacity: 1, hidden: false, src: '{{.User.Avatar}}', fit: 'cover', mask: 'circle', ring_color: ring, ring_width: rw };
 }
 function text(id: string, name: string, x: number, y: number, w: number, h: number, t: string, size: number, weight: number, color: string, align: 'left' | 'center' | 'right'): Layout['layers'][number] {
 	return { id, type: 'text', name, x, y, w, h, opacity: 1, hidden: false, text: t, font_size: size, font_weight: weight, color, align };

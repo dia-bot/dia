@@ -30,6 +30,7 @@ export interface PathNode {
 export type Fit = 'cover' | 'contain';
 export type Shape = 'circle' | 'rounded';
 export type Mask = '' | 'circle' | 'ellipse'; // image clip; '' = rounded-rect via radius
+export type ClipMode = 'alpha' | 'luminance'; // how a mask layer clips the layers above it
 
 // The card renders server-side on every member join, so we cap layer count to
 // keep that cheap — masking + vector shapes mean you rarely need many layers.
@@ -89,6 +90,7 @@ export interface Layer {
 	rotation?: number; // degrees, about the layer centre
 	hidden: boolean;
 	group?: string; // soft-group id: layers sharing one select/move/delete together
+	locked?: boolean; // editor-only: can't be selected/moved on the canvas
 	// text
 	text?: string; // supports {variables}
 	font_size?: number;
@@ -111,6 +113,13 @@ export interface Layer {
 	// path (pen / pencil)
 	nodes?: PathNode[]; // absolute canvas-px anchors + handles
 	closed?: boolean; // close + fill the path
+	// masking (Figma "use as mask"): when clip is set, this layer is a stencil that
+	// clips the layers ABOVE it (until the next mask). clip_mode picks how:
+	//   'alpha'     — show masked content where the mask is opaque (shape + alpha)
+	//   'luminance' — masked content alpha follows the mask's brightness
+	clip?: boolean;
+	clip_mode?: ClipMode;
+	clip_invert?: boolean; // invert the mask (hide inside the shape / show outside)
 }
 
 export type BackgroundType = 'solid' | 'gradient' | 'image';
@@ -161,15 +170,32 @@ export function newLayer(type: LayerType): Layer {
 		return { ...base, name: 'Avatar', src: '{{.User.Avatar}}', shape: 'circle', ring_color: '#FFFFFF', ring_width: 6, radius: 24, w: 180, h: 180 };
 	}
 	if (type === 'ellipse') {
-		return { ...base, name: 'Ellipse', fill: '#B244FC', radius: 0, opacity: 0.3, w: 240, h: 240 };
+		return { ...base, name: 'Ellipse', fill: '#FFFFFF', radius: 0, opacity: 1, w: 240, h: 240 };
 	}
 	if (type === 'path') {
 		// Paths are built by the pen/pencil tools (see EditorStore.createPath); this
 		// is just a valid default for type-completeness.
 		return { ...base, name: 'Path', nodes: [], closed: false, fill: '', stroke_color: '#FFFFFF', stroke_width: 4, w: 1, h: 1 };
 	}
-	// rect
-	return { ...base, name: 'Shape', fill: '#000000', radius: 16, opacity: 0.35, w: 400, h: 160 };
+	// rect — solid, fully visible, sharp corners, no border (Figma's default shape)
+	return { ...base, name: 'Rectangle', fill: '#FFFFFF', radius: 0, opacity: 1, w: 400, h: 160 };
+}
+
+// newAvatarImage returns an image layer pre-configured as a circular member
+// avatar — the "avatar" is just an image bound to the {{.User.Avatar}} template,
+// so it's editable like any image (swap the URL for {{.Guild.Icon}}, etc.).
+export function newAvatarImage(): Layer {
+	return {
+		...newLayer('image'),
+		name: 'Avatar',
+		src: '{{.User.Avatar}}',
+		fit: 'cover',
+		mask: 'circle',
+		ring_color: '#FFFFFF',
+		ring_width: 6,
+		w: 180,
+		h: 180
+	};
 }
 
 // defaultLayout is the starter canvas (welcome-card sized).
@@ -179,7 +205,7 @@ export function defaultLayout(): Layout {
 		height: 450,
 		background: { type: 'gradient', from: '#FF6363', to: '#B244FC', angle: 45 },
 		layers: [
-			{ ...newLayer('avatar'), x: 422, y: 50, w: 180, h: 180 },
+			{ ...newAvatarImage(), x: 422, y: 50 },
 			{ ...newLayer('text'), id: uid(), name: 'Title', text: 'Welcome, {{.User.Name}}!', x: 162, y: 250, w: 700, h: 64, font_size: 52, align: 'center' },
 			{ ...newLayer('text'), id: uid(), name: 'Subtitle', text: "You're member #{{.Count}}", x: 162, y: 322, w: 700, h: 40, font_size: 28, font_weight: 400, color: '#F1DFDF', align: 'center' }
 		]

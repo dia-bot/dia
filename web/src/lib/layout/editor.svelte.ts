@@ -6,6 +6,7 @@
 import {
 	defaultLayout,
 	newLayer,
+	newAvatarImage,
 	cornerNode,
 	smoothHandles,
 	hasHandles,
@@ -16,14 +17,15 @@ import {
 	type LayerType,
 	type PathNode,
 	type HandleMode,
-	type ShapeKind
+	type ShapeKind,
+	type ClipMode
 } from './schema';
 
 export const EDITOR_CTX = Symbol('dia-layout-editor');
 
 // Active canvas tool. 'select' is the arrow; rect..avatar are drag-to-create
 // shapes; 'pen' places bezier nodes and 'pencil' draws freehand.
-export type Tool = 'select' | 'rect' | 'ellipse' | 'text' | 'image' | 'avatar' | 'pen' | 'pencil' | 'shape';
+export type Tool = 'select' | 'scale' | 'rect' | 'ellipse' | 'text' | 'image' | 'avatar' | 'pen' | 'pencil' | 'shape' | 'bend';
 
 export type AlignEdge = 'left' | 'hcenter' | 'right' | 'top' | 'vcenter' | 'bottom';
 
@@ -174,8 +176,55 @@ export class EditorStore {
 		return layer;
 	}
 
-	// addShape inserts a parametric shape as an editable path layer (triangle,
-	// polygon, star, line, …), centred in the canvas.
+	// addAvatar inserts a circular member-avatar image ({{.User.Avatar}}) — the
+	// avatar is just an image preset, no separate layer type.
+	addAvatar(): Layer | null {
+		if (this.atLimit) return null;
+		const layer = newAvatarImage();
+		this.layout.layers.push(layer);
+		this.selectedIds = [layer.id];
+		return layer;
+	}
+
+	// convertToPath turns a rect/ellipse into an editable vector path — Figma flips
+	// a primitive to vectors when you edit its points. Rect → 4 corners; ellipse →
+	// 4 bezier nodes (kappa ≈ 0.5523). Other types are left unchanged.
+	convertToPath(id: string) {
+		const l = this.layout.layers.find((x) => x.id === id);
+		if (!l || (l.type !== 'rect' && l.type !== 'ellipse')) return;
+		const { x, y, w, h } = l;
+		let nodes: PathNode[];
+		if (l.type === 'ellipse') {
+			const k = 0.5523;
+			const rx = w / 2;
+			const ry = h / 2;
+			const cx = x + rx;
+			const cy = y + ry;
+			const node = (px: number, py: number, h1x: number, h1y: number, h2x: number, h2y: number): PathNode => ({
+				x: Math.round(px),
+				y: Math.round(py),
+				h1x: Math.round(h1x),
+				h1y: Math.round(h1y),
+				h2x: Math.round(h2x),
+				h2y: Math.round(h2y),
+				m: 'mirror'
+			});
+			nodes = [
+				node(cx + rx, cy, cx + rx, cy - ry * k, cx + rx, cy + ry * k), // right
+				node(cx, cy + ry, cx + rx * k, cy + ry, cx - rx * k, cy + ry), // bottom
+				node(cx - rx, cy, cx - rx, cy + ry * k, cx - rx, cy - ry * k), // left
+				node(cx, cy - ry, cx - rx * k, cy - ry, cx + rx * k, cy - ry) // top
+			];
+		} else {
+			nodes = [cornerNode(x, y), cornerNode(x + w, y), cornerNode(x + w, y + h), cornerNode(x, y + h)];
+		}
+		l.type = 'path';
+		l.nodes = nodes;
+		l.closed = true;
+		if (!l.fill) l.fill = '#FFFFFF';
+		this.fitPath(l);
+	}
+
 	// createShape starts a drawable shape (path) at (x,y); the canvas grows it via
 	// setShapeBox while dragging — so shapes draw out like the rect/ellipse tools.
 	createShape(kind: ShapeKind, x: number, y: number): Layer | null {
@@ -207,6 +256,40 @@ export class EditorStore {
 		l.nodes = shapeInBox(kind, x, y, w, h).nodes;
 		this.fitPath(l);
 	}
+	// scaleLayer is the Scale tool (Figma's K): like resize, but it ALSO scales the
+	// layer's intrinsic properties (font size, stroke width, corner radius, ring) by
+	// the uniform factor f, so the whole object grows proportionally. props holds the
+	// values captured at gesture start.
+	scaleLayer(
+		id: string,
+		props: { fontSize?: number; stroke?: number; radius?: number; ring?: number },
+		startNodes: PathNode[] | undefined,
+		sx: number,
+		sy: number,
+		sw: number,
+		sh: number,
+		nx: number,
+		ny: number,
+		nw: number,
+		nh: number,
+		f: number
+	) {
+		const l = this.layout.layers.find((ly) => ly.id === id);
+		if (!l) return;
+		if (startNodes) {
+			this.scalePath(id, startNodes, sx, sy, sw, sh, nx, ny, nw, nh);
+		} else {
+			l.x = nx;
+			l.y = ny;
+			l.w = nw;
+			l.h = nh;
+		}
+		if (props.fontSize != null) l.font_size = Math.max(1, Math.round(props.fontSize * f));
+		if (props.stroke != null) l.stroke_width = Math.max(0, Math.round(props.stroke * f * 10) / 10);
+		if (props.radius != null) l.radius = Math.max(0, Math.round(props.radius * f));
+		if (props.ring != null) l.ring_width = Math.max(0, Math.round(props.ring * f));
+	}
+
 	// scalePath maps a path's nodes (captured at gesture start) from the start bbox
 	// to a new one — powers the resize handles on shape/path layers.
 	scalePath(id: string, start: PathNode[], sx: number, sy: number, sw: number, sh: number, nx: number, ny: number, nw: number, nh: number) {
@@ -400,6 +483,27 @@ export class EditorStore {
 		const arr = this.layout.layers;
 		[arr[i], arr[j]] = [arr[j], arr[i]];
 	}
+	bringToFront(id: string) {
+		const arr = this.layout.layers;
+		const i = arr.findIndex((l) => l.id === id);
+		if (i < 0 || i === arr.length - 1) return;
+		const [l] = arr.splice(i, 1);
+		arr.push(l);
+	}
+	sendToBack(id: string) {
+		const arr = this.layout.layers;
+		const i = arr.findIndex((l) => l.id === id);
+		if (i <= 0) return;
+		const [l] = arr.splice(i, 1);
+		arr.unshift(l);
+	}
+	rename(id: string, name: string) {
+		this.patch(id, { name: name.trim() || 'Layer' });
+	}
+	toggleLock(id: string) {
+		const l = this.layout.layers.find((x) => x.id === id);
+		if (l) l.locked = !l.locked;
+	}
 	setOrder(frontToBackIds: string[]) {
 		const byId = new Map(this.layout.layers.map((l) => [l.id, l]));
 		const next = frontToBackIds.map((id) => byId.get(id)).filter((l): l is Layer => !!l);
@@ -422,10 +526,12 @@ export class EditorStore {
 		return l.nodes[this.activeNode] ?? null;
 	}
 
-	// enterEdit opens deep-edit on a path or text layer (no-op for other types).
+	// enterEdit opens deep-edit on a path or text layer. A rect/ellipse is flipped
+	// to an editable vector path first (Figma's "edit object" on a primitive).
 	enterEdit(id: string) {
 		const l = this.layout.layers.find((x) => x.id === id);
 		if (!l) return;
+		if (l.type === 'rect' || l.type === 'ellipse') this.convertToPath(id);
 		if (l.type === 'path' || l.type === 'text') {
 			// Single-select (not the whole group) so selectedId === editId and the
 			// canvas's "selection changed → exit edit" guard doesn't immediately trip
@@ -563,6 +669,23 @@ export class EditorStore {
 		if (this.activeNode !== null) this.deleteNodeAt(this.activeNode);
 	}
 
+	// deleteHandle collapses one bezier handle onto its anchor — "delete the bend
+	// you clicked" — keeping the point (and the shape) intact.
+	deleteHandle(idx: number, kind: 'h1' | 'h2') {
+		const l = this.editPath;
+		const n = l?.nodes?.[idx];
+		if (!l || !n) return;
+		if (kind === 'h1') {
+			n.h1x = n.x;
+			n.h1y = n.y;
+		} else {
+			n.h2x = n.x;
+			n.h2y = n.y;
+		}
+		n.m = hasHandles(n) ? 'asym' : 'corner';
+		this.fitPath(l);
+	}
+
 	// reversePath flips drawing direction, swapping each node's in/out handles so
 	// the curve is geometrically identical, just wound the other way.
 	reversePath() {
@@ -593,6 +716,73 @@ export class EditorStore {
 	get fillEnabled(): boolean {
 		const l = this.selected;
 		return l?.type === 'path' ? !!l.fill : false;
+	}
+
+	// ── masking ("use as mask") ──────────────────────────────────────────────────
+	get isMask(): boolean {
+		return !!this.selected?.clip;
+	}
+	// toggleMask flips the selected layer between a normal layer and a stencil that
+	// clips the layers above it.
+	toggleMask() {
+		const l = this.selected;
+		if (!l) return;
+		l.clip = !l.clip;
+		if (l.clip && !l.clip_mode) l.clip_mode = 'alpha';
+	}
+	setClipMode(mode: ClipMode) {
+		const l = this.selected;
+		if (l?.clip) l.clip_mode = mode;
+	}
+	// maskFor returns the mask layer that clips the given layer, or null. A mask
+	// scopes to its group when it has one (a "mask group", created by useAsMask);
+	// a groupless mask clips everything above it until the next mask.
+	maskFor(layer: Layer): Layer | null {
+		if (layer.clip) return null; // a mask isn't masked by itself / another mask
+		const arr = this.layout.layers;
+		const i = arr.findIndex((l) => l.id === layer.id);
+		for (let k = i - 1; k >= 0; k--) {
+			const c = arr[k];
+			if (!c.clip) continue;
+			if (!c.group) return c; // groupless mask → clips everything above it
+			return c.group === layer.group ? c : null; // grouped mask → same group only
+		}
+		return null;
+	}
+
+	// useAsMask is Figma's "Use as mask": the bottom-most selected layer becomes a
+	// stencil for the others. The selection is gathered into one contiguous mask
+	// group so the mask clips exactly those layers (and nothing else).
+	useAsMask() {
+		const arr = this.layout.layers;
+		const idxs = this.selectedIds
+			.map((id) => arr.findIndex((l) => l.id === id))
+			.filter((i) => i >= 0)
+			.sort((a, b) => a - b);
+		if (!idxs.length) return;
+		const block = idxs.map((i) => arr[i]); // bottom → top
+		const blockSet = new Set(block);
+		const gid = `mask${++this.#seq}`;
+		for (const l of block) l.group = gid;
+		block[0].clip = true; // the lowest layer is the mask
+		if (!block[0].clip_mode) block[0].clip_mode = 'alpha';
+		// Reinsert the block contiguously at the bottom-most selected position.
+		const anchor = idxs[0];
+		const below = arr.slice(0, anchor).filter((l) => !blockSet.has(l)).length;
+		const rest = arr.filter((l) => !blockSet.has(l));
+		rest.splice(below, 0, ...block);
+		this.layout.layers = rest;
+		this.selectedIds = block.map((l) => l.id);
+	}
+
+	// releaseMask turns a stencil back into a normal layer and dissolves its group.
+	releaseMask(id: string) {
+		const l = this.layout.layers.find((x) => x.id === id);
+		if (!l?.clip) return;
+		const gid = l.group;
+		l.clip = false;
+		l.clip_invert = false;
+		if (gid) for (const m of this.layout.layers) if (m.group === gid) delete m.group;
 	}
 
 	// ── undo / redo ────────────────────────────────────────────────────────────────
