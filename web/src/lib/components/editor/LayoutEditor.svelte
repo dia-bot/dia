@@ -7,6 +7,7 @@
 	import { getContext, onDestroy, type Snippet } from 'svelte';
 	import { EditorStore, EDITOR_CTX, type Tool } from '$lib/layout/editor.svelte';
 	import { layoutPreview } from '$lib/api';
+	import { googleFontsHref } from '$lib/layout/fonts';
 	import Canvas from '$lib/components/editor/Canvas.svelte';
 	import LayersPanel from '$lib/components/editor/LayersPanel.svelte';
 	import PropertiesPanel from '$lib/components/editor/PropertiesPanel.svelte';
@@ -81,6 +82,11 @@
 		}
 	}
 </script>
+
+<!-- Load the card fonts so the preview shows the same faces the renderer uses. -->
+<svelte:head>
+	<link rel="stylesheet" href={googleFontsHref()} />
+</svelte:head>
 
 <svelte:window onkeydown={onKeydown} />
 

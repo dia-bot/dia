@@ -8,6 +8,7 @@
 	import { getContext } from 'svelte';
 	import { EditorStore, EDITOR_CTX } from '$lib/layout/editor.svelte';
 	import { resolveText, resolveSrc, newLayer, cornerNode, pathD, type Layer, type PathNode } from '$lib/layout/schema';
+	import { fontCss } from '$lib/layout/fonts';
 	import { ImageIcon, User } from 'lucide-svelte';
 
 	const editor = getContext<EditorStore>(EDITOR_CTX);
@@ -503,7 +504,8 @@
 	// endpoint onto the other end to close the loop.
 	let stageEl = $state<HTMLElement>();
 	let textEl = $state<HTMLTextAreaElement>();
-	let nodeDrag: { node: number; kind: 'anchor' | 'h1' | 'h2'; ptrId: number; target: Element } | null = null;
+	// $state so the closeNode $derived re-tracks when a node drag starts/ends.
+	let nodeDrag = $state<{ node: number; kind: 'anchor' | 'h1' | 'h2'; ptrId: number; target: Element } | null>(null);
 	let segDrag: { ptrId: number; target: Element; seg: number; sx: number; sy: number; start: PathNode[] } | null = null;
 	let closeHint = $state(false); // dragging an endpoint within range of the other end
 
@@ -574,17 +576,24 @@
 				gy = ty;
 			}
 		};
-		consider(0, 0);
-		consider(layout.width / 2, layout.height / 2);
-		consider(layout.width, layout.height);
+		// This path's own nodes are in the same (local) space as x/y, so they snap
+		// correctly even when the path is rotated.
 		(path.nodes ?? []).forEach((n, i) => {
 			if (i !== skip) consider(n.x, n.y);
 		});
-		for (const l of layout.layers) {
-			if (l.id === path.id || l.hidden) continue;
-			consider(l.x, l.y);
-			consider(l.x + l.w / 2, l.y + l.h / 2);
-			consider(l.x + l.w, l.y + l.h);
+		// Canvas grid + other layers live in canvas space, which only coincides with
+		// the path's local space when it isn't rotated; skip them (and their guides)
+		// for a rotated path rather than snap/draw to the wrong place.
+		if (!(path.rotation ?? 0)) {
+			consider(0, 0);
+			consider(layout.width / 2, layout.height / 2);
+			consider(layout.width, layout.height);
+			for (const l of layout.layers) {
+				if (l.id === path.id || l.hidden) continue;
+				consider(l.x, l.y);
+				consider(l.x + l.w / 2, l.y + l.h / 2);
+				consider(l.x + l.w, l.y + l.h);
+			}
 		}
 		return { x: Math.round(bx), y: Math.round(by), gx, gy };
 	}
@@ -607,6 +616,39 @@
 		if (idx === 0) return last;
 		if (idx === last) return 0;
 		return -1;
+	}
+
+	// constrainOpposite re-derives a node's other handle from the one just moved,
+	// honouring its point type: 'mirror' = exact reflection, 'asym' = mirrored
+	// angle keeping the opposite length, 'corner' = leave it alone. `movedOut` is
+	// true when the out-handle (h2) was the one edited.
+	function constrainOpposite(n: PathNode, movedOut: boolean) {
+		const mode = n.m ?? 'corner';
+		if (mode === 'mirror') {
+			if (movedOut) {
+				n.h1x = Math.round(2 * n.x - n.h2x);
+				n.h1y = Math.round(2 * n.y - n.h2y);
+			} else {
+				n.h2x = Math.round(2 * n.x - n.h1x);
+				n.h2y = Math.round(2 * n.y - n.h1y);
+			}
+		} else if (mode === 'asym') {
+			const hx = movedOut ? n.h2x : n.h1x;
+			const hy = movedOut ? n.h2y : n.h1y;
+			const oppX = movedOut ? n.h1x : n.h2x;
+			const oppY = movedOut ? n.h1y : n.h2y;
+			const oppLen = Math.hypot(oppX - n.x, oppY - n.y);
+			const ang = Math.atan2(hy - n.y, hx - n.x) + Math.PI;
+			const ox = Math.round(n.x + Math.cos(ang) * oppLen);
+			const oy = Math.round(n.y + Math.sin(ang) * oppLen);
+			if (movedOut) {
+				n.h1x = ox;
+				n.h1y = oy;
+			} else {
+				n.h2x = ox;
+				n.h2y = oy;
+			}
+		}
 	}
 
 	function startNodeDrag(e: PointerEvent, idx: number, kind: 'anchor' | 'h1' | 'h2') {
@@ -665,35 +707,8 @@
 				n.h1y = hy;
 			}
 			// Alt breaks the link (independent corner handles); else honour the type.
-			let mode = n.m ?? 'corner';
-			if (e.altKey) {
-				mode = 'corner';
-				n.m = 'corner';
-			}
-			if (mode === 'mirror') {
-				if (out) {
-					n.h1x = Math.round(2 * n.x - n.h2x);
-					n.h1y = Math.round(2 * n.y - n.h2y);
-				} else {
-					n.h2x = Math.round(2 * n.x - n.h1x);
-					n.h2y = Math.round(2 * n.y - n.h1y);
-				}
-			} else if (mode === 'asym') {
-				// opposite handle keeps its length, takes the mirrored angle
-				const oppX = out ? n.h1x : n.h2x;
-				const oppY = out ? n.h1y : n.h2y;
-				const oppLen = Math.hypot(oppX - n.x, oppY - n.y);
-				const ang = Math.atan2(hy - n.y, hx - n.x) + Math.PI;
-				const ox = Math.round(n.x + Math.cos(ang) * oppLen);
-				const oy = Math.round(n.y + Math.sin(ang) * oppLen);
-				if (out) {
-					n.h1x = ox;
-					n.h1y = oy;
-				} else {
-					n.h2x = ox;
-					n.h2y = oy;
-				}
-			}
+			if (e.altKey) n.m = 'corner';
+			constrainOpposite(n, out);
 		}
 		// NB: don't fitPath here — recomputing the bbox mid-drag moves the rotation
 		// pivot (l.x+l.w/2) used by both toLocal and the <g rotate>, which makes a
@@ -753,7 +768,10 @@
 	// the path is closed.
 	function nearestOnPath(l: Layer, p: { x: number; y: number }) {
 		const ns = l.nodes ?? [];
-		const segs = l.closed ? ns.length : ns.length - 1;
+		// Mirror pathD: the closing segment only exists for a closed path with 3+
+		// nodes, so don't let the editor target a segment the renderer won't draw.
+		const closes = l.closed && ns.length >= 3;
+		const segs = closes ? ns.length : ns.length - 1;
 		let best = { seg: 1, t: 0.5, d: Infinity };
 		for (let seg = 1; seg <= segs; seg++) {
 			const c = segCubic(ns, seg);
@@ -804,6 +822,9 @@
 		a.h2y = Math.round(a0.h2y + ddy);
 		b.h1x = Math.round(b0.h1x + ddx);
 		b.h1y = Math.round(b0.h1y + ddy);
+		// Keep each endpoint's opposite handle consistent with its point type.
+		constrainOpposite(a, true);
+		constrainOpposite(b, false);
 	}
 	function endSegDrag() {
 		if (!segDrag) return;
@@ -1163,7 +1184,7 @@
 					{#if d}
 						<path
 							{d}
-							fill={l.closed && l.fill ? l.fill : 'none'}
+							fill={l.closed && l.fill && (l.nodes?.length ?? 0) >= 3 ? l.fill : 'none'}
 							stroke={l.stroke_color ?? '#fff'}
 							stroke-width={l.stroke_width ?? 4}
 							stroke-linecap="round"
@@ -1290,14 +1311,14 @@
 						}}
 						class="h-full w-full resize-none bg-transparent p-0 outline-none"
 						style="white-space:pre-wrap; overflow-wrap:break-word; text-align:{l.align ??
-							'left'}; font-size:{(l.font_size ?? 16) * scale}px; font-weight:{l.font_weight ??
+							'left'}; font-family:{fontCss(l.font_family)}; font-size:{(l.font_size ?? 16) * scale}px; font-weight:{l.font_weight ??
 							400}; color:{l.color ?? '#fff'}; line-height:1.3; box-shadow:0 0 0 1px var(--color-accent);"
 					></textarea>
 				{:else}
 					<div
 						class="h-full w-full"
 						style="white-space:pre-wrap; overflow-wrap:break-word; text-align:{l.align ??
-							'left'}; font-size:{(l.font_size ?? 16) * scale}px; font-weight:{l.font_weight ??
+							'left'}; font-family:{fontCss(l.font_family)}; font-size:{(l.font_size ?? 16) * scale}px; font-weight:{l.font_weight ??
 							400}; color:{l.color ?? '#fff'}; line-height:1.3;"
 					>
 						{resolveText(l.text)}

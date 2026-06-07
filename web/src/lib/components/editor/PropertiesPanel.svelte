@@ -6,6 +6,7 @@
 	import { getContext } from 'svelte';
 	import { EditorStore, EDITOR_CTX, type AlignEdge } from '$lib/layout/editor.svelte';
 	import { SIZE_PRESETS, clampCanvas } from '$lib/layout/schema';
+	import { CARD_FONTS } from '$lib/layout/fonts';
 	import type { BackgroundType, Mask, HandleMode } from '$lib/layout/schema';
 	import Select from '$lib/components/Select.svelte';
 	import ColorPicker from '$lib/components/ui/ColorPicker.svelte';
@@ -347,6 +348,18 @@
 					<p class="mt-1 text-[11px] text-faint">
 						Variables: <span class="font-mono text-muted">{'{user}'} {'{count}'} {'{user.avatar}'}</span>
 					</p>
+				</div>
+				<div class="flex items-center justify-between gap-3">
+					{@render row('Font')}
+					<div class="w-full">
+						<Select
+							bind:value={() => layer.font_family ?? '', (v) => (layer.font_family = v)}
+							options={[
+								{ value: '', label: 'Default (Lato)' },
+								...CARD_FONTS.map((f) => ({ value: f.family, label: f.family }))
+							]}
+						/>
+					</div>
 				</div>
 				<div class="flex items-center justify-between gap-3">
 					{@render row('Size')}
