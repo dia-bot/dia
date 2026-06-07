@@ -95,6 +95,22 @@ func (s *Store) PublicURL(key string) string {
 // Put uploads body under key with the given content type and returns its public
 // URL. body is held in memory (callers cap the size), so SigV4 can hash it.
 func (s *Store) Put(ctx context.Context, key, contentType string, body []byte) (string, error) {
+	if err := s.do(ctx, http.MethodPut, key, contentType, body); err != nil {
+		return "", err
+	}
+	return s.PublicURL(key), nil
+}
+
+// Delete removes an object by key. A missing object is not an error.
+func (s *Store) Delete(ctx context.Context, key string) error {
+	if key == "" {
+		return nil
+	}
+	return s.do(ctx, http.MethodDelete, key, "", nil)
+}
+
+// do builds, signs (SigV4) and sends a request for an object key.
+func (s *Store) do(ctx context.Context, method, key, contentType string, body []byte) error {
 	reqURL, host, canonURI := s.target(key)
 	now := time.Now().UTC()
 	amzDate := now.Format("20060102T150405Z")
@@ -128,7 +144,7 @@ func (s *Store) Put(ctx context.Context, key, contentType string, body []byte) (
 	signedHeaders := strings.Join(names, ";")
 
 	canonicalRequest := strings.Join([]string{
-		http.MethodPut,
+		method,
 		canonURI,
 		"", // no query string
 		canonHeaders.String(),
@@ -153,9 +169,9 @@ func (s *Store) Put(ctx context.Context, key, contentType string, body []byte) (
 	auth := "AWS4-HMAC-SHA256 Credential=" + s.cfg.AccessKey + "/" + scope +
 		", SignedHeaders=" + signedHeaders + ", Signature=" + signature
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPut, reqURL, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, method, reqURL, bytes.NewReader(body))
 	if err != nil {
-		return "", err
+		return err
 	}
 	req.Host = host // Go sends this as the Host header; matches the signed "host"
 	for k, v := range headers {
@@ -169,14 +185,15 @@ func (s *Store) Put(ctx context.Context, key, contentType string, body []byte) (
 
 	resp, err := s.http.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("storage: put: %w", err)
+		return fmt.Errorf("storage: %s: %w", method, err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode/100 != 2 {
+	// 2xx is success; a DELETE of a missing key may return 404, which we ignore.
+	if resp.StatusCode/100 != 2 && !(method == http.MethodDelete && resp.StatusCode == http.StatusNotFound) {
 		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
-		return "", fmt.Errorf("storage: put %s: %s", resp.Status, strings.TrimSpace(string(msg)))
+		return fmt.Errorf("storage: %s %s: %s", method, resp.Status, strings.TrimSpace(string(msg)))
 	}
-	return s.PublicURL(key), nil
+	return nil
 }
 
 func sha256Hex(b []byte) string {
