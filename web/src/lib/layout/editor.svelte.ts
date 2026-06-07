@@ -9,19 +9,21 @@ import {
 	cornerNode,
 	smoothHandles,
 	hasHandles,
+	shapeInBox,
 	MAX_LAYERS,
 	type Layout,
 	type Layer,
 	type LayerType,
 	type PathNode,
-	type HandleMode
+	type HandleMode,
+	type ShapeKind
 } from './schema';
 
 export const EDITOR_CTX = Symbol('dia-layout-editor');
 
 // Active canvas tool. 'select' is the arrow; rect..avatar are drag-to-create
 // shapes; 'pen' places bezier nodes and 'pencil' draws freehand.
-export type Tool = 'select' | 'rect' | 'ellipse' | 'text' | 'image' | 'avatar' | 'pen' | 'pencil';
+export type Tool = 'select' | 'rect' | 'ellipse' | 'text' | 'image' | 'avatar' | 'pen' | 'pencil' | 'shape';
 
 export type AlignEdge = 'left' | 'hcenter' | 'right' | 'top' | 'vcenter' | 'bottom';
 
@@ -29,9 +31,32 @@ export class EditorStore {
 	layout = $state<Layout>(defaultLayout());
 	selectedIds = $state<string[]>([]);
 	tool = $state<Tool>('select');
+	// When tool === 'shape', this is the shape the canvas draws on drag.
+	shapeKind = $state<ShapeKind>('triangle');
 	// The guild this editor belongs to — set by the host so the inspector can
 	// upload images to the right guild-scoped object-store path.
 	guildId = $state('');
+	// Guild custom (premium) fonts + entitlement, loaded by the host. The font
+	// picker appends these and the preview loads them via the FontFace API.
+	customFonts = $state<{ family: string; url: string }[]>([]);
+	premium = $state(false);
+	// Server-resolved card template strings (original → rendered), so the live
+	// canvas shows {{.User.Username}}/{{.User.Avatar}} exactly like the bot output.
+	resolved = $state<Record<string, string>>({});
+	setResolved(map: Record<string, string>) {
+		this.resolved = map;
+	}
+
+	setFonts(fonts: { family: string; url: string }[], premium: boolean) {
+		this.customFonts = fonts;
+		this.premium = premium;
+	}
+	addFont(f: { family: string; url: string }) {
+		this.customFonts = [...this.customFonts.filter((x) => x.family !== f.family), f];
+	}
+	removeFont(family: string) {
+		this.customFonts = this.customFonts.filter((x) => x.family !== family);
+	}
 
 	// Deep-edit state (Figma's "enter" mode): editId is the layer whose internals
 	// are being edited — a path (drag anchors/handles, convert point types) or a
@@ -57,6 +82,12 @@ export class EditorStore {
 
 	setTool(t: Tool) {
 		this.tool = t;
+	}
+	// setShape picks a shape and arms the 'shape' draw tool (drag on the canvas to
+	// draw it, like the rect/ellipse tools).
+	setShape(kind: ShapeKind) {
+		this.shapeKind = kind;
+		this.tool = 'shape';
 	}
 
 	#uid(): string {
@@ -141,6 +172,60 @@ export class EditorStore {
 		this.layout.layers.push(layer);
 		this.selectedIds = [layer.id];
 		return layer;
+	}
+
+	// addShape inserts a parametric shape as an editable path layer (triangle,
+	// polygon, star, line, …), centred in the canvas.
+	// createShape starts a drawable shape (path) at (x,y); the canvas grows it via
+	// setShapeBox while dragging — so shapes draw out like the rect/ellipse tools.
+	createShape(kind: ShapeKind, x: number, y: number): Layer | null {
+		if (this.atLimit) return null;
+		const layer = newLayer('path');
+		layer.name = kind[0].toUpperCase() + kind.slice(1);
+		const { nodes, closed } = shapeInBox(kind, Math.round(x), Math.round(y), 1, 1);
+		layer.nodes = nodes;
+		layer.closed = closed;
+		if (closed) {
+			layer.fill = '#FFFFFF';
+			layer.stroke_color = '#FFFFFF';
+			layer.stroke_width = 0;
+		} else {
+			layer.fill = '';
+			layer.stroke_color = '#FFFFFF';
+			layer.stroke_width = 6;
+		}
+		this.layout.layers.push(layer);
+		this.fitPath(layer);
+		this.selectedIds = [layer.id];
+		return layer;
+	}
+	// setShapeBox refits a shape's nodes to a bounding box (used while dragging it
+	// out, and for the default size on a click).
+	setShapeBox(id: string, kind: ShapeKind, x: number, y: number, w: number, h: number) {
+		const l = this.layout.layers.find((ly) => ly.id === id);
+		if (!l) return;
+		l.nodes = shapeInBox(kind, x, y, w, h).nodes;
+		this.fitPath(l);
+	}
+	// scalePath maps a path's nodes (captured at gesture start) from the start bbox
+	// to a new one — powers the resize handles on shape/path layers.
+	scalePath(id: string, start: PathNode[], sx: number, sy: number, sw: number, sh: number, nx: number, ny: number, nw: number, nh: number) {
+		const l = this.layout.layers.find((ly) => ly.id === id);
+		if (!l) return;
+		const fx = sw === 0 ? 1 : nw / sw;
+		const fy = sh === 0 ? 1 : nh / sh;
+		const mapX = (v: number) => Math.round(nx + (v - sx) * fx);
+		const mapY = (v: number) => Math.round(ny + (v - sy) * fy);
+		l.nodes = start.map((n) => ({
+			x: mapX(n.x),
+			y: mapY(n.y),
+			h1x: mapX(n.h1x),
+			h1y: mapY(n.h1y),
+			h2x: mapX(n.h2x),
+			h2y: mapY(n.h2y),
+			m: n.m
+		}));
+		this.fitPath(l);
 	}
 
 	removeLayer(id: string) {
