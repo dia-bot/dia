@@ -62,20 +62,20 @@ func (r *Renderer) RenderWelcome(ctx context.Context, in WelcomeInput) ([]byte, 
 
 	// Title.
 	titleY := cy + radius + float64(h)*0.10
-	r.setFont(dc, true, 52)
+	r.setFont(dc, "", true, 52)
 	dc.SetColor(textCol)
 	dc.DrawStringWrapped(in.Title, cx, titleY, 0.5, 0.5, float64(w)-100, 1.2, gg.AlignCenter)
 
 	// Subtitle.
 	if in.Subtitle != "" {
-		r.setFont(dc, false, 28)
+		r.setFont(dc, "", false, 28)
 		dc.SetColor(subCol)
 		dc.DrawStringWrapped(in.Subtitle, cx, titleY+58, 0.5, 0.5, float64(w)-120, 1.3, gg.AlignCenter)
 	}
 
 	// Footer.
 	if in.Footer != "" {
-		r.setFont(dc, false, 20)
+		r.setFont(dc, "", false, 20)
 		dc.SetColor(subCol)
 		dc.DrawStringAnchored(in.Footer, cx, float64(h)-26, 0.5, 0.5)
 	}

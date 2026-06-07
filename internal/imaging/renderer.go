@@ -18,22 +18,19 @@ import (
 	_ "image/png"  // register PNG decoder for avatars
 	"log/slog"
 	"net/http"
-	"os"
-	"path/filepath"
 	"sync"
 	"time"
 
 	xdraw "github.com/disintegration/imaging"
 	"github.com/fogleman/gg"
 	"golang.org/x/image/font"
-	"golang.org/x/image/font/opentype"
-	"golang.org/x/image/font/sfnt"
 )
 
-// Renderer holds parsed fonts, an avatar HTTP client and a concurrency limiter.
+// Renderer holds parsed fonts (by family), an avatar HTTP client and a
+// concurrency limiter. Font loading + face caching live in fonts.go.
 type Renderer struct {
-	regular *sfnt.Font
-	bold    *sfnt.Font
+	fonts         map[string]*familyFonts // family name → regular/bold
+	defaultFamily string                  // used when a layer names no family
 
 	mu    sync.Mutex
 	faces map[faceKey]font.Face
@@ -43,12 +40,7 @@ type Renderer struct {
 	log  *slog.Logger
 }
 
-type faceKey struct {
-	bold bool
-	size float64
-}
-
-// New builds a Renderer, loading fonts from fontsDir if present.
+// New builds a Renderer, loading every available card font from fontsDir.
 func New(fontsDir string, log *slog.Logger) *Renderer {
 	r := &Renderer{
 		faces: map[faceKey]font.Face{},
@@ -56,57 +48,8 @@ func New(fontsDir string, log *slog.Logger) *Renderer {
 		sem:   make(chan struct{}, 4), // bound concurrent renders
 		log:   log,
 	}
-	r.regular = loadFont(fontsDir, []string{"Inter-Regular.ttf", "Inter-Regular.otf", "Regular.ttf"}, log)
-	r.bold = loadFont(fontsDir, []string{"Inter-Bold.ttf", "Inter-Bold.otf", "Bold.ttf"}, log)
+	r.loadFamilies(fontsDir)
 	return r
-}
-
-func loadFont(dir string, names []string, log *slog.Logger) *sfnt.Font {
-	for _, n := range names {
-		b, err := os.ReadFile(filepath.Join(dir, n))
-		if err != nil {
-			continue
-		}
-		f, err := opentype.Parse(b)
-		if err != nil {
-			log.Warn("failed to parse font", "file", n, "err", err)
-			continue
-		}
-		log.Info("loaded font", "file", n)
-		return f
-	}
-	return nil
-}
-
-// face returns a cached font face at the given size; nil means "use gg default".
-func (r *Renderer) face(bold bool, size float64) font.Face {
-	src := r.regular
-	if bold {
-		src = r.bold
-	}
-	if src == nil {
-		return nil
-	}
-	key := faceKey{bold: bold, size: size}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if f, ok := r.faces[key]; ok {
-		return f
-	}
-	f, err := opentype.NewFace(src, &opentype.FaceOptions{Size: size, DPI: 72, Hinting: font.HintingFull})
-	if err != nil {
-		r.log.Warn("font face create failed", "size", size, "err", err)
-		return nil
-	}
-	r.faces[key] = f
-	return f
-}
-
-// setFont applies a face to the context (no-op fallback keeps gg's default).
-func (r *Renderer) setFont(dc *gg.Context, bold bool, size float64) {
-	if f := r.face(bold, size); f != nil {
-		dc.SetFontFace(f)
-	}
 }
 
 // acquire/release bound concurrent renders to protect memory/CPU.
