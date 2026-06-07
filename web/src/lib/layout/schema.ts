@@ -152,13 +152,13 @@ export function newLayer(type: LayerType): Layer {
 		hidden: false
 	};
 	if (type === 'text') {
-		return { ...base, name: 'Text', text: 'Welcome, {user}!', font_size: 48, font_weight: 700, color: '#FFFFFF', align: 'left', w: 480, h: 70 };
+		return { ...base, name: 'Text', text: 'Welcome, {{.User.Name}}!', font_size: 48, font_weight: 700, color: '#FFFFFF', align: 'left', w: 480, h: 70 };
 	}
 	if (type === 'image') {
 		return { ...base, name: 'Image', src: '', fit: 'cover', radius: 12, w: 200, h: 200 };
 	}
 	if (type === 'avatar') {
-		return { ...base, name: 'Avatar', src: '{user.avatar}', shape: 'circle', ring_color: '#FFFFFF', ring_width: 6, radius: 24, w: 180, h: 180 };
+		return { ...base, name: 'Avatar', src: '{{.User.Avatar}}', shape: 'circle', ring_color: '#FFFFFF', ring_width: 6, radius: 24, w: 180, h: 180 };
 	}
 	if (type === 'ellipse') {
 		return { ...base, name: 'Ellipse', fill: '#B244FC', radius: 0, opacity: 0.3, w: 240, h: 240 };
@@ -180,8 +180,8 @@ export function defaultLayout(): Layout {
 		background: { type: 'gradient', from: '#FF6363', to: '#B244FC', angle: 45 },
 		layers: [
 			{ ...newLayer('avatar'), x: 422, y: 50, w: 180, h: 180 },
-			{ ...newLayer('text'), id: uid(), name: 'Title', text: 'Welcome, {user}!', x: 162, y: 250, w: 700, h: 64, font_size: 52, align: 'center' },
-			{ ...newLayer('text'), id: uid(), name: 'Subtitle', text: "You're member #{count}", x: 162, y: 322, w: 700, h: 40, font_size: 28, font_weight: 400, color: '#F1DFDF', align: 'center' }
+			{ ...newLayer('text'), id: uid(), name: 'Title', text: 'Welcome, {{.User.Name}}!', x: 162, y: 250, w: 700, h: 64, font_size: 52, align: 'center' },
+			{ ...newLayer('text'), id: uid(), name: 'Subtitle', text: "You're member #{{.Count}}", x: 162, y: 322, w: 700, h: 40, font_size: 28, font_weight: 400, color: '#F1DFDF', align: 'center' }
 		]
 	};
 }
@@ -190,6 +190,90 @@ export function defaultLayout(): Layout {
 // sharp corner). Curve nodes set h2 (and the mirrored h1) while dragging.
 export function cornerNode(x: number, y: number): PathNode {
 	return { x, y, h1x: x, h1y: y, h2x: x, h2y: y, m: 'corner' };
+}
+
+// Parametric shapes the editor can insert — all built from corner path nodes, so
+// they render in the DOM + Go renderer with no new layer type and stay fully
+// editable with the path tools.
+export type ShapeKind = 'triangle' | 'diamond' | 'pentagon' | 'hexagon' | 'star' | 'line';
+
+function regularPolygon(cx: number, cy: number, r: number, n: number, rot = -Math.PI / 2): PathNode[] {
+	const out: PathNode[] = [];
+	for (let i = 0; i < n; i++) {
+		const a = rot + (i * 2 * Math.PI) / n;
+		out.push(cornerNode(Math.round(cx + r * Math.cos(a)), Math.round(cy + r * Math.sin(a))));
+	}
+	return out;
+}
+
+// shapePath returns the nodes (+ whether closed) for a parametric shape centred
+// at (cx,cy) with radius r.
+export function shapePath(kind: ShapeKind, cx: number, cy: number, r: number): { nodes: PathNode[]; closed: boolean } {
+	switch (kind) {
+		case 'triangle':
+			return { nodes: regularPolygon(cx, cy, r, 3), closed: true };
+		case 'diamond':
+			return { nodes: regularPolygon(cx, cy, r, 4), closed: true };
+		case 'pentagon':
+			return { nodes: regularPolygon(cx, cy, r, 5), closed: true };
+		case 'hexagon':
+			return { nodes: regularPolygon(cx, cy, r, 6), closed: true };
+		case 'star': {
+			const out: PathNode[] = [];
+			const inner = r * 0.45;
+			for (let i = 0; i < 10; i++) {
+				const rad = i % 2 === 0 ? r : inner;
+				const a = -Math.PI / 2 + (i * Math.PI) / 5;
+				out.push(cornerNode(Math.round(cx + rad * Math.cos(a)), Math.round(cy + rad * Math.sin(a))));
+			}
+			return { nodes: out, closed: true };
+		}
+		case 'line':
+			return { nodes: [cornerNode(cx - r, cy), cornerNode(cx + r, cy)], closed: false };
+	}
+}
+
+// shapeInBox returns a shape's nodes fit to fill the bounding box (x,y,w,h) — so
+// a shape can be DRAWN by dragging (like the rect/ellipse tools) and resized to
+// any aspect ratio. A line is the box's drag diagonal.
+export function shapeInBox(kind: ShapeKind, x: number, y: number, w: number, h: number): { nodes: PathNode[]; closed: boolean } {
+	if (kind === 'line') {
+		return { nodes: [cornerNode(Math.round(x), Math.round(y)), cornerNode(Math.round(x + w), Math.round(y + h))], closed: false };
+	}
+	// Build the shape on a unit circle, then normalise its bounding box to fill the
+	// target box exactly (regardless of aspect ratio).
+	let raw: { x: number; y: number }[];
+	if (kind === 'star') {
+		raw = [];
+		for (let i = 0; i < 10; i++) {
+			const rad = i % 2 === 0 ? 1 : 0.45;
+			const a = -Math.PI / 2 + (i * Math.PI) / 5;
+			raw.push({ x: Math.cos(a) * rad, y: Math.sin(a) * rad });
+		}
+	} else {
+		const n = kind === 'triangle' ? 3 : kind === 'diamond' ? 4 : kind === 'pentagon' ? 5 : 6;
+		raw = [];
+		for (let i = 0; i < n; i++) {
+			const a = -Math.PI / 2 + (i * 2 * Math.PI) / n;
+			raw.push({ x: Math.cos(a), y: Math.sin(a) });
+		}
+	}
+	let minX = Infinity,
+		minY = Infinity,
+		maxX = -Infinity,
+		maxY = -Infinity;
+	for (const p of raw) {
+		minX = Math.min(minX, p.x);
+		minY = Math.min(minY, p.y);
+		maxX = Math.max(maxX, p.x);
+		maxY = Math.max(maxY, p.y);
+	}
+	const bw = maxX - minX || 1;
+	const bh = maxY - minY || 1;
+	const nodes = raw.map((p) =>
+		cornerNode(Math.round(x + ((p.x - minX) / bw) * w), Math.round(y + ((p.y - minY) / bh) * h))
+	);
+	return { nodes, closed: true };
 }
 
 // hasHandles reports whether a node's handles are pulled off the anchor (i.e. it
