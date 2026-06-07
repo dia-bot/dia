@@ -7,12 +7,24 @@
 	// blur) by the live scale = renderedWidth / layout.width.
 	import { getContext } from 'svelte';
 	import { EditorStore, EDITOR_CTX } from '$lib/layout/editor.svelte';
-	import { resolveText, resolveSrc, newLayer, cornerNode, pathD, type Layer, type PathNode } from '$lib/layout/schema';
+	import { resolveSrc, newLayer, cornerNode, pathD, type Layer, type PathNode, type ShapeKind } from '$lib/layout/schema';
 	import { fontCss } from '$lib/layout/fonts';
 	import { ImageIcon, User } from 'lucide-svelte';
 
 	const editor = getContext<EditorStore>(EDITOR_CTX);
 	const layout = $derived(editor.layout);
+
+	// Display helpers: card text/src are pure Go templates, resolved on the server
+	// (editor.resolved) so the live canvas matches the bot. Plain (non-template)
+	// strings are shown as-is; a template not resolved yet shows its raw form.
+	function dtext(l: Layer): string {
+		if (l.text && l.text.includes('{{')) return editor.resolved[l.text] ?? l.text;
+		return l.text ?? '';
+	}
+	function dsrc(l: Layer): string {
+		if (l.src && l.src.includes('{{')) return editor.resolved[l.src] ?? '';
+		return resolveSrc(l.src);
+	}
 
 	// Rendered pixel width of the stage; scale maps canvas px → screen px.
 	let clientWidth = $state(0);
@@ -201,8 +213,14 @@
 			hgt = bottom - y;
 		}
 
-		editor.resize(g.id, w, hgt);
-		if (x !== g.startX || y !== g.startY) editor.move(g.id, x, y);
+		// A path/shape layer has no box of its own — resize by scaling its nodes
+		// from the start bbox to the new one (so shapes resize like a rectangle).
+		if (g.startNodes) {
+			editor.scalePath(g.id, g.startNodes, g.startX, g.startY, g.startW, g.startH, x, y, w, hgt);
+		} else {
+			editor.resize(g.id, w, hgt);
+			if (x !== g.startX || y !== g.startY) editor.move(g.id, x, y);
+		}
 	}
 
 	function endGesture(e: PointerEvent) {
@@ -219,7 +237,7 @@
 
 	// ── draw-on-canvas: with a draw tool active, pointerdown creates a layer and
 	// drag sizes it (a click → default size). Reverts to the select tool. ───────
-	let draw = $state<{ id: string; x0: number; y0: number; ptrId: number; target: HTMLElement } | null>(null);
+	let draw = $state<{ id: string; x0: number; y0: number; ptrId: number; target: HTMLElement; shape?: ShapeKind } | null>(null);
 
 	// marquee (rubber-band) selection over empty canvas
 	let marquee = $state<{ x0: number; y0: number; x1: number; y1: number; ptrId: number } | null>(null);
@@ -327,6 +345,15 @@
 			case 'pencil':
 				pencilDown(e, p, el);
 				return;
+			case 'shape': {
+				if (e.button !== 0) return;
+				const layer = editor.createShape(editor.shapeKind, p.x, p.y);
+				if (!layer) return; // at the layer cap
+				el.setPointerCapture(e.pointerId);
+				draw = { id: layer.id, x0: Math.round(p.x), y0: Math.round(p.y), ptrId: e.pointerId, target: el, shape: editor.shapeKind };
+				e.preventDefault();
+				return;
+			}
 			default: {
 				if (e.button !== 0) return;
 				const layer = editor.createLayer(editor.tool, p.x, p.y);
@@ -345,12 +372,26 @@
 		}
 		if (draw) {
 			const p = canvasPoint(e, draw.target);
-			editor.patch(draw.id, {
-				x: Math.round(Math.min(draw.x0, p.x)),
-				y: Math.round(Math.min(draw.y0, p.y)),
-				w: Math.max(1, Math.round(Math.abs(p.x - draw.x0))),
-				h: Math.max(1, Math.round(Math.abs(p.y - draw.y0)))
-			});
+			if (draw.shape === 'line') {
+				// a line follows the drag direction (its two endpoints)
+				editor.setShapeBox(draw.id, 'line', draw.x0, draw.y0, p.x - draw.x0, p.y - draw.y0);
+			} else if (draw.shape) {
+				editor.setShapeBox(
+					draw.id,
+					draw.shape,
+					Math.min(draw.x0, p.x),
+					Math.min(draw.y0, p.y),
+					Math.max(1, Math.abs(p.x - draw.x0)),
+					Math.max(1, Math.abs(p.y - draw.y0))
+				);
+			} else {
+				editor.patch(draw.id, {
+					x: Math.round(Math.min(draw.x0, p.x)),
+					y: Math.round(Math.min(draw.y0, p.y)),
+					w: Math.max(1, Math.round(Math.abs(p.x - draw.x0))),
+					h: Math.max(1, Math.round(Math.abs(p.y - draw.y0)))
+				});
+			}
 			return;
 		}
 		if (editor.tool === 'pen' && penId) penMove(e);
@@ -371,13 +412,19 @@
 			const l = editor.layout.layers.find((x) => x.id === draw!.id);
 			if (l && (l.w < 8 || l.h < 8)) {
 				// treated as a click — give it a sensible default size centred on the point
-				const def = newLayer(l.type);
-				editor.patch(l.id, {
-					w: def.w,
-					h: def.h,
-					x: Math.round(draw.x0 - def.w / 2),
-					y: Math.round(draw.y0 - def.h / 2)
-				});
+				if (draw.shape === 'line') {
+					editor.setShapeBox(l.id, 'line', Math.round(draw.x0 - 90), draw.y0, 180, 0);
+				} else if (draw.shape) {
+					editor.setShapeBox(l.id, draw.shape, Math.round(draw.x0 - 90), Math.round(draw.y0 - 90), 180, 180);
+				} else {
+					const def = newLayer(l.type);
+					editor.patch(l.id, {
+						w: def.w,
+						h: def.h,
+						x: Math.round(draw.x0 - def.w / 2),
+						y: Math.round(draw.y0 - def.h / 2)
+					});
+				}
 			}
 			editor.select(draw.id);
 			editor.setTool('select');
@@ -789,7 +836,11 @@
 		e.stopPropagation();
 		if (!stageEl || !l.nodes || l.nodes.length < 2) return;
 		const p = toLocal(canvasPoint(e, stageEl), l);
-		const { seg } = nearestOnPath(l, p);
+		const { seg, d } = nearestOnPath(l, p);
+		// Only bend when the press is actually near the outline — not deep inside a
+		// filled shape (pressing the fill shouldn't warp the curve). Drag the line.
+		const near = 8 / (scale || 1);
+		if (Math.sqrt(d) > near) return;
 		(e.currentTarget as Element).setPointerCapture(e.pointerId);
 		segDrag = {
 			ptrId: e.pointerId,
@@ -1278,7 +1329,21 @@
 					style="left:{(l.x / layout.width) * 100}%; top:{(l.y / layout.height) * 100}%; width:{(l.w /
 						layout.width) *
 						100}%; height:{(l.h / layout.height) * 100}%;"
-				></div>
+				>
+					<!-- Resize handles: scaling a shape/path works just like a rectangle. -->
+					{#each HANDLES as hd (hd.dir)}
+						<button
+							type="button"
+							aria-label="Resize {hd.dir}"
+							class="handle {hd.cls}"
+							style="cursor:{hd.cursor};"
+							onpointerdown={(e) => beginHandle(e, l, hd.dir)}
+							onpointermove={onMove}
+							onpointerup={endGesture}
+							onpointercancel={endGesture}
+						></button>
+					{/each}
+				</div>
 			{/if}
 		{:else}
 		<!-- Layer body. role/aria make it operable; pointer events drive move. -->
@@ -1321,11 +1386,11 @@
 							'left'}; font-family:{fontCss(l.font_family)}; font-size:{(l.font_size ?? 16) * scale}px; font-weight:{l.font_weight ??
 							400}; color:{l.color ?? '#fff'}; line-height:1.3;"
 					>
-						{resolveText(l.text)}
+						{dtext(l)}
 					</div>
 				{/if}
 			{:else if l.type === 'image' || l.type === 'avatar'}
-				{@const src = resolveSrc(l.src)}
+				{@const src = dsrc(l)}
 				<!-- circle = avatar (non-rounded) OR image masked to a circle; both render
 				     as a centered SQUARE so a non-square box is a centered circle, exactly
 				     like the Go renderer. ellipseMask fills the box with a 50% radius. -->
@@ -1436,6 +1501,11 @@
 		overflow: hidden;
 		border-radius: 12px;
 		isolation: isolate;
+		/* float the card above the pit with a hairline ring + soft elevation */
+		box-shadow:
+			0 0 0 1px var(--color-line-strong),
+			0 24px 60px -20px rgba(0, 0, 0, 0.7),
+			0 8px 24px -12px rgba(0, 0, 0, 0.6);
 		/* keep page scroll on touch; drags are handled per-layer */
 		touch-action: pan-y;
 		user-select: none;
@@ -1612,6 +1682,8 @@
 		box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
 		touch-action: none;
 		z-index: 3;
+		/* re-enable hit-testing inside the pointer-events:none .path-sel outline */
+		pointer-events: auto;
 	}
 	.handle:focus-visible {
 		outline: 2px solid var(--color-accent);
