@@ -16,6 +16,7 @@ import (
 	"github.com/dia-bot/dia/internal/guildstate"
 	"github.com/dia-bot/dia/internal/imaging"
 	"github.com/dia-bot/dia/internal/realtime"
+	"github.com/dia-bot/dia/internal/storage"
 	"github.com/dia-bot/dia/internal/store"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
@@ -34,6 +35,7 @@ type Deps struct {
 	Discord *discord.Client
 	Imaging *imaging.Renderer
 	Bus     eventbus.Bus
+	Storage *storage.Store // nil when uploads aren't configured
 }
 
 // Server is the dashboard API.
@@ -45,6 +47,7 @@ type Server struct {
 	discord  *discord.Client
 	imaging  *imaging.Renderer
 	bus      eventbus.Bus
+	storage  *storage.Store
 	gstate   *guildstate.Store
 	hub      *realtime.Hub
 	sessions *sessionStore
@@ -63,6 +66,7 @@ func New(d Deps) *Server {
 		discord:  d.Discord,
 		imaging:  d.Imaging,
 		bus:      d.Bus,
+		storage:  d.Storage,
 		gstate:   guildstate.New(d.Cache),
 		hub:      realtime.NewHub(d.Log),
 		sessions: newSessionStore(d.Cache, sessionTTL),
@@ -118,8 +122,14 @@ func (s *Server) Handler() http.Handler {
 	g.GET("/features", s.handleListFeatures)
 	g.GET("/features/:key", s.handleGetFeature)
 	g.PUT("/features/:key", s.handlePutFeature)
+	g.POST("/uploads", s.handleUpload)
 	g.POST("/welcome/preview", s.handleWelcomePreview)
+	g.POST("/welcome/test", s.handleWelcomeTest)
+	g.GET("/welcome/variables", s.handleWelcomeVariables)
 	g.POST("/rank/preview", s.handleRankPreview)
+	g.POST("/layout/preview", s.handleLayoutPreview)
+	g.POST("/templating/preview", s.handleTemplatingPreview)
+	g.GET("/leveling/variables", s.handleLevelingVariables)
 
 	g.GET("/leaderboard", s.handleLeaderboard)
 	g.GET("/level-rewards", s.handleListRewards)
