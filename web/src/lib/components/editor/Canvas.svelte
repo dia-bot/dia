@@ -80,7 +80,246 @@
 	// mask reflects shape masks (rect/ellipse/circle/path) faithfully — with the
 	// stencil's own rotation/corner-radius baked via shapeD — and falls back to the
 	// mask's bounding box for image/text masks. ────────────────────────────────────
+	// ── text-stencil masks ─────────────────────────────────────────────────────
+	// Browsers DON'T render <text> inside an SVG used as a CSS mask (the masking
+	// pipeline drops SVG text), so a text mask drawn that way falls back to the whole
+	// box. Instead a text stencil is rasterised to a PNG on a 2D canvas — which DOES
+	// use the document's real card fonts — and that PNG is the mask image, so the mask
+	// follows the glyph layout. The Go PNG renderer stays authoritative for the card.
+	let maskCanvas: HTMLCanvasElement | null = null;
+	// Cache the last rasterised mask CSS per masked-layer id, keyed by a signature of
+	// the inputs that actually change the bitmap — so dragging the whole mask group (or
+	// zoom/pan) reuses the PNG instead of re-encoding via toDataURL every frame. The
+	// signature uses the stencil's offset RELATIVE to the masked element (m.x - cov.x),
+	// not absolutes, so a group move (stencil + content shift together) is a cache hit
+	// while moving one of them alone correctly re-rasters.
+	const textMaskCache = new Map<string, { sig: string; css: string }>();
+	// Bumped when web fonts finish loading so a text mask rasterised before its card
+	// font was ready (e.g. opening a saved layout) re-renders with the real glyphs.
+	let fontTick = $state(0);
+	$effect(() => {
+		if (typeof document === 'undefined' || !document.fonts) return;
+		const bump = () => fontTick++;
+		document.fonts.addEventListener('loadingdone', bump);
+		document.fonts.ready.then(bump).catch(() => {});
+		return () => document.fonts.removeEventListener('loadingdone', bump);
+	});
+	function stencilCase(s: string, c: Layer['text_case']): string {
+		if (c === 'upper') return s.toUpperCase();
+		if (c === 'lower') return s.toLowerCase();
+		// 'title' = capitalize each word's first letter, leaving the rest untouched —
+		// matches CSS text-transform:capitalize and the Go renderer's applyTextCase
+		// (not toLowerCase'ing the remainder, so 'iPhone' stays 'IPhone').
+		if (c === 'title') return s.replace(/(^|\s)(\S)/g, (_, p, ch) => p + ch.toUpperCase());
+		return s;
+	}
+	// lineW measures a line incl. tracking, using the ctx's already-set font. Count
+	// code POINTS (not UTF-16 units) so tracking matches the per-glyph draw loop below
+	// and the Go renderer's rune-based lineWidth (astral chars + letter-spacing).
+	function lineW(ctx: CanvasRenderingContext2D, t: string, ls: number): number {
+		return ctx.measureText(t).width + (ls ? Math.max(0, [...t].length - 1) * ls : 0);
+	}
+	// drawStencilText paints a text stencil's glyphs (white) in CANVAS coords onto ctx,
+	// wrapping to the box width and honouring align/valign/line-height/letter-spacing/
+	// case/decoration — the same layout as the live preview text. `erase` uses
+	// destination-out (for an inverted mask: punch the glyphs out of a white box).
+	function drawStencilText(ctx: CanvasRenderingContext2D, m: Layer, erase: boolean) {
+		const size = m.font_size ?? 16;
+		const weight = m.font_weight ?? 400;
+		const ls = m.letter_spacing ?? 0;
+		ctx.font = `${weight} ${size}px ${fontCss(m.font_family)}`;
+		ctx.textBaseline = 'alphabetic';
+		ctx.fillStyle = '#fff';
+		ctx.globalCompositeOperation = erase ? 'destination-out' : 'source-over';
+		const raw = stencilCase(dtext(m), m.text_case);
+		// greedy word-wrap to the box width (canvas px), preserving explicit newlines.
+		const lines: string[] = [];
+		for (const para of raw.split('\n')) {
+			let cur = '';
+			for (const word of para.split(' ')) {
+				const next = cur ? `${cur} ${word}` : word;
+				if (cur && lineW(ctx, next, ls) > m.w) {
+					lines.push(cur);
+					cur = word;
+				} else cur = next;
+			}
+			lines.push(cur);
+		}
+		const lh = (m.line_height && m.line_height > 0 ? m.line_height : 1.3) * size;
+		const block = lh * lines.length;
+		let top = m.y; // 'top' / unset
+		if (m.valign === 'middle') top = m.y + (m.h - block) / 2;
+		else if (m.valign === 'bottom') top = m.y + m.h - block;
+		// Baseline within the line box: centre the em box (height = size) in the line box
+		// (height = lh, the CSS half-leading), then drop ≈ 0.8em to the baseline.
+		const asc = (lh - size) / 2 + size * 0.8;
+		const thick = Math.max(1, size * 0.06);
+		lines.forEach((line, i) => {
+			if (!line) return;
+			const w = lineW(ctx, line, ls);
+			let x0 = m.x;
+			if (m.align === 'center') x0 = m.x + (m.w - w) / 2;
+			else if (m.align === 'right') x0 = m.x + m.w - w;
+			const y = top + i * lh + asc;
+			if (ls) {
+				let cx = x0;
+				for (const ch of line) {
+					ctx.fillText(ch, cx, y);
+					cx += ctx.measureText(ch).width + ls;
+				}
+			} else {
+				ctx.fillText(line, x0, y);
+			}
+			if (m.text_decoration === 'underline' || m.text_decoration === 'strike') {
+				const dy = m.text_decoration === 'strike' ? y - size * 0.28 : y + thick;
+				ctx.fillRect(x0, dy, w, thick);
+			}
+		});
+	}
+	// textMaskCss rasterises a text stencil to a PNG and returns the mask CSS for the
+	// masked layer `l`. `stage` picks the coord frame (whole canvas for a path-layer
+	// SVG, else the layer's box), mirroring maskCss. The canvas is capped so a
+	// full-stage mask can't allocate a huge bitmap (mask-size stretches it back).
+	function textMaskCss(l: Layer, m: Layer, stage: boolean): string {
+		if (typeof document === 'undefined') return '';
+		const cov = stage
+			? { x: 0, y: 0, w: layout.width, h: layout.height }
+			: { x: l.x, y: l.y, w: l.w, h: l.h };
+		if (cov.w <= 0 || cov.h <= 0) return '';
+		// Reading every raster input here both (a) registers the reactive deps so the
+		// style recomputes when any of them changes, and (b) forms the cache key. fontTick
+		// re-rasters once fonts load; the relative offset makes a group move a cache hit.
+		const sig = [
+			stage ? 1 : 0,
+			m.clip_invert ? 1 : 0,
+			fontTick,
+			dtext(m),
+			m.text_case ?? '',
+			m.text_decoration ?? '',
+			m.align ?? '',
+			m.valign ?? '',
+			m.font_size ?? 16,
+			m.font_weight ?? 400,
+			m.font_family ?? '',
+			m.letter_spacing ?? 0,
+			m.line_height ?? 0,
+			Math.round(m.w),
+			Math.round(m.h),
+			Math.round(m.x - cov.x),
+			Math.round(m.y - cov.y),
+			Math.round(cov.w),
+			Math.round(cov.h),
+			Math.round((m.rotation ?? 0) * 100),
+			Math.round((!stage && l.rotation ? l.rotation : 0) * 100)
+		].join('\u001f');
+		const cached = textMaskCache.get(l.id);
+		if (cached && cached.sig === sig) return cached.css;
+		const r = Math.min(1, 1600 / Math.max(cov.w, cov.h));
+		const cw = Math.max(1, Math.round(cov.w * r));
+		const ch = Math.max(1, Math.round(cov.h * r));
+		if (!maskCanvas) maskCanvas = document.createElement('canvas');
+		const cv = maskCanvas;
+		cv.width = cw;
+		cv.height = ch;
+		const ctx = cv.getContext('2d');
+		if (!ctx) return '';
+		ctx.clearRect(0, 0, cw, ch);
+		const invert = !!m.clip_invert;
+		if (invert) {
+			ctx.fillStyle = '#fff'; // white box; the glyphs get punched out below
+			ctx.fillRect(0, 0, cw, ch);
+		}
+		ctx.save();
+		ctx.scale(r, r);
+		ctx.translate(-cov.x, -cov.y);
+		// A `.layer` div carries transform:rotate(); the mask rotates with it, so
+		// counter-rotate the stencil to keep it fixed in canvas space (mirrors maskCss).
+		if (!stage && l.rotation) {
+			const cx = l.x + l.w / 2;
+			const cy = l.y + l.h / 2;
+			ctx.translate(cx, cy);
+			ctx.rotate((-l.rotation * Math.PI) / 180);
+			ctx.translate(-cx, -cy);
+		}
+		if (m.rotation) {
+			const cx = m.x + m.w / 2;
+			const cy = m.y + m.h / 2;
+			ctx.translate(cx, cy);
+			ctx.rotate((m.rotation * Math.PI) / 180);
+			ctx.translate(-cx, -cy);
+		}
+		drawStencilText(ctx, m, invert);
+		ctx.restore();
+		let url: string;
+		try {
+			url = cv.toDataURL();
+		} catch {
+			return '';
+		}
+		const u = `url("${url}")`;
+		const css = `-webkit-mask:${u} center/100% 100% no-repeat; mask:${u} center/100% 100% no-repeat; -webkit-mask-mode:alpha; mask-mode:alpha;`;
+		if (textMaskCache.size > 64) textMaskCache.clear(); // bound: ids churn across edits
+		textMaskCache.set(l.id, { sig, css });
+		return css;
+	}
+
+	// stencilRadii mirrors the Go renderer's cornerRadii: independent [tl,tr,br,bl]
+	// when corners[] is set, else the uniform radius on all four corners.
+	function stencilRadii(m: Layer): [number, number, number, number] {
+		const c = m.corners;
+		if (Array.isArray(c) && c.length === 4) return [c[0], c[1], c[2], c[3]];
+		const r = m.radius ?? 0;
+		return [r, r, r, r];
+	}
+	// roundRectEl builds a rounded-rect stencil path (canvas coords) with independent
+	// corner radii AND the stencil's own rotation baked in — matching drawRoundRect in
+	// the Go renderer (shapeD's rect path only handles a single uniform radius).
+	function roundRectEl(m: Layer, fill: string, radii: [number, number, number, number]): string {
+		const { x, y, w, h } = m;
+		const cx = x + w / 2;
+		const cy = y + h / 2;
+		const deg = m.rotation ?? 0;
+		const a = (deg * Math.PI) / 180;
+		const sin = Math.sin(a);
+		const cos = Math.cos(a);
+		const P = (px: number, py: number) => rotPair(px, py, cx, cy, sin, cos);
+		const lim = Math.min(w, h) / 2;
+		const tl = Math.max(0, Math.min(radii[0], lim));
+		const tr = Math.max(0, Math.min(radii[1], lim));
+		const br = Math.max(0, Math.min(radii[2], lim));
+		const bl = Math.max(0, Math.min(radii[3], lim));
+		if (tl <= 0 && tr <= 0 && br <= 0 && bl <= 0) {
+			return `<path d='M ${P(x, y)} L ${P(x + w, y)} L ${P(x + w, y + h)} L ${P(x, y + h)} Z' fill='${fill}'/>`;
+		}
+		const d =
+			`M ${P(x + tl, y)} L ${P(x + w - tr, y)} A ${tr} ${tr} ${deg} 0 1 ${P(x + w, y + tr)}` +
+			` L ${P(x + w, y + h - br)} A ${br} ${br} ${deg} 0 1 ${P(x + w - br, y + h)}` +
+			` L ${P(x + bl, y + h)} A ${bl} ${bl} ${deg} 0 1 ${P(x, y + h - bl)}` +
+			` L ${P(x, y + tl)} A ${tl} ${tl} ${deg} 0 1 ${P(x + tl, y)} Z`;
+		return `<path d='${d}' fill='${fill}'/>`;
+	}
+
 	function shapeEl(m: Layer, fill: string): string {
+		// (A text stencil never reaches here — maskCss rasterises it via textMaskCss,
+		// because browsers don't render SVG <text> in the CSS masking pipeline.)
+		// An avatar stencil is a circle (default) or a rounded square (shape: rounded),
+		// matching how the avatar itself draws — never a plain bounding box.
+		if (m.type === 'avatar') {
+			if (m.shape !== 'rounded') {
+				const r = Math.min(m.w, m.h) / 2;
+				return `<circle cx='${m.x + m.w / 2}' cy='${m.y + m.h / 2}' r='${r}' fill='${fill}'/>`;
+			}
+			// rounded avatar → per-corner rounded rect; when neither corners[] nor radius
+			// is set, Go rounds by radius*0.3 = (min(w,h)/2)*0.3 (its gentle default).
+			const hasCorners = Array.isArray(m.corners) && m.corners.length === 4;
+			const def = (Math.min(m.w, m.h) / 2) * 0.3;
+			const radii: [number, number, number, number] = hasCorners
+				? stencilRadii(m)
+				: m.radius && m.radius > 0
+					? [m.radius, m.radius, m.radius, m.radius]
+					: [def, def, def, def];
+			return roundRectEl(m, fill, radii);
+		}
 		if (m.type === 'image' && m.mask === 'circle') {
 			const r = Math.min(m.w, m.h) / 2;
 			return `<circle cx='${m.x + m.w / 2}' cy='${m.y + m.h / 2}' r='${r}' fill='${fill}'/>`;
@@ -94,9 +333,9 @@
 			const d = shapeD(m);
 			return d ? `<path d='${d}' fill='${fill}'/>` : '';
 		}
-		// image / text / avatar stencil with no explicit mask → its bounding box.
-		const rad = m.radius ?? 0;
-		return `<rect x='${m.x}' y='${m.y}' width='${m.w}' height='${m.h}' rx='${rad}' fill='${fill}'/>`;
+		// image stencil with no explicit mask → its (rounded) bounding box, with the
+		// stencil's corners + rotation baked in (parity with the rect/path stencils).
+		return roundRectEl(m, fill, stencilRadii(m));
 	}
 	// maskCss builds the per-layer CSS mask. `stage` picks the coordinate frame of the
 	// masked ELEMENT: a `.layer` div is positioned at the layer's box (viewBox = that
@@ -107,6 +346,8 @@
 	function maskCss(l: Layer, stage = false): string {
 		const m = editor.maskFor(l);
 		if (!m) return '';
+		// A text stencil is rasterised (browsers don't mask with SVG <text>).
+		if (m.type === 'text') return textMaskCss(l, m, stage);
 		const shape = shapeEl(m, '#fff');
 		if (!shape) return '';
 		const vb = stage ? `0 0 ${layout.width} ${layout.height}` : `${l.x} ${l.y} ${l.w} ${l.h}`;
