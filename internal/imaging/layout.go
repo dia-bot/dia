@@ -130,6 +130,95 @@ func (r *Renderer) RenderLayout(ctx context.Context, in layout.Layout, vars map[
 	// Card data root (pure Go template): {{.User.Username}}, {{.User.Avatar}}, …
 	data := templating.DataFromVars(vars)
 
+	// paintText lays out + draws a text layer's glyphs onto c in colour col — shared by
+	// the real layer (drawRaw) and its boolean/blur silhouette (drawSilhouette, in
+	// white), so a text member of a boolean op follows its GLYPHS, not its bounding box
+	// (Figma's behaviour). The caller owns rotation (it draws into an already-rotated
+	// context, like drawRaw/drawSilhouette do).
+	paintText := func(c *gg.Context, l layout.Layer, text string, col color.Color) {
+		size := l.FontSize
+		if size <= 0 {
+			size = 32
+		}
+		if f := r.faceFor(ctx, l.FontFamily, l.FontWeight >= 700, size, fonts); f != nil {
+			c.SetFontFace(f)
+		}
+		c.SetColor(col)
+		width := l.W
+		if width <= 0 {
+			width = float64(w)
+		}
+		s := applyTextCase(text, l.TextCase)
+		tracking := l.LetterSpacing
+		lineMul := l.LineHeight
+		if lineMul <= 0 {
+			lineMul = 1.3 // matches the DOM preview's default line-height
+		}
+		var lines []string
+		if tracking == 0 {
+			lines = c.WordWrap(s, width)
+		} else {
+			lines = wrapText(c, s, width, tracking)
+		}
+		if len(lines) == 0 {
+			lines = []string{""}
+		}
+		_, lh := c.MeasureString("Ag") // font line height (string-independent)
+		if lh <= 0 {
+			lh = size
+		}
+		adv := lh * lineMul
+		block := lh
+		if len(lines) > 1 {
+			block += adv * float64(len(lines)-1)
+		}
+		// Vertical alignment within the box. 'top'/unset keeps the legacy origin
+		// (first line top at l.Y) so existing cards don't shift.
+		top := l.Y
+		switch l.VAlign {
+		case "middle":
+			top = l.Y + (l.H-block)/2
+		case "bottom":
+			top = l.Y + l.H - block
+		}
+		underline := l.TextDecoration == "underline"
+		strike := l.TextDecoration == "strike"
+		thick := math.Max(1, size*0.06)
+		for i, line := range lines {
+			lineTop := top + float64(i)*adv
+			lw := lineWidth(c, line, tracking)
+			x0 := l.X
+			switch l.Align {
+			case "center":
+				x0 = l.X + (l.W-lw)/2
+			case "right":
+				x0 = l.X + l.W - lw
+			}
+			// ay=1 anchors each line by its top (baseline = lineTop+lh), exactly as
+			// gg's DrawStringWrapped does, so the plain case matches the old output.
+			if tracking == 0 {
+				c.DrawStringAnchored(line, x0, lineTop, 0, 1)
+			} else {
+				cx := x0
+				for _, ru := range line {
+					g := string(ru)
+					c.DrawStringAnchored(g, cx, lineTop, 0, 1)
+					aw, _ := c.MeasureString(g)
+					cx += aw + tracking
+				}
+			}
+			if (underline || strike) && lw > 0 {
+				baseline := lineTop + lh
+				dy := baseline + thick // underline just below the baseline
+				if strike {
+					dy = baseline - lh*0.28 // strike through the x-height
+				}
+				c.DrawRectangle(x0, dy, lw, thick)
+				c.Fill()
+			}
+		}
+	}
+
 	// drawRaw paints a single layer's own content (no effects) onto the given
 	// context. Factored out so a mask group can render its content + stencil onto
 	// separate sub-contexts, and so the effect-aware draw can render to a buffer.
@@ -214,90 +303,7 @@ func (r *Renderer) RenderLayout(ctx context.Context, in layout.Layout, vars map[
 			}
 
 		case "text":
-			size := l.FontSize
-			if size <= 0 {
-				size = 32
-			}
-			if f := r.faceFor(ctx, l.FontFamily, l.FontWeight >= 700, size, fonts); f != nil {
-				dc.SetFontFace(f)
-			}
-			dc.SetColor(withAlpha(parseHex(l.Color, color.White), opacity))
-
-			width := l.W
-			if width <= 0 {
-				width = float64(w)
-			}
-			s := applyTextCase(text, l.TextCase)
-			tracking := l.LetterSpacing
-			lineMul := l.LineHeight
-			if lineMul <= 0 {
-				lineMul = 1.3 // matches the DOM preview's default line-height
-			}
-			// Wrap: gg's WordWrap for the plain case (identical to the legacy path),
-			// a tracking-aware greedy wrap when letter-spacing is set.
-			var lines []string
-			if tracking == 0 {
-				lines = dc.WordWrap(s, width)
-			} else {
-				lines = wrapText(dc, s, width, tracking)
-			}
-			if len(lines) == 0 {
-				lines = []string{""}
-			}
-			_, lh := dc.MeasureString("Ag") // font line height (string-independent)
-			if lh <= 0 {
-				lh = size
-			}
-			adv := lh * lineMul
-			block := lh
-			if len(lines) > 1 {
-				block += adv * float64(len(lines)-1)
-			}
-			// Vertical alignment within the box. 'top'/unset keeps the legacy origin
-			// (first line top at l.Y) so existing cards don't shift.
-			top := l.Y
-			switch l.VAlign {
-			case "middle":
-				top = l.Y + (l.H-block)/2
-			case "bottom":
-				top = l.Y + l.H - block
-			}
-			underline := l.TextDecoration == "underline"
-			strike := l.TextDecoration == "strike"
-			thick := math.Max(1, size*0.06)
-			for i, line := range lines {
-				lineTop := top + float64(i)*adv
-				lw := lineWidth(dc, line, tracking)
-				x0 := l.X
-				switch l.Align {
-				case "center":
-					x0 = l.X + (l.W-lw)/2
-				case "right":
-					x0 = l.X + l.W - lw
-				}
-				// ay=1 anchors each line by its top (baseline = lineTop+lh), exactly as
-				// gg's DrawStringWrapped does, so the plain case matches the old output.
-				if tracking == 0 {
-					dc.DrawStringAnchored(line, x0, lineTop, 0, 1)
-				} else {
-					cx := x0
-					for _, ru := range line {
-						g := string(ru)
-						dc.DrawStringAnchored(g, cx, lineTop, 0, 1)
-						aw, _ := dc.MeasureString(g)
-						cx += aw + tracking
-					}
-				}
-				if (underline || strike) && lw > 0 {
-					baseline := lineTop + lh
-					dy := baseline + thick // underline just below the baseline
-					if strike {
-						dy = baseline - lh*0.28 // strike through the x-height
-					}
-					dc.DrawRectangle(x0, dy, lw, thick)
-					dc.Fill()
-				}
-			}
+			paintText(dc, l, text, withAlpha(parseHex(l.Color, color.White), opacity))
 
 		case "image":
 			if src == "" {
@@ -423,7 +429,10 @@ func (r *Renderer) RenderLayout(ctx context.Context, in layout.Layout, vars map[
 	// drawSilhouette paints a vector layer's filled outline in opaque white onto its
 	// own context — used to read a member's coverage for boolean ops (only the alpha
 	// channel matters).
-	drawSilhouette := func(c *gg.Context, l layout.Layer) {
+	// textGlyphs=true draws a text layer as its glyph outlines (boolean ops, Figma-style);
+	// false keeps its box (the background-blur stencil, matching the web's box-clipped
+	// CSS backdrop-filter).
+	drawSilhouette := func(c *gg.Context, l layout.Layer, textGlyphs bool) {
 		rotate := l.Rotation != 0
 		if rotate {
 			c.Push()
@@ -444,6 +453,17 @@ func (r *Renderer) RenderLayout(ctx context.Context, in layout.Layout, vars map[
 				a, nn := l.Nodes[len(l.Nodes)-1], l.Nodes[0]
 				c.CubicTo(a.H2X, a.H2Y, nn.H1X, nn.H1Y, nn.X, nn.Y) // close for a filled region
 				c.ClosePath()
+				c.Fill()
+			}
+		case "text":
+			// Boolean ops follow the GLYPHS (white) — Figma's behaviour — while the
+			// background-blur stencil keeps the BOX so it matches the web preview (CSS
+			// backdrop-filter is clipped to the layer box, not the letters).
+			if textGlyphs {
+				paintText(c, l, r.renderText(ctx, l.Text, data), color.White)
+			} else {
+				stl, str, sbr, sbl := cornerRadii(l)
+				drawRoundRect(c, l.X, l.Y, l.W, l.H, stl, str, sbr, sbl)
 				c.Fill()
 			}
 		default: // rect (any non-vector falls back to its box)
@@ -485,7 +505,7 @@ func (r *Renderer) RenderLayout(ctx context.Context, in layout.Layout, vars map[
 			}
 			blurred := xdraw.Blur(dc.Image(), e.Radius)
 			stencil := gg.NewContext(w, h)
-			drawSilhouette(stencil, l)
+			drawSilhouette(stencil, l, false) // box (matches the web's box-clipped backdrop-filter)
 			dc.DrawImage(applyMask(blurred, stencil.Image(), "alpha", false), 0, 0)
 		}
 
@@ -534,7 +554,7 @@ func (r *Renderer) RenderLayout(ctx context.Context, in layout.Layout, vars map[
 		covers := make([]image.Image, len(vis))
 		for k, m := range vis {
 			sub := gg.NewContext(w, h)
-			drawSilhouette(sub, m)
+			drawSilhouette(sub, m, true) // boolean coverage follows a text member's glyphs
 			covers[k] = sub.Image()
 		}
 		// The result takes the top member's content (the bottom member's for subtract),
@@ -553,7 +573,13 @@ func (r *Renderer) RenderLayout(ctx context.Context, in layout.Layout, vars map[
 			dc.DrawImage(applyMask(content.Image(), coverage, "alpha", false), 0, 0)
 			return
 		}
-		fill := parseHex(source.Fill, color.White)
+		// A text source has no Fill — use its text Colour so a text-topped boolean keeps
+		// the text's colour (Figma takes the front-most member's appearance).
+		fillStr := source.Fill
+		if fillStr == "" && source.Type == "text" {
+			fillStr = source.Color
+		}
+		fill := parseHex(fillStr, color.White)
 		opacity := 1.0
 		if source.Opacity != nil {
 			opacity = *source.Opacity

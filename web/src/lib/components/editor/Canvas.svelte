@@ -119,26 +119,21 @@
 	function lineW(ctx: CanvasRenderingContext2D, t: string, ls: number): number {
 		return ctx.measureText(t).width + (ls ? Math.max(0, [...t].length - 1) * ls : 0);
 	}
-	// drawStencilText paints a text stencil's glyphs (white) in CANVAS coords onto ctx,
-	// wrapping to the box width and honouring align/valign/line-height/letter-spacing/
-	// case/decoration — the same layout as the live preview text. `erase` uses
-	// destination-out (for an inverted mask: punch the glyphs out of a white box).
-	function drawStencilText(ctx: CanvasRenderingContext2D, m: Layer, erase: boolean) {
+	// stencilPlace wraps a text layer to its box and returns each line positioned at its
+	// baseline (canvas coords), honouring align/valign/line-height/letter-spacing/case —
+	// the SAME layout as the visible preview text and the Go renderer. Shared by the mask
+	// rasteriser (drawStencilText) and the boolean-op silhouette (textSvg) via a
+	// measure(text)→width fn so both agree on wrapping.
+	function stencilPlace(m: Layer, measure: (t: string) => number) {
 		const size = m.font_size ?? 16;
-		const weight = m.font_weight ?? 400;
 		const ls = m.letter_spacing ?? 0;
-		ctx.font = `${weight} ${size}px ${fontCss(m.font_family)}`;
-		ctx.textBaseline = 'alphabetic';
-		ctx.fillStyle = '#fff';
-		ctx.globalCompositeOperation = erase ? 'destination-out' : 'source-over';
 		const raw = stencilCase(dtext(m), m.text_case);
-		// greedy word-wrap to the box width (canvas px), preserving explicit newlines.
 		const lines: string[] = [];
 		for (const para of raw.split('\n')) {
 			let cur = '';
 			for (const word of para.split(' ')) {
 				const next = cur ? `${cur} ${word}` : word;
-				if (cur && lineW(ctx, next, ls) > m.w) {
+				if (cur && measure(next) > m.w) {
 					lines.push(cur);
 					cur = word;
 				} else cur = next;
@@ -153,28 +148,87 @@
 		// Baseline within the line box: centre the em box (height = size) in the line box
 		// (height = lh, the CSS half-leading), then drop ≈ 0.8em to the baseline.
 		const asc = (lh - size) / 2 + size * 0.8;
-		const thick = Math.max(1, size * 0.06);
+		const placed: { text: string; x: number; y: number; w: number }[] = [];
 		lines.forEach((line, i) => {
 			if (!line) return;
-			const w = lineW(ctx, line, ls);
-			let x0 = m.x;
-			if (m.align === 'center') x0 = m.x + (m.w - w) / 2;
-			else if (m.align === 'right') x0 = m.x + m.w - w;
-			const y = top + i * lh + asc;
+			const w = measure(line);
+			let x = m.x;
+			if (m.align === 'center') x = m.x + (m.w - w) / 2;
+			else if (m.align === 'right') x = m.x + m.w - w;
+			placed.push({ text: line, x, y: top + i * lh + asc, w });
+		});
+		return { size, ls, placed };
+	}
+	// drawStencilText paints a text stencil's glyphs (white) onto ctx in canvas coords.
+	// `erase` uses destination-out (inverted mask: punch the glyphs out of a white box).
+	function drawStencilText(ctx: CanvasRenderingContext2D, m: Layer, erase: boolean) {
+		const size = m.font_size ?? 16;
+		const weight = m.font_weight ?? 400;
+		const ls = m.letter_spacing ?? 0;
+		ctx.font = `${weight} ${size}px ${fontCss(m.font_family)}`;
+		ctx.textBaseline = 'alphabetic';
+		ctx.fillStyle = '#fff';
+		ctx.globalCompositeOperation = erase ? 'destination-out' : 'source-over';
+		const thick = Math.max(1, size * 0.06);
+		const { placed } = stencilPlace(m, (t) => lineW(ctx, t, ls));
+		for (const p of placed) {
 			if (ls) {
-				let cx = x0;
-				for (const ch of line) {
-					ctx.fillText(ch, cx, y);
+				let cx = p.x;
+				for (const ch of p.text) {
+					ctx.fillText(ch, cx, p.y);
 					cx += ctx.measureText(ch).width + ls;
 				}
 			} else {
-				ctx.fillText(line, x0, y);
+				ctx.fillText(p.text, p.x, p.y);
 			}
 			if (m.text_decoration === 'underline' || m.text_decoration === 'strike') {
-				const dy = m.text_decoration === 'strike' ? y - size * 0.28 : y + thick;
-				ctx.fillRect(x0, dy, w, thick);
+				const dy = m.text_decoration === 'strike' ? p.y - size * 0.28 : p.y + thick;
+				ctx.fillRect(p.x, dy, p.w, thick);
 			}
-		});
+		}
+	}
+	// escapeXml escapes content for inline SVG markup. The boolean-op SVG is rendered
+	// IN-DOCUMENT (not a data-URI mask), so <text> renders and uses the real card fonts.
+	function escapeXml(s: string): string {
+		return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+	}
+	let measureCv: CanvasRenderingContext2D | null = null; // lazy ctx for SVG-text wrap
+	// textSvg builds a text layer's silhouette as inline SVG <text> lines (canvas coords),
+	// so a text member of a boolean op composites by its GLYPHS. Rotation goes on each
+	// <text> (not a wrapping <g>) so it stays valid as a clipPath/<mask> child.
+	function textSvg(m: Layer, fill: string): string {
+		void fontTick; // re-wrap once fonts load (glyphs repaint on their own)
+		const size = m.font_size ?? 16;
+		const weight = m.font_weight ?? 400;
+		const family = fontCss(m.font_family);
+		const ls = m.letter_spacing ?? 0;
+		if (typeof document !== 'undefined' && !measureCv) measureCv = document.createElement('canvas').getContext('2d');
+		if (measureCv) measureCv.font = `${weight} ${size}px ${family}`;
+		const measure = (t: string) => (measureCv ? lineW(measureCv, t, ls) : [...t].length * 0.55 * size);
+		const { placed } = stencilPlace(m, measure);
+		const fam = escapeXml(family);
+		const lsAttr = ls ? ` letter-spacing='${ls}'` : '';
+		const dec =
+			m.text_decoration === 'underline'
+				? " text-decoration='underline'"
+				: m.text_decoration === 'strike'
+					? " text-decoration='line-through'"
+					: '';
+		const rot = m.rotation ? ` transform='rotate(${m.rotation} ${m.x + m.w / 2} ${m.y + m.h / 2})'` : '';
+		return placed
+			.map(
+				(p) =>
+					`<text x='${p.x}' y='${p.y}' font-family="${fam}" font-size='${size}' font-weight='${weight}' fill='${fill}'${lsAttr}${dec}${rot} xml:space='preserve'>${escapeXml(p.text)}</text>`
+			)
+			.join('');
+	}
+	// silRaw returns a boolean member's silhouette as inline SVG markup — a <path> for
+	// shapes, <text> lines for text — so a text member composites by its glyphs (Figma),
+	// not its box. Valid as a clipPath/<mask> child and in normal flow.
+	function silRaw(m: Layer, fill: string): string {
+		if (m.type === 'text') return textSvg(m, fill);
+		const d = shapeD(m);
+		return d ? `<path d='${d}' fill='${fill}'/>` : '';
 	}
 	// textMaskCss rasterises a text stencil to a PNG and returns the mask CSS for the
 	// masked layer `l`. `stage` picks the coord frame (whole canvas for a path-layer
@@ -536,13 +590,17 @@
 		if (members.length < 2) return '';
 		const op = layout.groups?.[gid]?.bool_op ?? 'union';
 		const src = op === 'subtract' ? members[0] : members[members.length - 1];
-		// `||` not `??`: an unfilled path has fill==='' and must fall back to white, to
-		// match the Go renderer (parseHex('', white)). `??` would emit fill='' = black.
-		const fill = src.fill || '#FFFFFF';
+		// Top member's appearance (bottom's for subtract). `||` not `??` so an unfilled
+		// path (fill==='') falls back to white like the Go renderer; a text source has no
+		// fill, so use its colour (Figma keeps the front-most member's appearance).
+		const fill = src.fill || (src.type === 'text' ? src.color : '') || '#FFFFFF';
 		const opacity = Math.min(1, src.opacity ?? 1);
 		if (opacity <= 0) return '';
 		const sid = gid.replace(/[^a-zA-Z0-9_-]/g, ''); // safe <defs> id fragment
-		const ds = members.map(shapeD);
+		// Each member's silhouette as inline SVG markup — a <path> for shapes, <text> for
+		// text — so a text member composites by its GLYPHS (Figma), not its box. Valid as
+		// a clipPath/<mask> child and in normal flow.
+		const sil = (m: Layer, f: string) => silRaw(m, f);
 		// An image/avatar source keeps its pixels: clip the real image to the boolean
 		// coverage (mirrors the Go renderer). A non-image source fills with its colour.
 		const imgSrc = src.type === 'image' || src.type === 'avatar' ? dsrc(src) : '';
@@ -551,50 +609,75 @@
 			const par = (src.fit ?? 'cover') === 'contain' ? 'xMidYMid meet' : 'xMidYMid slice';
 			const img = `<image href='${href}' x='${src.x}' y='${src.y}' width='${src.w}' height='${src.h}' preserveAspectRatio='${par}' opacity='${opacity}'`;
 			if (op === 'subtract') {
-				const holes = ds
-					.slice(1)
-					.map((d) => `<path d='${d}' fill='#000'/>`)
-					.join('');
-				return `<defs><mask id='bm_${sid}'><path d='${ds[0]}' fill='#fff'/>${holes}</mask></defs>${img} mask='url(#bm_${sid})'/>`;
+				const holes = members.slice(1).map((m) => sil(m, '#000')).join('');
+				return `<defs><mask id='bm_${sid}'>${sil(members[0], '#fff')}${holes}</mask></defs>${img} mask='url(#bm_${sid})'/>`;
 			}
 			if (op === 'exclude') {
-				return `<defs><clipPath id='bx_${sid}'><path d='${ds.join(' ')}' clip-rule='evenodd'/></clipPath></defs>${img} clip-path='url(#bx_${sid})'/>`;
+				if (members.some((m) => m.type === 'text')) {
+					// Symmetric-difference coverage as ONE mask (each member where no other
+					// covers it) so text members crop the image by their GLYPHS.
+					const box = `<rect x='0' y='0' width='${layout.width}' height='${layout.height}' fill='#fff'/>`;
+					let defs = '';
+					let cover = '';
+					members.forEach((m, k) => {
+						const others = members.filter((_, j) => j !== k).map((o) => sil(o, '#000')).join('');
+						defs += `<mask id='exn_${sid}_${k}'>${box}${others}</mask>`;
+						cover += `<g mask='url(#exn_${sid}_${k})'>${sil(m, '#fff')}</g>`;
+					});
+					defs += `<mask id='bx_${sid}'>${cover}</mask>`;
+					return `<defs>${defs}</defs>${img} mask='url(#bx_${sid})'/>`;
+				}
+				// even-odd over all members (shapes); exact for any N.
+				const d = members.map(shapeD).join(' ');
+				return `<defs><clipPath id='bx_${sid}'><path d='${d}' clip-rule='evenodd'/></clipPath></defs>${img} clip-path='url(#bx_${sid})'/>`;
 			}
 			if (op === 'intersect') {
 				// nested clip-paths over EVERY member → image ∩ all members
 				let defs = '';
-				for (let k = 0; k < ds.length; k++) {
+				for (let k = 0; k < members.length; k++) {
 					const ref = k > 0 ? ` clip-path='url(#bc_${sid}_${k - 1})'` : '';
-					defs += `<clipPath id='bc_${sid}_${k}'${ref}><path d='${ds[k]}'/></clipPath>`;
+					defs += `<clipPath id='bc_${sid}_${k}'${ref}>${sil(members[k], '#fff')}</clipPath>`;
 				}
-				return `<defs>${defs}</defs>${img} clip-path='url(#bc_${sid}_${ds.length - 1})'/>`;
+				return `<defs>${defs}</defs>${img} clip-path='url(#bc_${sid}_${members.length - 1})'/>`;
 			}
-			// union: clip the image to the union of every member shape
-			const cp = ds.map((d) => `<path d='${d}'/>`).join('');
+			// union: clip the image to the union of every member silhouette
+			const cp = members.map((m) => sil(m, '#fff')).join('');
 			return `<defs><clipPath id='bu_${sid}'>${cp}</clipPath></defs>${img} clip-path='url(#bu_${sid})'/>`;
 		}
 		if (op === 'exclude') {
-			return `<path d='${ds.join(' ')}' fill='${fill}' fill-rule='evenodd' opacity='${opacity}'/>`;
+			// Symmetric difference. With a text member, show each member where NO OTHER
+			// member covers it — exact for 2 members (≡ (A−B)∪(B−A)) and for ≥3 outside any
+			// triple-overlap — using only shallow masks so text GLYPHS composite reliably.
+			// Shapes-only uses one even-odd path (exact, any N). The PNG is always exact.
+			if (members.some((m) => m.type === 'text')) {
+				const box = `<rect x='0' y='0' width='${layout.width}' height='${layout.height}' fill='#fff'/>`;
+				let defs = '';
+				let body = '';
+				members.forEach((m, k) => {
+					const others = members.filter((_, j) => j !== k).map((o) => sil(o, '#000')).join('');
+					defs += `<mask id='ex_${sid}_${k}'>${box}${others}</mask>`;
+					body += `<g mask='url(#ex_${sid}_${k})'>${sil(m, fill)}</g>`;
+				});
+				return `<defs>${defs}</defs><g opacity='${opacity}'>${body}</g>`;
+			}
+			const d = members.map(shapeD).join(' ');
+			return `<path d='${d}' fill='${fill}' fill-rule='evenodd' opacity='${opacity}'/>`;
 		}
 		if (op === 'subtract') {
-			const holes = ds
-				.slice(1)
-				.map((d) => `<path d='${d}' fill='#000'/>`)
-				.join('');
-			return `<defs><mask id='bm_${sid}'><path d='${ds[0]}' fill='#fff'/>${holes}</mask></defs><path d='${ds[0]}' fill='${fill}' opacity='${opacity}' mask='url(#bm_${sid})'/>`;
+			const holes = members.slice(1).map((m) => sil(m, '#000')).join('');
+			return `<defs><mask id='bm_${sid}'>${sil(members[0], '#fff')}${holes}</mask></defs><g mask='url(#bm_${sid})' opacity='${opacity}'>${sil(members[0], fill)}</g>`;
 		}
 		if (op === 'intersect') {
 			let defs = '';
-			for (let k = 1; k < ds.length; k++) {
+			for (let k = 1; k < members.length; k++) {
 				const ref = k > 1 ? ` clip-path='url(#bc_${sid}_${k - 1})'` : '';
-				defs += `<clipPath id='bc_${sid}_${k}'${ref}><path d='${ds[k]}'/></clipPath>`;
+				defs += `<clipPath id='bc_${sid}_${k}'${ref}>${sil(members[k], '#fff')}</clipPath>`;
 			}
-			const clip = ds.length > 1 ? ` clip-path='url(#bc_${sid}_${ds.length - 1})'` : '';
-			return `<defs>${defs}</defs><path d='${ds[0]}' fill='${fill}' opacity='${opacity}'${clip}/>`;
+			const clip = members.length > 1 ? ` clip-path='url(#bc_${sid}_${members.length - 1})'` : '';
+			return `<defs>${defs}</defs><g${clip} opacity='${opacity}'>${sil(members[0], fill)}</g>`;
 		}
 		// union
-		const paths = ds.map((d) => `<path d='${d}' fill='${fill}'/>`).join('');
-		return `<g opacity='${opacity}'>${paths}</g>`;
+		return `<g opacity='${opacity}'>${members.map((m) => sil(m, fill)).join('')}</g>`;
 	}
 
 	// ── Pointer interaction ──────────────────────────────────────────────────
