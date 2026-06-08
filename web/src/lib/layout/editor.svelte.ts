@@ -11,6 +11,7 @@ import {
 	smoothHandles,
 	hasHandles,
 	shapeInBox,
+	newEffect,
 	MAX_LAYERS,
 	type Layout,
 	type Layer,
@@ -19,7 +20,9 @@ import {
 	type HandleMode,
 	type ShapeKind,
 	type ClipMode,
-	type BoolOp
+	type BoolOp,
+	type Effect,
+	type EffectType
 } from './schema';
 
 export const EDITOR_CTX = Symbol('dia-layout-editor');
@@ -1112,12 +1115,12 @@ export class EditorStore {
 		const l = this.selected;
 		return (l?.group && (this.layout.groups?.[l.group]?.bool_op as BoolOp)) || 'union';
 	}
-	// canBoolean: ≥2 selected VECTOR layers (rect/ellipse/path), not already a mask.
+	// canBoolean: ≥2 selected layers, not already a mask. Any layer type works — a
+	// shape source fills the boolean region with its colour, an image source keeps its
+	// pixels clipped to the region (so e.g. intersect crops a photo to a shape).
 	get canBoolean(): boolean {
 		if (this.isMask) return false;
-		const sel = this.selectedLayers;
-		if (sel.length < 2) return false;
-		return sel.every((l) => l.type === 'rect' || l.type === 'ellipse' || l.type === 'path');
+		return this.selectedLayers.length >= 2;
 	}
 	// applyBoolean gathers the selection into one contiguous group tagged with the op
 	// (clearing any mask state — mutual exclusivity). On an existing boolean group it
@@ -1176,6 +1179,139 @@ export class EditorStore {
 		const next = { ...this.layout.groups[id] };
 		delete next.bool_op;
 		this.layout.groups = { ...this.layout.groups, [id]: next };
+	}
+
+	// ── effects (shadows / blur) ─────────────────────────────────────────────────
+	// Effects live on a single layer; the inspector edits the primary selection's
+	// list. The renderer applies them in a fixed order, so list order is just for
+	// display (newest on top of the panel list).
+	get effects(): Effect[] {
+		return this.selected?.effects ?? [];
+	}
+	addEffect(type: EffectType) {
+		const l = this.selected;
+		if (!l) return;
+		// Figma allows only one layer-blur and one background-blur per layer.
+		const solo = type === 'layer_blur' || type === 'background_blur';
+		const base = (l.effects ?? []).filter((e) => !(solo && e.type === type));
+		l.effects = [...base, newEffect(type)];
+	}
+	updateEffect(i: number, patch: Partial<Effect>) {
+		const e = this.selected?.effects?.[i];
+		if (e) Object.assign(e, patch);
+	}
+	removeEffect(i: number) {
+		const l = this.selected;
+		if (!l?.effects) return;
+		l.effects = l.effects.filter((_, k) => k !== i);
+		if (!l.effects.length) delete l.effects;
+	}
+	toggleEffectHidden(i: number) {
+		const e = this.selected?.effects?.[i];
+		if (e) e.hidden = !e.hidden;
+	}
+
+	// ── "edit object" (Figma's Enter) ────────────────────────────────────────────
+	// canEditObject: deep-edit is meaningful for a single vector/text/primitive — a
+	// path/text edits inline; a rect/ellipse flips to an editable vector first.
+	get canEditObject(): boolean {
+		const l = this.selected;
+		return (
+			this.selectedIds.length === 1 &&
+			!!l &&
+			(l.type === 'path' || l.type === 'text' || l.type === 'rect' || l.type === 'ellipse')
+		);
+	}
+	editSelected() {
+		const l = this.selected;
+		if (l && this.selectedIds.length === 1) this.enterEdit(l.id);
+	}
+
+	// ── multi-selection editing (Figma: one inspector, "Mixed" when values differ) ──
+	// common returns the value shared by EVERY selected layer, or undefined when they
+	// differ (the inspector shows "Mixed") or nothing is selected. Primitives only.
+	common<T>(read: (l: Layer) => T): T | undefined {
+		const sel = this.selectedLayers;
+		if (!sel.length) return undefined;
+		const v = read(sel[0]);
+		return sel.every((l) => read(l) === v) ? v : undefined;
+	}
+	// setAll applies a mutation to every selected layer (an edit applies to all).
+	setAll(apply: (l: Layer) => void) {
+		for (const l of this.selectedLayers) apply(l);
+	}
+	// selectionType is the layer type shared by the whole selection, or null when
+	// mixed — gates the type-specific sections (Text/Image/Fill/…).
+	get selectionType(): LayerType | null {
+		const sel = this.selectedLayers;
+		if (!sel.length) return null;
+		const t = sel[0].type;
+		return sel.every((l) => l.type === t) ? t : null;
+	}
+	// selectMatching selects every (visible, unlocked) layer of the primary layer's
+	// type — Figma's "Select all with same …".
+	selectMatching() {
+		const t = this.selected?.type;
+		if (!t) return;
+		const ids = this.layout.layers
+			.filter((l) => l.type === t && !l.hidden && !l.locked)
+			.map((l) => l.id);
+		if (ids.length) this.selectedIds = ids;
+	}
+
+	// ── flatten (Figma's flatten-to-vector for a primitive) ──────────────────────
+	get canFlatten(): boolean {
+		return this.selectedLayers.some((l) => l.type === 'rect' || l.type === 'ellipse');
+	}
+	flatten() {
+		for (const l of [...this.selectedLayers]) {
+			if (l.type === 'rect' || l.type === 'ellipse') this.convertToPath(l.id);
+		}
+	}
+
+	// ── independent corner radii (Figma's "expand" on the corner-radius field) ────
+	// cornersActive: the primary selection is in per-corner mode.
+	get cornersActive(): boolean {
+		const c = this.selected?.corners;
+		return Array.isArray(c) && c.length === 4;
+	}
+	// expandCorners seeds the four corners from each layer's uniform radius.
+	expandCorners() {
+		this.setAll((l) => {
+			if (!Array.isArray(l.corners) || l.corners.length !== 4) {
+				const r = Math.max(0, Math.round(l.radius ?? 0));
+				l.corners = [r, r, r, r];
+			}
+		});
+	}
+	// collapseCorners drops back to a single uniform radius (top-left wins).
+	collapseCorners() {
+		this.setAll((l) => {
+			if (Array.isArray(l.corners) && l.corners.length === 4) {
+				l.radius = l.corners[0];
+				delete l.corners;
+			}
+		});
+	}
+	// setRadius edits the uniform corner radius across the selection, dropping any
+	// per-corner array so the uniform value actually wins (this field is only shown in
+	// uniform mode, and editing it should unify mixed siblings back to uniform).
+	setRadius(v: number) {
+		this.setAll((l) => {
+			l.radius = Math.max(0, Math.round(v));
+			if (Array.isArray(l.corners)) delete l.corners;
+		});
+	}
+	// setCorner edits one corner (0=tl,1=tr,2=br,3=bl) across the selection, seeding
+	// per-corner mode from the uniform radius if needed.
+	setCorner(i: number, v: number) {
+		this.setAll((l) => {
+			if (!Array.isArray(l.corners) || l.corners.length !== 4) {
+				const r = Math.max(0, Math.round(l.radius ?? 0));
+				l.corners = [r, r, r, r];
+			}
+			l.corners[i] = Math.max(0, Math.round(v));
+		});
 	}
 
 	// ── undo / redo ────────────────────────────────────────────────────────────────
