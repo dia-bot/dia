@@ -75,14 +75,14 @@
 	<div class="text-muted">Loading…</div>
 {:else}
 	<div class="space-y-5">
-		<section class="card p-6">
+		<section class="card p-4 sm:p-6">
 			<h2 class="mb-4 text-base font-semibold">Roles</h2>
 			<Field label="Roles to assign on join" hint="New members receive these roles automatically.">
 				<MultiSelect bind:value={cfg.roles} options={roleOpts} placeholder="Add a role…" />
 			</Field>
 		</section>
 
-		<section class="card p-6">
+		<section class="card p-4 sm:p-6">
 			<h2 class="mb-4 text-base font-semibold">Options</h2>
 			<label class="mb-4 flex items-center gap-3">
 				<Toggle bind:checked={cfg.include_bots} />

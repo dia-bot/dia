@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/dia-bot/dia/internal/billing"
 	"github.com/dia-bot/dia/internal/cache"
 	"github.com/dia-bot/dia/internal/config"
 	"github.com/dia-bot/dia/internal/discord"
@@ -16,6 +17,7 @@ import (
 	"github.com/dia-bot/dia/internal/guildstate"
 	"github.com/dia-bot/dia/internal/imaging"
 	"github.com/dia-bot/dia/internal/realtime"
+	"github.com/dia-bot/dia/internal/storage"
 	"github.com/dia-bot/dia/internal/store"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
@@ -34,6 +36,8 @@ type Deps struct {
 	Discord *discord.Client
 	Imaging *imaging.Renderer
 	Bus     eventbus.Bus
+	Storage *storage.Store  // nil when uploads aren't configured
+	Billing *billing.Client // nil when Stripe isn't configured
 }
 
 // Server is the dashboard API.
@@ -45,6 +49,8 @@ type Server struct {
 	discord  *discord.Client
 	imaging  *imaging.Renderer
 	bus      eventbus.Bus
+	storage  *storage.Store
+	billing  *billing.Client
 	gstate   *guildstate.Store
 	hub      *realtime.Hub
 	sessions *sessionStore
@@ -63,6 +69,8 @@ func New(d Deps) *Server {
 		discord:  d.Discord,
 		imaging:  d.Imaging,
 		bus:      d.Bus,
+		storage:  d.Storage,
+		billing:  d.Billing,
 		gstate:   guildstate.New(d.Cache),
 		hub:      realtime.NewHub(d.Log),
 		sessions: newSessionStore(d.Cache, sessionTTL),
@@ -94,12 +102,17 @@ func (s *Server) Handler() http.Handler {
 
 	r.GET("/healthz", func(c *gin.Context) { c.JSON(200, gin.H{"status": "ok", "ws_clients": s.hub.Count()}) })
 
-	// OAuth (no session required).
+	// OAuth (no session required). The browser callback lands on the web origin
+	// (WebBaseURL + OAuthRedirectPath); the web server completes the flow by
+	// calling /auth/exchange server-to-server.
 	r.GET("/auth/login", s.handleLogin)
-	r.GET(s.cfg.API.OAuthRedirectPath, s.handleCallback)
+	r.POST("/auth/exchange", s.handleExchange)
 
 	// Realtime WebSocket (auth checked inside the handler off the cookie).
 	r.GET("/realtime/:id", s.handleRealtime)
+
+	// Stripe webhook (no session/CSRF — verified by Stripe-Signature instead).
+	r.POST("/billing/webhook", s.handleStripeWebhook)
 
 	api := r.Group("/api")
 	api.GET("/me", s.handleMe) // self-handles the unauthenticated case
@@ -116,8 +129,23 @@ func (s *Server) Handler() http.Handler {
 	g.GET("/features", s.handleListFeatures)
 	g.GET("/features/:key", s.handleGetFeature)
 	g.PUT("/features/:key", s.handlePutFeature)
+	g.POST("/uploads", s.handleUpload)
+	g.GET("/fonts", s.handleListFonts)
+	g.POST("/fonts", s.handleUploadFont)
+	g.DELETE("/fonts/:family", s.handleDeleteFont)
+	g.GET("/assets", s.handleListAssets)
+	g.DELETE("/assets/:aid", s.handleDeleteAsset)
+	g.GET("/billing", s.handleBillingStatus)
+	g.POST("/billing/checkout", s.handleCheckout)
+	g.POST("/billing/portal", s.handlePortal)
 	g.POST("/welcome/preview", s.handleWelcomePreview)
+	g.POST("/welcome/test", s.handleWelcomeTest)
+	g.GET("/welcome/variables", s.handleWelcomeVariables)
 	g.POST("/rank/preview", s.handleRankPreview)
+	g.POST("/layout/preview", s.handleLayoutPreview)
+	g.POST("/layout/resolve", s.handleResolveCard)
+	g.POST("/templating/preview", s.handleTemplatingPreview)
+	g.GET("/leveling/variables", s.handleLevelingVariables)
 
 	g.GET("/leaderboard", s.handleLeaderboard)
 	g.GET("/level-rewards", s.handleListRewards)

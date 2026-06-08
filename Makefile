@@ -176,7 +176,7 @@ stack-logs: ## Follow full-stack logs (one service: make stack-logs SVC=api)
 	$(STACK_COMPOSE) logs -f --tail=200 $(SVC)
 
 ## ── Go services (native) ─────────────────────────────────────
-.PHONY: tidy build worker api run test vet fmt
+.PHONY: tidy build worker api run test vet fmt fonts
 tidy: ## go mod tidy
 	$(GO) mod tidy
 
@@ -208,10 +208,13 @@ vet: ## go vet
 fmt: ## gofmt the Go code
 	gofmt -w ./cmd ./internal
 
+fonts: ## Download the curated card fonts into assets/fonts (idempotent)
+	bash scripts/fetch-fonts.sh
+
 ## ── Gateway (Elixir, native) ─────────────────────────────────
 .PHONY: gateway gateway-deps
-gateway: ## Run the Elixir gateway natively
-	cd gateway && mix run --no-halt
+gateway: ## Run the Elixir gateway natively (loads repo-root .env so DISCORD_TOKEN etc. reach mix)
+	set -a; [ -f .env ] && . ./.env; set +a; cd gateway && mix run --no-halt
 
 gateway-deps: ## Fetch Elixir deps
 	cd gateway && mix deps.get

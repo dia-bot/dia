@@ -165,9 +165,9 @@ func seedPrimary(ctx context.Context, st *store.Store, guildID int64) error {
 // the dashboard and worker read.
 func seedFeatures(ctx context.Context, st *store.Store, guildID int64) error {
 	wel := welcome.Default()
-	wel.ChannelID = sid(welcomeChannel)
-	wel.LeaveEnabled = true
-	wel.LeaveChannelID = sid(welcomeChannel)
+	wel.Welcome.ChannelID = sid(welcomeChannel)
+	wel.Goodbye.Enabled = true
+	wel.Goodbye.ChannelID = sid(welcomeChannel)
 
 	lvl := leveling.Default()
 	lvl.AnnounceLevelUp = true

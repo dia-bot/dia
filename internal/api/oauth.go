@@ -16,7 +16,10 @@ import (
 
 var oauthHTTP = &http.Client{Timeout: 10 * time.Second}
 
-// handleLogin starts the Discord OAuth2 (Authorization Code + PKCE) flow.
+// handleLogin starts the Discord OAuth2 (Authorization Code + PKCE) flow,
+// redirecting the browser to Discord. The PKCE verifier is stashed server-side
+// keyed by state; Discord returns to the web origin's callback
+// (WebBaseURL + OAuthRedirectPath), which completes the flow via /auth/exchange.
 func (s *Server) handleLogin(c *gin.Context) {
 	state := randomToken()
 	verifier := oauth2.GenerateVerifier()
@@ -25,22 +28,29 @@ func (s *Server) handleLogin(c *gin.Context) {
 		fail(c, http.StatusInternalServerError, "could not start login")
 		return
 	}
-	url := s.oauth.AuthCodeURL(state, oauth2.AccessTypeOnline, oauth2.S256ChallengeOption(verifier))
-	c.Redirect(http.StatusTemporaryRedirect, url)
+	authURL := s.oauth.AuthCodeURL(state, oauth2.AccessTypeOnline, oauth2.S256ChallengeOption(verifier))
+	c.Redirect(http.StatusTemporaryRedirect, authURL)
 }
 
-// handleCallback completes the OAuth2 flow, creates a session and redirects to
-// the dashboard.
-func (s *Server) handleCallback(c *gin.Context) {
+type exchangeRequest struct {
+	Code  string `json:"code"`
+	State string `json:"state"`
+}
+
+// handleExchange completes the OAuth2 code exchange on behalf of the web callback.
+// The SvelteKit server calls this server-to-server with the code+state it received
+// at WebBaseURL/auth/callback; the client secret never leaves the backend. On
+// success it creates the session and returns the opaque session token for the web
+// to set as a first-party HttpOnly cookie on its own origin.
+func (s *Server) handleExchange(c *gin.Context) {
 	ctx := c.Request.Context()
-	state := c.Query("state")
-	code := c.Query("code")
-	if state == "" || code == "" {
+	var req exchangeRequest
+	if err := c.ShouldBindJSON(&req); err != nil || req.Code == "" || req.State == "" {
 		fail(c, http.StatusBadRequest, "missing code/state")
 		return
 	}
 
-	verifier, err := s.cache.TakeString(ctx, "oauth:"+state)
+	verifier, err := s.cache.TakeString(ctx, "oauth:"+req.State)
 	if errors.Is(err, cache.ErrMiss) || verifier == "" {
 		fail(c, http.StatusBadRequest, "invalid or expired login state")
 		return
@@ -50,7 +60,7 @@ func (s *Server) handleCallback(c *gin.Context) {
 		return
 	}
 
-	tok, err := s.oauth.Exchange(ctx, code, oauth2.VerifierOption(verifier))
+	tok, err := s.oauth.Exchange(ctx, req.Code, oauth2.VerifierOption(verifier))
 	if err != nil {
 		s.log.Warn("oauth exchange failed", "err", err)
 		fail(c, http.StatusBadGateway, "Discord login failed")
@@ -81,8 +91,10 @@ func (s *Server) handleCallback(c *gin.Context) {
 		fail(c, http.StatusInternalServerError, "could not create session")
 		return
 	}
-	s.setSessionCookie(c, token)
-	c.Redirect(http.StatusTemporaryRedirect, s.cfg.API.WebBaseURL+"/servers")
+	c.JSON(http.StatusOK, gin.H{
+		"token":      token,
+		"expires_in": int(sessionTTL.Seconds()),
+	})
 }
 
 // handleLogout destroys the current session.

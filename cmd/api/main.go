@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/dia-bot/dia/internal/api"
+	"github.com/dia-bot/dia/internal/billing"
 	"github.com/dia-bot/dia/internal/cache"
 	"github.com/dia-bot/dia/internal/config"
 	"github.com/dia-bot/dia/internal/discord"
@@ -21,6 +22,7 @@ import (
 	"github.com/dia-bot/dia/internal/eventbus"
 	"github.com/dia-bot/dia/internal/imaging"
 	"github.com/dia-bot/dia/internal/logging"
+	"github.com/dia-bot/dia/internal/storage"
 	"github.com/dia-bot/dia/internal/store"
 )
 
@@ -75,6 +77,38 @@ func main() {
 	}
 	defer bus.Close()
 
+	// Object storage for uploads is optional; log + continue without it so the
+	// dashboard still runs (the upload endpoint then returns 503).
+	var blob *storage.Store
+	if cfg.Storage.Enabled() {
+		blob, err = storage.New(storage.Config{
+			Endpoint:       cfg.Storage.Endpoint,
+			Region:         cfg.Storage.Region,
+			Bucket:         cfg.Storage.Bucket,
+			AccessKey:      cfg.Storage.AccessKey,
+			SecretKey:      cfg.Storage.SecretKey,
+			PublicBaseURL:  cfg.Storage.PublicBaseURL,
+			ForcePathStyle: cfg.Storage.ForcePathStyle,
+			ACL:            cfg.Storage.ACL,
+		})
+		if err != nil {
+			log.Error("object storage disabled (bad config)", "err", err)
+			blob = nil
+		} else {
+			log.Info("object storage enabled", "bucket", cfg.Storage.Bucket)
+		}
+	} else {
+		log.Info("object storage not configured; uploads disabled")
+	}
+
+	var bill *billing.Client
+	if cfg.Billing.Enabled() {
+		bill = billing.New(cfg.Billing.SecretKey)
+		log.Info("stripe billing enabled")
+	} else {
+		log.Info("stripe billing not configured; premium via PREMIUM_GUILD_IDS only")
+	}
+
 	srv := api.New(api.Deps{
 		Config:  cfg,
 		Log:     log,
@@ -83,6 +117,8 @@ func main() {
 		Discord: dg,
 		Imaging: imaging.New(cfg.Imaging.FontsDir, log),
 		Bus:     bus,
+		Storage: blob,
+		Billing: bill,
 	})
 
 	if err := srv.StartRealtime(ctx); err != nil {

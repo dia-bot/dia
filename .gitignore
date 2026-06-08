@@ -39,3 +39,7 @@ node_modules/
 # Local data / docker volumes
 /data/
 /tmp/
+
+# Downloaded card fonts (run `make fonts`); keep the dir, not the binaries
+assets/fonts/*.ttf
+assets/fonts/*.otf

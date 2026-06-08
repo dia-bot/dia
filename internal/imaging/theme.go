@@ -5,7 +5,6 @@ import (
 	"image"
 	"image/color"
 	"math"
-	"net/http"
 	"strconv"
 	"strings"
 
@@ -86,15 +85,14 @@ func (r *Renderer) drawBackground(ctx context.Context, dc *gg.Context, w, h int,
 	dc.Fill()
 }
 
-// gradientLine returns the start/end points of a gradient at angle (degrees)
-// spanning the canvas.
+// gradientLine returns the start/end points of a gradient at angle (degrees),
+// using the CSS linear-gradient convention so it matches the dashboard's
+// `linear-gradient(Ndeg, …)` preview exactly: 0deg points up, increasing
+// clockwise (direction vector = (sin, -cos)).
 func gradientLine(w, h, angle float64) (x0, y0, x1, y1 float64) {
-	if angle == 0 {
-		angle = 45 // pleasant default diagonal
-	}
 	rad := angle * math.Pi / 180
 	cx, cy := w/2, h/2
-	dx, dy := math.Cos(rad), math.Sin(rad)
+	dx, dy := math.Sin(rad), -math.Cos(rad)
 	half := math.Max(w, h)
 	return cx - dx*half, cy - dy*half, cx + dx*half, cy + dy*half
 }
@@ -137,23 +135,8 @@ func drawProgressBar(dc *gg.Context, x, y, w, h, pct float64, bg, fg color.Color
 	}
 }
 
-// fetchImage downloads and decodes an image, returning nil on any failure.
+// fetchImage downloads and decodes an image with strict size + pixel caps
+// (see fetchDecoded), returning nil on any failure.
 func (r *Renderer) fetchImage(ctx context.Context, url string) image.Image {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return nil
-	}
-	resp, err := r.http.Do(req)
-	if err != nil {
-		return nil
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil
-	}
-	img, _, err := image.Decode(resp.Body)
-	if err != nil {
-		return nil
-	}
-	return img
+	return r.fetchDecoded(ctx, url)
 }

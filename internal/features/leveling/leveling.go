@@ -248,21 +248,35 @@ func handleRank(c *interactions.Context, d plugin.Deps) error {
 	cfg, _, _ := plugin.LoadConfig[Config](c.Ctx, d, gid, FeatureKey)
 	card := cfg.RankCard
 
-	png, err := d.Imaging.RenderRank(c.Ctx, imaging.RankInput{
-		Background:   card.Background,
-		AccentColor:  card.AccentColor,
-		TextColor:    card.TextColor,
-		SubTextColor: card.SubTextColor,
-		BarColor:     card.BarColor,
-		BarBgColor:   card.BarBgColor,
-		AvatarURL:    discord.AvatarURL(target.ID, target.Avatar, 256),
-		Username:     displayName(target),
-		Rank:         rank,
-		Level:        level,
-		LevelXP:      into,
-		NeededXP:     span,
-		TotalXP:      lu.XP,
-	})
+	var png []byte
+	if card.Layout != nil {
+		// Studio-designed card: render the declarative layout with rank + guild vars.
+		fonts, _ := d.Store.Uploads.FontMap(c.Ctx, gid)
+		vars := rankVars(target, level, rank, into, span, lu.XP)
+		if g, gerr := d.Store.Guilds.Get(c.Ctx, gid); gerr == nil {
+			vars["{server}"] = g.Name
+			vars["{server.id}"] = c.GuildID
+			vars["{server.icon}"] = discord.GuildIconURL(c.GuildID, g.Icon, 256)
+			vars["{count}"] = strconv.Itoa(g.MemberCount)
+		}
+		png, err = d.Imaging.RenderLayout(c.Ctx, *card.Layout, vars, fonts)
+	} else {
+		png, err = d.Imaging.RenderRank(c.Ctx, imaging.RankInput{
+			Background:   card.Background,
+			AccentColor:  card.AccentColor,
+			TextColor:    card.TextColor,
+			SubTextColor: card.SubTextColor,
+			BarColor:     card.BarColor,
+			BarBgColor:   card.BarBgColor,
+			AvatarURL:    discord.AvatarURL(target.ID, target.Avatar, 256),
+			Username:     displayName(target),
+			Rank:         rank,
+			Level:        level,
+			LevelXP:      into,
+			NeededXP:     span,
+			TotalXP:      lu.XP,
+		})
+	}
 	if err != nil {
 		_, e := c.FollowupContent("Failed to render rank card: " + err.Error())
 		return e

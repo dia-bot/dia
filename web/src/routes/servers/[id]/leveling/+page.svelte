@@ -1,21 +1,25 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onMount, onDestroy } from 'svelte';
 	import { getContext } from 'svelte';
 	import { GuildStore, GUILD_CTX } from '$lib/guild.svelte';
-	import { api, previewImage } from '$lib/api';
+	import { api, previewImage, layoutPreview } from '$lib/api';
+	import type { Layout } from '$lib/layout/schema';
+	import { rankStarterLayout } from '$lib/layout/templates';
 	import Field from '$lib/components/Field.svelte';
 	import Toggle from '$lib/components/Toggle.svelte';
 	import Select from '$lib/components/Select.svelte';
 	import MultiSelect from '$lib/components/MultiSelect.svelte';
 	import ColorField from '$lib/components/ColorField.svelte';
 	import SaveBar from '$lib/components/SaveBar.svelte';
-	import { Trash2 } from 'lucide-svelte';
+	import CardStudioModal from '$lib/components/editor/CardStudioModal.svelte';
+	import { Trash2, Frame } from 'lucide-svelte';
 
 	const store = getContext<GuildStore>(GUILD_CTX);
 	const FEATURE = 'leveling';
 
 	type Bg = { from?: string; to?: string; angle?: number; color?: string; image_url?: string };
 	type RankCard = {
+		layout?: Layout; // Card Studio design; when set it overrides the colors below
 		background: Bg;
 		accent_color: string;
 		text_color: string;
@@ -67,6 +71,31 @@
 	let baseline = $state('');
 	let bgType = $state<'gradient' | 'solid'>('gradient');
 	let previewUrl = $state('');
+	let studioOpen = $state(false);
+	let studioLayout = $state<Layout>(); // local seed for the modal; only committed on Apply
+
+	// Sample rank values for the live preview + the Card Studio canvas/server render.
+	const rankSampleVars: Record<string, string> = {
+		'{level}': '12',
+		'{rank}': '1',
+		'{xp}': '53,200',
+		'{level.xp}': '450',
+		'{level.needed}': '1,000',
+		'{progress}': '45%'
+	};
+	// Token hint chips — fetched from the server's single source of truth
+	// (leveling.RankVariables), with an inline fallback if the request fails.
+	let rankVarTokens = $state<string[]>([
+		'{user}',
+		'{user.mention}',
+		'{user.avatar}',
+		'{level}',
+		'{rank}',
+		'{xp}',
+		'{level.xp}',
+		'{level.needed}',
+		'{progress}'
+	]);
 
 	// Rewards
 	let rewards = $state<any[]>([]);
@@ -119,7 +148,19 @@
 		bgType = cfg.rank_card.background.from && cfg.rank_card.background.to ? 'gradient' : 'solid';
 		loaded = true;
 		baseline = JSON.stringify({ enabled, cfg });
+		// Variable hint chips from the server's single source of truth.
+		api
+			.levelingVariables(store.id)
+			.then((v) => {
+				if (v.variables?.length) rankVarTokens = v.variables.map((x) => x.token);
+			})
+			.catch(() => {});
 		await loadRewards();
+	});
+
+	onDestroy(() => {
+		clearTimeout(timer);
+		if (previewUrl) URL.revokeObjectURL(previewUrl);
 	});
 
 	function setBgType(t: 'gradient' | 'solid') {
@@ -139,25 +180,34 @@
 	let timer: ReturnType<typeof setTimeout>;
 	$effect(() => {
 		if (!loaded) return;
-		const payload = {
-			background: cfg.rank_card.background,
-			accent_color: cfg.rank_card.accent_color,
-			text_color: cfg.rank_card.text_color,
-			sub_text_color: cfg.rank_card.sub_text_color,
-			bar_color: cfg.rank_card.bar_color,
-			bar_bg_color: cfg.rank_card.bar_bg_color,
-			username: 'Member',
-			rank: 1,
-			level: 12,
-			level_xp: 450,
-			needed_xp: 1000,
-			total_xp: 53200
-		};
+		// A Card Studio design takes precedence; otherwise the classic preset.
+		const layout = cfg.rank_card.layout;
+		const payload = layout
+			? { mode: 'layout', layout }
+			: {
+					mode: 'rank',
+					background: cfg.rank_card.background,
+					accent_color: cfg.rank_card.accent_color,
+					text_color: cfg.rank_card.text_color,
+					sub_text_color: cfg.rank_card.sub_text_color,
+					bar_color: cfg.rank_card.bar_color,
+					bar_bg_color: cfg.rank_card.bar_bg_color,
+					username: 'Member',
+					rank: 1,
+					level: 12,
+					level_xp: 450,
+					needed_xp: 1000,
+					total_xp: 53200
+				};
 		const json = JSON.stringify(payload); // track deps
 		clearTimeout(timer);
 		timer = setTimeout(async () => {
 			try {
-				const url = await previewImage(store.id, 'rank', JSON.parse(json));
+				const p = JSON.parse(json);
+				const url =
+					p.mode === 'layout'
+						? await layoutPreview(store.id, p.layout, rankSampleVars)
+						: await previewImage(store.id, 'rank', p);
 				if (previewUrl) URL.revokeObjectURL(previewUrl);
 				previewUrl = url;
 			} catch {
@@ -278,7 +328,21 @@
 
 		<!-- Rank card -->
 		<section class="card p-6">
-			<h2 class="mb-4 text-base font-semibold">Rank card</h2>
+			<div class="mb-4 flex items-center justify-between gap-3">
+				<h2 class="text-base font-semibold">Rank card</h2>
+				<button
+					type="button"
+					class="flex items-center gap-1.5 rounded-md border border-line-strong px-2.5 py-1.5 text-xs font-medium text-ink transition-colors hover:bg-ink-2"
+					onclick={() => {
+						// Seed the modal from a local copy; commit only on Apply so Cancel reverts.
+						studioLayout = cfg.rank_card.layout ?? rankStarterLayout();
+						studioOpen = true;
+					}}
+				>
+					<Frame size={13} />
+					{cfg.rank_card.layout ? 'Edit in Card Studio' : 'Design in Card Studio'}
+				</button>
+			</div>
 
 			<!-- Live preview -->
 			<div class="mb-5 overflow-hidden rounded-xl border border-line bg-ink-2">
@@ -291,7 +355,22 @@
 				{/if}
 			</div>
 
-			<Field label="Background">
+			{#if cfg.rank_card.layout}
+				<div class="flex flex-wrap items-center gap-2 rounded-xl border border-line bg-ink-2 p-3 text-sm">
+					<span class="text-muted">Using a Card Studio design.</span>
+					<button
+						type="button"
+						class="ml-auto text-xs font-medium text-muted underline-offset-2 hover:text-accent-ink hover:underline"
+						onclick={() => (cfg.rank_card.layout = undefined)}
+					>
+						Revert to classic colours
+					</button>
+				</div>
+				<p class="mt-2 text-[11px] text-faint">
+					Card variables: <span class="font-mono">{'{{.User.Username}}'} {'{{.User.Avatar}}'} {'{{.Level}}'} {'{{.Rank}}'} {'{{.XP}}'} {'{{.Progress}}'} {'{{.Guild.Name}}'} {'{{.Guild.Icon}}'}</span>
+				</p>
+			{:else}
+				<Field label="Background">
 				<div class="mb-3 inline-flex rounded-lg border border-line-strong p-0.5">
 					{#each ['gradient', 'solid'] as t (t)}
 						<button
@@ -320,10 +399,11 @@
 				<ColorField label="Text" bind:value={cfg.rank_card.text_color} />
 				<ColorField label="Subtext" bind:value={cfg.rank_card.sub_text_color} />
 			</div>
-			<div class="grid gap-4 sm:grid-cols-2">
-				<ColorField label="Progress bar" bind:value={cfg.rank_card.bar_color} />
-				<ColorField label="Progress bar track" bind:value={cfg.rank_card.bar_bg_color} />
-			</div>
+				<div class="grid gap-4 sm:grid-cols-2">
+					<ColorField label="Progress bar" bind:value={cfg.rank_card.bar_color} />
+					<ColorField label="Progress bar track" bind:value={cfg.rank_card.bar_bg_color} />
+				</div>
+			{/if}
 		</section>
 
 		<!-- Level rewards -->
@@ -404,11 +484,11 @@
 					<div class="divide-y divide-line rounded-xl border border-line">
 						{#each board as e, i (e.user_id ?? i)}
 							<div class="flex items-center justify-between gap-3 px-4 py-3 text-sm">
-								<div class="flex items-center gap-3">
-									<span class="w-6 text-right font-mono text-muted">#{e.rank ?? i + 1}</span>
-									<span class="font-medium">&lt;@{e.user_id}&gt;</span>
+								<div class="flex min-w-0 items-center gap-3">
+									<span class="w-6 shrink-0 text-right font-mono text-muted">#{e.rank ?? i + 1}</span>
+									<span class="truncate font-medium">&lt;@{e.user_id}&gt;</span>
 								</div>
-								<div class="flex items-center gap-4 text-muted">
+								<div class="flex shrink-0 items-center gap-4 text-muted">
 									<span>Level {e.level}</span>
 									<span class="font-mono text-xs">{e.xp} XP</span>
 								</div>
@@ -425,4 +505,14 @@
 	</div>
 
 	<SaveBar {dirty} {saving} onsave={save} onreset={reset} />
+
+	{#if studioOpen && studioLayout}
+		<CardStudioModal
+			layout={studioLayout}
+			guildId={store.id}
+			extraVars={rankSampleVars}
+			onApply={(l) => (cfg.rank_card.layout = l)}
+			onClose={() => (studioOpen = false)}
+		/>
+	{/if}
 {/if}

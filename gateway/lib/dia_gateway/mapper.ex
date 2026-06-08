@@ -165,8 +165,8 @@ defmodule Dia.Gateway.Mapper do
       "icon" => blank_to_nil(Map.get(g, :icon)),
       "owner_id" => id(Map.get(g, :owner_id)),
       "member_count" => Map.get(g, :member_count) || 0,
-      "channels" => list_or_nil(Map.get(g, :channels), &channel/1),
-      "roles" => list_or_nil(roles_values(Map.get(g, :roles)), &role/1),
+      "channels" => list_or_nil(collection_values(Map.get(g, :channels)), &channel/1),
+      "roles" => list_or_nil(collection_values(Map.get(g, :roles)), &role/1),
       "unavailable" => true_or_nil(Map.get(g, :unavailable))
     })
     |> Map.put_new("owner_id", "")
@@ -426,10 +426,12 @@ defmodule Dia.Gateway.Mapper do
   defp list_or_nil_keep([]), do: nil
   defp list_or_nil_keep(list) when is_list(list), do: list
 
-  # Guild.roles may be a map (%{id => role}) when cached, or a list when raw.
-  defp roles_values(nil), do: nil
-  defp roles_values(list) when is_list(list), do: list
-  defp roles_values(map) when is_map(map), do: Map.values(map)
+  # Guild.channels / Guild.roles arrive as a map (%{id => struct}) from Nostrum,
+  # but may be a plain list when raw/uncached. Normalize either shape to a list
+  # before `list_or_nil/2` (which only accepts lists).
+  defp collection_values(nil), do: nil
+  defp collection_values(list) when is_list(list), do: list
+  defp collection_values(map) when is_map(map), do: Map.values(map)
 
   defp blank_to_nil(nil), do: nil
   defp blank_to_nil(""), do: nil

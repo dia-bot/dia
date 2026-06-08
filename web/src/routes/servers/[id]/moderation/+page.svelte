@@ -5,7 +5,7 @@
 	import { api } from '$lib/api';
 	import Field from '$lib/components/Field.svelte';
 	import Toggle from '$lib/components/Toggle.svelte';
-	import Select from '$lib/components/Select.svelte';
+	import ChannelSelect from '$lib/components/ChannelSelect.svelte';
 	import SaveBar from '$lib/components/SaveBar.svelte';
 
 	const store = getContext<GuildStore>(GUILD_CTX);
@@ -41,7 +41,6 @@
 	let cases = $state<Case[]>([]);
 	let casesLoading = $state(true);
 
-	const channelOpts = $derived(store.textChannelOptions());
 	const dirty = $derived(loaded && JSON.stringify({ enabled, cfg }) !== baseline);
 
 	onMount(async () => {
@@ -121,13 +120,13 @@
 {:else}
 	<div class="space-y-5">
 		<!-- Settings -->
-		<section class="card p-6">
+		<section class="card p-4 sm:p-6">
 			<h2 class="mb-4 text-base font-semibold">Settings</h2>
 			<Field
 				label="Moderation log channel"
 				hint="Use /ban /kick /timeout /warn in your server — actions are logged here."
 			>
-				<Select bind:value={cfg.log_channel} options={channelOpts} placeholder="Select a channel…" />
+				<ChannelSelect bind:value={cfg.log_channel} />
 			</Field>
 			<label class="flex items-center gap-3">
 				<Toggle bind:checked={cfg.dm_on_action} />
@@ -136,7 +135,7 @@
 		</section>
 
 		<!-- Recent cases -->
-		<section class="card p-6">
+		<section class="card p-4 sm:p-6">
 			<h2 class="mb-4 text-base font-semibold">Recent cases</h2>
 			{#if casesLoading}
 				<div class="text-sm text-muted">Loading cases…</div>

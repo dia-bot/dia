@@ -68,12 +68,12 @@ func (r *Renderer) RenderRank(ctx context.Context, in RankInput) ([]byte, error)
 	leftX := cx + radius + 36
 
 	// Username.
-	r.setFont(dc, true, 40)
+	r.setFont(dc, "", true, 40)
 	dc.SetColor(textCol)
 	dc.DrawStringAnchored(truncate(in.Username, 18), leftX, float64(h)*0.34, 0, 0.5)
 
 	// Rank / Level (top-right).
-	r.setFont(dc, true, 34)
+	r.setFont(dc, "", true, 34)
 	dc.SetColor(accent)
 	right := float64(w) - 40
 	rankStr := fmt.Sprintf("RANK #%d", in.Rank)
@@ -85,7 +85,7 @@ func (r *Renderer) RenderRank(ctx context.Context, in RankInput) ([]byte, error)
 	_ = rankW
 
 	// XP text.
-	r.setFont(dc, false, 24)
+	r.setFont(dc, "", false, 24)
 	dc.SetColor(subCol)
 	xpStr := fmt.Sprintf("%s / %s XP", formatInt(in.LevelXP), formatInt(in.NeededXP))
 	dc.DrawStringAnchored(xpStr, right, float64(h)*0.58, 1, 0.5)
@@ -93,7 +93,7 @@ func (r *Renderer) RenderRank(ctx context.Context, in RankInput) ([]byte, error)
 	// Progress bar.
 	barX := leftX
 	barW := right - barX
-	barY := float64(h)*0.66
+	barY := float64(h) * 0.66
 	barH := 30.0
 	pct := 0.0
 	if in.NeededXP > 0 {

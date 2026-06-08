@@ -27,6 +27,48 @@ type Config struct {
 	Redis    RedisConfig
 	API      APIConfig
 	Imaging  ImagingConfig
+	Storage  StorageConfig
+	Premium  PremiumConfig
+	Billing  BillingConfig
+}
+
+// BillingConfig configures Stripe billing for the $3.99/mo premium plan. Empty
+// (no secret/price) disables billing; the dashboard then hides upgrade UI and
+// premium falls back to the PREMIUM_GUILD_IDS allowlist.
+type BillingConfig struct {
+	SecretKey     string // sk_live_… / sk_test_…
+	WebhookSecret string // whsec_… (verifies inbound webhooks)
+	PriceID       string // the $3.99/mo recurring Price id
+}
+
+// Enabled reports whether checkout can be offered.
+func (b BillingConfig) Enabled() bool {
+	return b.SecretKey != "" && b.PriceID != ""
+}
+
+// PremiumConfig is a placeholder entitlement source until a real billing system
+// exists: an allowlist of premium guild IDs (env PREMIUM_GUILD_IDS, comma-sep).
+type PremiumConfig struct {
+	GuildIDs []string
+}
+
+// StorageConfig configures an S3-compatible object store for user uploads
+// (images, custom fonts). Works with AWS S3, Cloudflare R2, MinIO and
+// DigitalOcean Spaces. Uploads are disabled unless Bucket+keys+endpoint are set.
+type StorageConfig struct {
+	Endpoint       string
+	Region         string
+	Bucket         string
+	AccessKey      string
+	SecretKey      string
+	PublicBaseURL  string
+	ForcePathStyle bool
+	ACL            string
+}
+
+// Enabled reports whether uploads can be served.
+func (s StorageConfig) Enabled() bool {
+	return s.Endpoint != "" && s.Bucket != "" && s.AccessKey != "" && s.SecretKey != ""
 }
 
 // DiscordConfig holds Discord application credentials.
@@ -73,9 +115,11 @@ type ImagingConfig struct {
 	FontsDir string
 }
 
-// OAuthRedirectURL returns the absolute Discord OAuth2 callback URL.
+// OAuthRedirectURL returns the absolute Discord OAuth2 callback URL. The callback
+// lands on the dashboard (web) origin, which completes the exchange against the
+// API — so the session cookie is set first-party on the web origin.
 func (a APIConfig) OAuthRedirectURL() string {
-	return strings.TrimRight(a.BaseURL, "/") + a.OAuthRedirectPath
+	return strings.TrimRight(a.WebBaseURL, "/") + a.OAuthRedirectPath
 }
 
 // Load resolves configuration from the environment, loading a .env file first
@@ -115,6 +159,24 @@ func Load() (*Config, error) {
 		Imaging: ImagingConfig{
 			FontsDir: env("FONTS_DIR", "./assets/fonts"),
 		},
+		Premium: PremiumConfig{
+			GuildIDs: splitList(env("PREMIUM_GUILD_IDS", "")),
+		},
+		Billing: BillingConfig{
+			SecretKey:     env("STRIPE_SECRET_KEY", ""),
+			WebhookSecret: env("STRIPE_WEBHOOK_SECRET", ""),
+			PriceID:       env("STRIPE_PRICE_ID", ""),
+		},
+		Storage: StorageConfig{
+			Endpoint:       env("S3_ENDPOINT", ""),
+			Region:         env("S3_REGION", "us-east-1"),
+			Bucket:         env("S3_BUCKET", ""),
+			AccessKey:      env("S3_ACCESS_KEY_ID", ""),
+			SecretKey:      env("S3_SECRET_ACCESS_KEY", ""),
+			PublicBaseURL:  env("S3_PUBLIC_BASE_URL", ""),
+			ForcePathStyle: envBool("S3_FORCE_PATH_STYLE", false),
+			ACL:            env("S3_OBJECT_ACL", ""),
+		},
 	}
 	return c, nil
 }
@@ -134,6 +196,12 @@ func (c *Config) RequireBot() error {
 // RequireAPI validates the configuration needed by the API service.
 func (c *Config) RequireAPI() error {
 	var missing []string
+	// The API calls Discord's REST API with the bot token (e.g. the live
+	// /users/@me/guilds membership check that backs the dashboard's bot_present
+	// fallback), so the token is required, not optional.
+	if c.Discord.Token == "" {
+		missing = append(missing, "DISCORD_TOKEN")
+	}
 	if c.Discord.ClientID == "" {
 		missing = append(missing, "DISCORD_CLIENT_ID")
 	}
@@ -156,9 +224,32 @@ func missingErr(missing []string) error {
 // IsProd reports whether the service is running in production mode.
 func (c *Config) IsProd() bool { return c.Env == "production" }
 
+// IsPremiumGuild reports whether a guild has premium entitlements. This is a
+// stub (env allowlist) until a real billing/entitlement system lands.
+func (c *Config) IsPremiumGuild(id string) bool {
+	for _, g := range c.Premium.GuildIDs {
+		if g == id {
+			return true
+		}
+	}
+	return false
+}
+
 func env(key, def string) string {
 	if v, ok := os.LookupEnv(key); ok && v != "" {
 		return v
+	}
+	return def
+}
+
+func envBool(key string, def bool) bool {
+	if v, ok := os.LookupEnv(key); ok && v != "" {
+		switch strings.ToLower(strings.TrimSpace(v)) {
+		case "1", "true", "yes", "on":
+			return true
+		case "0", "false", "no", "off":
+			return false
+		}
 	}
 	return def
 }
@@ -233,9 +324,34 @@ func parseDotEnv(f *os.File) {
 		}
 		key = strings.TrimSpace(key)
 		val = strings.TrimSpace(val)
+		val = stripInlineComment(val)
 		val = strings.Trim(val, `"'`)
 		if _, exists := os.LookupEnv(key); !exists {
 			_ = os.Setenv(key, val)
 		}
 	}
+}
+
+// stripInlineComment removes a trailing "# comment" from a .env value so that
+// lines like `NATS_STREAM=DIA_EVENTS   # stream name` resolve to `DIA_EVENTS`.
+// It is quote-aware: inside a quoted value a '#' is literal, and only a comment
+// after the closing quote is dropped. For an unquoted value a '#' starts a
+// comment only at the value start or when preceded by whitespace, so values
+// that legitimately contain '#' (e.g. a URL fragment like host#frag) survive.
+func stripInlineComment(val string) string {
+	if val == "" {
+		return val
+	}
+	if q := val[0]; q == '"' || q == '\'' {
+		if end := strings.IndexByte(val[1:], q); end >= 0 {
+			return val[:end+2] // keep through the closing quote; drop the rest
+		}
+		return val // unterminated quote: leave untouched
+	}
+	for i := 0; i < len(val); i++ {
+		if val[i] == '#' && (i == 0 || val[i-1] == ' ' || val[i-1] == '\t') {
+			return strings.TrimRight(val[:i], " \t")
+		}
+	}
+	return val
 }

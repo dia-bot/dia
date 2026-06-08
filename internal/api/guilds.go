@@ -1,10 +1,12 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"sort"
+	"time"
 
 	"github.com/dia-bot/dia/internal/discord"
 	"github.com/dia-bot/dia/internal/event"
@@ -20,21 +22,14 @@ var knownFeatures = map[string]bool{
 	"moderation": true, "automod": true, "customcommands": true, "reactionroles": true,
 }
 
-// botInvitePerms is the permission set requested in the bot invite URL.
-const botInvitePerms = discordgo.PermissionViewChannel |
-	discordgo.PermissionSendMessages |
-	discordgo.PermissionManageMessages |
-	discordgo.PermissionEmbedLinks |
-	discordgo.PermissionAttachFiles |
-	discordgo.PermissionReadMessageHistory |
-	discordgo.PermissionKickMembers |
-	discordgo.PermissionBanMembers |
-	discordgo.PermissionManageRoles |
-	discordgo.PermissionModerateMembers
+// botInvitePerms is the permission requested in the bot invite URL: Administrator,
+// so Dia is granted full access in the server it's added to.
+const botInvitePerms = discordgo.PermissionAdministrator
 
 // handleListGuilds returns the guilds the user manages, flagged by whether Dia
 // is present (and an invite URL when it is not).
 func (s *Server) handleListGuilds(c *gin.Context) {
+	ctx := c.Request.Context()
 	sess := currentSession(c)
 
 	var ids []int64
@@ -49,28 +44,99 @@ func (s *Server) handleListGuilds(c *gin.Context) {
 		}
 	}
 
+	// Presence comes from two sources OR'd together: the gateway-sourced guilds
+	// table, and the bot's live guild list from Discord (cached). The latter is
+	// authoritative and independent of the GUILD_CREATE pipeline, so the dashboard
+	// reflects the bot's real membership even when gateway events lag or drop.
 	present := map[string]bool{}
-	if rows, err := s.store.Guilds.ListByIDs(c.Request.Context(), ids); err == nil {
+	if rows, err := s.store.Guilds.ListByIDs(ctx, ids); err == nil {
 		for _, r := range rows {
 			present[event.FormatID(r.ID)] = true
 		}
 	}
+	botSet := s.botGuildIDs(ctx)
 
 	out := make([]gin.H, 0, len(manageable))
 	for _, g := range manageable {
+		inGuild := present[g.ID] || botSet[g.ID]
 		item := gin.H{
 			"id":          g.ID,
 			"name":        g.Name,
 			"icon":        g.Icon,
 			"icon_url":    discord.GuildIconURL(g.ID, g.Icon, 128),
-			"bot_present": present[g.ID],
+			"bot_present": inGuild,
 		}
-		if !present[g.ID] {
+		if !inGuild {
 			item["invite_url"] = s.inviteURL(g.ID)
 		}
 		out = append(out, item)
 	}
 	c.JSON(http.StatusOK, gin.H{"guilds": out})
+}
+
+// botGuildIDs returns the set of guild IDs the bot belongs to, read straight from
+// Discord (GET /users/@me/guilds with the bot token) and cached in Redis for a
+// short window. Authoritative and independent of the gateway's GUILD_CREATE
+// pipeline. On any error it returns an empty set, so callers fall back to the DB.
+func (s *Server) botGuildIDs(ctx context.Context) map[string]bool {
+	const cacheKey = "bot:guilds"
+	set := map[string]bool{}
+
+	var cached []string
+	if err := s.cache.GetJSON(ctx, cacheKey, &cached); err == nil {
+		for _, id := range cached {
+			set[id] = true
+		}
+		return set
+	}
+	if s.cfg.Discord.Token == "" {
+		return set
+	}
+
+	var ids []string
+	after := ""
+	for page := 0; page < 100; page++ { // safety cap: 100 * 200 = 20k guilds
+		url := "https://discord.com/api/v10/users/@me/guilds?limit=200"
+		if after != "" {
+			url += "&after=" + after
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		if err != nil {
+			break
+		}
+		req.Header.Set("Authorization", "Bot "+s.cfg.Discord.Token)
+		resp, err := oauthHTTP.Do(req)
+		if err != nil {
+			s.log.Warn("list bot guilds", "err", err)
+			break
+		}
+		var guilds []struct {
+			ID string `json:"id"`
+		}
+		if resp.StatusCode == http.StatusOK {
+			err = json.NewDecoder(resp.Body).Decode(&guilds)
+		} else {
+			err = fmt.Errorf("status %d", resp.StatusCode)
+		}
+		resp.Body.Close()
+		if err != nil {
+			s.log.Warn("list bot guilds", "err", err)
+			break
+		}
+		for _, g := range guilds {
+			set[g.ID] = true
+			ids = append(ids, g.ID)
+		}
+		if len(guilds) < 200 {
+			break
+		}
+		after = guilds[len(guilds)-1].ID
+	}
+
+	if len(ids) > 0 {
+		_ = s.cache.SetJSON(ctx, cacheKey, ids, 10*time.Second)
+	}
+	return set
 }
 
 func (s *Server) inviteURL(guildID string) string {
@@ -276,6 +342,18 @@ func (s *Server) guildName(c *gin.Context) string {
 		}
 	}
 	return "your server"
+}
+
+// guildIconURL returns the guild's icon CDN URL (or "" if it has none), for the
+// {{.Server.Icon}} card variable.
+func (s *Server) guildIconURL(c *gin.Context) string {
+	gid := guildID(c)
+	if gidInt, ok := event.ParseID(gid); ok {
+		if g, err := s.store.Guilds.Get(c.Request.Context(), gidInt); err == nil {
+			return discord.GuildIconURL(gid, g.Icon, 256)
+		}
+	}
+	return ""
 }
 
 func orDefault(s, def string) string {
