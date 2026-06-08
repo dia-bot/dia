@@ -2196,7 +2196,14 @@
 						style="{textCss(l)} box-shadow:0 0 0 1px var(--vec);"
 					></textarea>
 				{:else}
-					<div class="h-full w-full" style={vAlignCss(l)}>
+					<!-- A text stencil's own glyphs aren't painted (only its shape masks the
+						content above it); show a faint ghost while it's selected so it stays
+						editable, mirroring the rect/image stencils. -->
+					<div
+						class="h-full w-full"
+						class:stencil-ghost={l.clip && isSel}
+						style="{vAlignCss(l)} {l.clip ? (isSel ? 'opacity:0.4;' : 'opacity:0;') : ''}"
+					>
 						<div style="width:100%; {textCss(l)}">
 							{dtext(l)}
 						</div>
