@@ -524,10 +524,6 @@
 			` L ${P(x, y + r)} A ${r} ${r} ${deg} 0 1 ${P(x + r, y)} Z`
 		);
 	}
-	// One transparent silhouette spanning the whole group — the click/drag hit area.
-	function boolUnionD(members: Layer[]): string {
-		return members.map(shapeD).filter(Boolean).join(' ');
-	}
 	// boolSvgInner: the composited inner markup for a boolean group, in canvas coords
 	// (the wrapping <svg> uses viewBox "0 0 W H"). Mirrors combineBoolean per op:
 	//   union     – every member painted solid in one opacity group (overlaps = max)
@@ -1992,23 +1988,33 @@
 			     rendered once at the bottom member's z-position (groups are contiguous,
 			     so this matches the Go renderer's order). Other members render nothing. -->
 			{#if members[0] && l.id === members[0].id}
-				{@const grpSel = editor.isSelected(members[0].id)}
+				<!-- Per-member transparent hit paths so EACH source shape is selectable on the
+				     canvas, not just the first: the first click selects the whole boolean group
+				     (drag = move the composite); clicking a member again, or another member once
+				     you're drilled in, targets that one shape so you can move it independently
+				     (e.g. to adjust an intersect). The selected member is ordered last (on top) so
+				     it stays grabbable across the overlap; the others stay reachable by their own
+				     exposed area. -->
+				{@const ordered = members
+					.slice()
+					.sort((a, b) => Number(editor.isSelected(a.id)) - Number(editor.isSelected(b.id)))}
 				<svg class="path-layer" viewBox="0 0 {layout.width} {layout.height}" preserveAspectRatio="none">
 					{@html boolSvgInner(gid)}
-					<!-- transparent silhouette over the whole group = one select/drag target -->
-					<path
-						d={boolUnionD(members)}
-						class="bool-hit"
-						class:sel={grpSel}
-						fill-rule="nonzero"
-						role="button"
-						tabindex="-1"
-						aria-label={editor.groupName(gid)}
-						onpointerdown={(e) => beginBody(e, members[0])}
-						onpointermove={onMove}
-						onpointerup={endGesture}
-						onpointercancel={endGesture}
-					/>
+					{#each ordered as m (m.id)}
+						<path
+							d={shapeD(m)}
+							class="bool-hit"
+							class:sel={editor.isSelected(m.id)}
+							fill-rule="nonzero"
+							role="button"
+							tabindex="-1"
+							aria-label={m.name}
+							onpointerdown={(e) => beginBody(e, m)}
+							onpointermove={onMove}
+							onpointerup={endGesture}
+							onpointercancel={endGesture}
+						/>
+					{/each}
 				</svg>
 				<!-- Resize handles per selected member (members scale individually for now). -->
 				{#each members as m (m.id)}
