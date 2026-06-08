@@ -13,7 +13,7 @@
 	import Canvas from '$lib/components/editor/Canvas.svelte';
 	import LayersPanel from '$lib/components/editor/LayersPanel.svelte';
 	import PropertiesPanel from '$lib/components/editor/PropertiesPanel.svelte';
-	import { Image, X, Loader2, AlertTriangle, MousePointer2, Scaling, Square, Circle, Type, PenTool, Pencil, Spline, Undo2, Redo2, Frame, Shapes, Triangle, Diamond, Pentagon, Hexagon, Star, Minus } from 'lucide-svelte';
+	import { Image, X, Loader2, AlertTriangle, MousePointer2, Scaling, Square, Circle, Type, PenTool, Pencil, Spline, Undo2, Redo2, Frame, Shapes, Triangle, Diamond, Pentagon, Hexagon, Star, Minus, Layers, SlidersHorizontal } from 'lucide-svelte';
 
 	const shapeItems: { kind: ShapeKind; label: string; icon: typeof Image }[] = [
 		{ kind: 'triangle', label: 'Triangle', icon: Triangle },
@@ -53,7 +53,7 @@
 	// Unified control variants (shadcn-on-Dia) — identical strings per variant so
 	// every editor control reads the same. See PropertiesPanel for the full set.
 	const btnBase =
-		'inline-flex items-center justify-center gap-1.5 rounded-md text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/20 disabled:pointer-events-none disabled:opacity-40';
+		'inline-flex items-center justify-center gap-1.5 rounded-md text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-line-strong disabled:pointer-events-none disabled:opacity-40';
 	const btnSecondary = `${btnBase} border border-line-strong text-ink hover:bg-ink-2`;
 	// Ghost icon-square toolbar button (undo/redo).
 	const iconGhost = `${btnBase} text-muted hover:bg-surface hover:text-ink`;
@@ -70,6 +70,23 @@
 	let previewUrl = $state('');
 	let previewing = $state(false);
 	let previewError = $state('');
+
+	// On mobile the two side rails become off-canvas drawers (only one open at a
+	// time), toggled by floating buttons on the canvas. On md+ they're static panes.
+	let layersOpen = $state(false);
+	let propsOpen = $state(false);
+	function toggleLayers() {
+		layersOpen = !layersOpen;
+		propsOpen = false;
+	}
+	function toggleProps() {
+		propsOpen = !propsOpen;
+		layersOpen = false;
+	}
+	function closeDrawers() {
+		layersOpen = false;
+		propsOpen = false;
+	}
 
 	async function renderServer() {
 		if (previewing) return;
@@ -183,14 +200,14 @@
 
 <div class="studio-theme flex h-full flex-col bg-ink-2 text-ink">
 	<!-- Toolbar -->
-	<div class="studio-bar relative z-20 flex h-12 shrink-0 items-center gap-3 border-b border-line bg-surface px-3">
+	<div class="studio-bar relative z-20 flex h-12 shrink-0 items-center gap-2 border-b border-line bg-surface px-2 md:gap-3 md:px-3">
 		<div class="flex items-center gap-2">
-			<span class="grid h-6 w-6 place-items-center rounded-md bg-ink-2 text-ink ring-1 ring-line">
+			<span class="grid h-6 w-6 shrink-0 place-items-center rounded-md bg-ink-2 text-ink ring-1 ring-line">
 				<Frame size={14} />
 			</span>
-			<span class="text-[13px] font-semibold tracking-tight text-ink">{title}</span>
+			<span class="hidden text-[13px] font-semibold tracking-tight text-ink sm:inline">{title}</span>
 		</div>
-		<span class="rounded border border-line-strong bg-ink-2 px-1.5 py-0.5 font-mono text-[10px] tabular-nums text-faint">
+		<span class="hidden rounded border border-line-strong bg-ink-2 px-1.5 py-0.5 font-mono text-[10px] tabular-nums text-faint sm:inline-block">
 			{store.layout.width}×{store.layout.height}
 		</span>
 		<div class="ml-1 flex items-center gap-0.5">
@@ -220,22 +237,58 @@
 			type="button"
 			onclick={renderServer}
 			disabled={previewing}
+			title="Server render"
 			class="{btnSecondary} h-8 px-2.5"
 		>
 			{#if previewing}<Loader2 size={13} class="animate-spin" />{:else}<Image size={13} />{/if}
-			Server render
+			<span class="hidden sm:inline">Server render</span>
 		</button>
 		{@render actions?.()}
 	</div>
 
-	<!-- Three-pane body -->
-	<div class="flex min-h-0 flex-1">
-		<aside class="studio-rail w-60 shrink-0 overflow-y-auto border-r border-line bg-surface">
+	<!-- Three-pane body. On mobile the two rails become off-canvas drawers (one at a
+	     time) toggled by the floating buttons on the canvas; on md+ they're static. -->
+	<div class="relative flex min-h-0 flex-1">
+		<aside
+			class="studio-rail absolute inset-y-0 left-0 z-40 w-64 max-w-[78%] -translate-x-full overflow-y-auto border-r border-line bg-surface shadow-2xl transition-transform duration-200 md:static md:z-auto md:w-60 md:max-w-none md:translate-x-0 md:shadow-none md:transition-none {layersOpen
+				? 'translate-x-0'
+				: ''}"
+		>
 			<LayersPanel />
 		</aside>
 
+		<!-- Mobile drawer backdrop. -->
+		{#if layersOpen || propsOpen}
+			<button
+				type="button"
+				aria-label="Close panels"
+				onclick={closeDrawers}
+				class="absolute inset-0 z-30 bg-black/40 md:hidden"
+			></button>
+		{/if}
+
 		<div class="canvas-pit relative min-w-0 flex-1">
 			<Canvas />
+
+			<!-- Mobile-only floating toggles for the Layers / Properties drawers. -->
+			<button
+				type="button"
+				onclick={toggleLayers}
+				aria-label="Toggle layers panel"
+				aria-pressed={layersOpen}
+				class="absolute left-3 top-3 z-10 grid h-9 w-9 place-items-center rounded-lg border border-line-strong bg-surface/80 text-muted shadow-lg backdrop-blur-md transition-colors hover:text-ink md:hidden"
+			>
+				<Layers size={16} />
+			</button>
+			<button
+				type="button"
+				onclick={toggleProps}
+				aria-label="Toggle properties panel"
+				aria-pressed={propsOpen}
+				class="absolute right-3 top-3 z-10 grid h-9 w-9 place-items-center rounded-lg border border-line-strong bg-surface/80 text-muted shadow-lg backdrop-blur-md transition-colors hover:text-ink md:hidden"
+			>
+				<SlidersHorizontal size={16} />
+			</button>
 
 			<!-- Tool palette — pick a tool, then drag on the canvas to draw it. -->
 			<div class="pointer-events-none absolute bottom-4 left-1/2 z-10 -translate-x-1/2">
@@ -253,7 +306,7 @@
 							title={t.key ? `${t.label} (${t.key})` : t.label}
 							aria-label={t.label}
 							aria-pressed={store.tool === t.id}
-							class="grid h-8 w-8 place-items-center rounded-md outline-none transition-colors focus-visible:ring-2 focus-visible:ring-accent/20 {store.tool ===
+							class="grid h-8 w-8 place-items-center rounded-md outline-none transition-colors focus-visible:ring-2 focus-visible:ring-line-strong {store.tool ===
 							t.id
 								? 'bg-ink-2 text-ink ring-1 ring-line-strong'
 								: 'text-muted hover:bg-ink-2 hover:text-ink'}"
@@ -267,7 +320,7 @@
 						<DropdownMenu.Trigger
 							title="Shapes — pick one, then drag on the canvas to draw it"
 							aria-label="Shapes"
-							class="grid h-8 w-8 place-items-center rounded-md outline-none transition-colors focus-visible:ring-2 focus-visible:ring-accent/20 {store.tool ===
+							class="grid h-8 w-8 place-items-center rounded-md outline-none transition-colors focus-visible:ring-2 focus-visible:ring-line-strong {store.tool ===
 							'shape'
 								? 'bg-ink-2 text-ink ring-1 ring-line-strong'
 								: 'text-muted hover:bg-ink-2 hover:text-ink data-[state=open]:bg-ink-2 data-[state=open]:text-ink'}"
@@ -326,7 +379,11 @@
 			{/if}
 		</div>
 
-		<aside class="studio-rail w-72 shrink-0 overflow-y-auto border-l border-line bg-surface">
+		<aside
+			class="studio-rail absolute inset-y-0 right-0 z-40 w-80 max-w-[85%] translate-x-full overflow-y-auto border-l border-line bg-surface shadow-2xl transition-transform duration-200 md:static md:z-auto md:w-72 md:max-w-none md:translate-x-0 md:shadow-none md:transition-none {propsOpen
+				? 'translate-x-0'
+				: ''}"
+		>
 			<PropertiesPanel />
 		</aside>
 	</div>
