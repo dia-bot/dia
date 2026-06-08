@@ -253,7 +253,7 @@
 
 	// Ghost icon button for the per-row eye / lock controls (shadcn-on-Dia ghost).
 	const rowIcon =
-		'inline-flex h-6 w-6 items-center justify-center rounded-md text-muted outline-none transition-colors hover:bg-ink-2 hover:text-ink focus-visible:ring-2 focus-visible:ring-accent/20';
+		'inline-flex h-6 w-6 items-center justify-center rounded-md text-muted outline-none transition-colors hover:bg-ink-2 hover:text-ink focus-visible:ring-2 focus-visible:ring-line-strong';
 </script>
 
 <svelte:window onpointercancel={endDragGlobal} onblur={endDragGlobal} />
@@ -262,7 +262,7 @@
 	<header class="flex h-9 items-center justify-between gap-2 border-b border-line pr-1 pl-3">
 		<span class="eyebrow text-faint">Layers</span>
 		<div class="flex items-center gap-1.5">
-			<span class="font-mono text-[11px] tabular-nums {editor.atLimit ? 'text-accent-ink' : 'text-faint'}">
+			<span class="font-mono text-[11px] tabular-nums {editor.atLimit ? 'text-danger' : 'text-faint'}">
 				{editor.layout.layers.length}/{MAX_LAYERS}
 			</span>
 			<DropdownMenu.Root>
@@ -372,7 +372,7 @@
 												{#if row.collapsed}<ChevronRight size={14} />{:else}<ChevronDown size={14} />{/if}
 											</button>
 
-											<GroupIcon size={14} class="shrink-0 {row.isMask || row.isBoolean ? 'text-accent-ink' : selected ? 'text-ink' : 'text-faint group-hover:text-muted'}" />
+											<GroupIcon size={14} class="shrink-0 {row.isMask || row.isBoolean ? 'text-muted' : selected ? 'text-ink' : 'text-faint group-hover:text-muted'}" />
 
 											{#if isRenaming('group', row.id)}
 												<input
@@ -539,7 +539,7 @@
 											<Icon
 												size={14}
 												class="shrink-0 {row.isStencil
-													? 'text-accent-ink'
+													? 'text-muted'
 													: selected
 														? 'text-ink'
 														: 'text-faint group-hover:text-muted'}"
@@ -573,7 +573,7 @@
 												>
 											{/if}
 
-											{#if row.isStencil}<Scissors size={11} class="shrink-0 text-accent-ink" />{/if}
+											{#if row.isStencil}<Scissors size={11} class="shrink-0 text-muted" />{/if}
 
 											<div
 												class="flex items-center gap-0.5 transition-opacity {layer.hidden || layer.locked || selected

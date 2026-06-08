@@ -146,10 +146,10 @@
 	// One set of button class strings, applied identically wherever the same
 	// variant intent appears, so every control in the editor reads the same.
 	const btnBase =
-		'inline-flex items-center justify-center gap-1.5 rounded-md text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/20 disabled:pointer-events-none disabled:opacity-40';
+		'inline-flex items-center justify-center gap-1.5 rounded-md text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-line-strong disabled:pointer-events-none disabled:opacity-40';
 	const btnSecondary = `${btnBase} border border-line-strong text-ink hover:bg-ink-2`;
 	const btnGhost = `${btnBase} text-muted hover:bg-ink-2 hover:text-ink`;
-	const btnDestructive = `${btnBase} border border-line-strong text-muted hover:border-accent hover:text-accent-ink`;
+	const btnDestructive = `${btnBase} border border-line-strong text-muted hover:border-danger hover:text-danger`;
 	// icon-square base: add the active treatment (`border-faint bg-ink-2 text-ink`)
 	// or the rest treatment per-use; sizes (h-7 w-7 / h-8 w-8) are appended inline.
 	const btnIcon = btnBase;
@@ -238,12 +238,12 @@
 	opts: { min?: number; max?: number; step?: number; suffix?: string } = {}
 )}
 	<label
-		class="group flex h-7 min-w-0 items-stretch overflow-hidden rounded-md border border-line bg-ink-2 transition-all hover:border-line-strong focus-within:border-accent-ink/60 focus-within:ring-2 focus-within:ring-accent/15"
+		class="group flex h-7 min-w-0 items-stretch overflow-hidden rounded-md border border-line bg-ink-2 transition-all hover:border-line-strong focus-within:border-faint focus-within:ring-2 focus-within:ring-line-strong"
 	>
 		<span
 			use:scrub={{ get: () => value ?? 0, set, step: opts.step ?? 1, min: opts.min, max: opts.max }}
 			title="Drag to change"
-			class="grid w-6 shrink-0 cursor-ew-resize select-none place-items-center border-r border-line/70 bg-white/[0.02] text-[10px] font-semibold leading-none text-faint transition-colors group-hover:text-muted group-focus-within:text-accent-ink"
+			class="grid w-6 shrink-0 cursor-ew-resize select-none place-items-center border-r border-line/70 bg-white/[0.02] text-[10px] font-semibold leading-none text-faint transition-colors group-hover:text-muted group-focus-within:text-ink"
 		>
 			{#if typeof glyph === 'string'}{glyph}{:else}{@const I = glyph}<I size={12} strokeWidth={2} />{/if}
 		</span>
@@ -393,7 +393,7 @@
 	{@const multi = editor.selectedIds.length > 1}
 	<header class="flex items-center justify-between gap-2 border-b border-line px-4 py-3">
 		<div class="flex min-w-0 items-center gap-2">
-			<Scaling size={15} class="shrink-0 text-accent-ink" />
+			<Scaling size={15} class="shrink-0 text-ink" />
 			<h2 class="truncate text-sm font-semibold text-ink">Resize</h2>
 		</div>
 		<span class="shrink-0 text-xs text-faint">
@@ -890,7 +890,7 @@
 								</div>
 							{:else}
 								<p class="text-[11px] text-faint">
-									Upload your own fonts with <span class="text-accent-ink">Premium</span>.
+									Upload your own fonts with <span class="text-ink">Premium</span>.
 								</p>
 							{/if}
 

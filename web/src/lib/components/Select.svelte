@@ -18,7 +18,7 @@
 
 <Select.Root type="single" bind:value items={options}>
 	<Select.Trigger
-		class="group flex w-full items-center justify-between gap-2 rounded-md border border-line bg-ink-2 outline-none transition-all hover:border-faint focus-visible:border-faint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/20 data-[state=open]:border-faint data-[state=open]:ring-2 data-[state=open]:ring-accent/20 {dense
+		class="group flex w-full items-center justify-between gap-2 rounded-md border border-line bg-ink-2 outline-none transition-all hover:border-faint focus-visible:border-faint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-line-strong data-[state=open]:border-faint data-[state=open]:ring-2 data-[state=open]:ring-line-strong {dense
 				? 'h-7 px-2.5 text-xs'
 				: 'h-9 px-3 text-sm'}"
 	>

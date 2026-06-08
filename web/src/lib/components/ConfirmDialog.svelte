@@ -45,7 +45,7 @@
 		>
 			<div class="flex gap-3.5">
 				<div
-					class="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-accent/12 text-accent-ink"
+					class="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-ink-2 text-muted"
 				>
 					<TriangleAlert size={18} strokeWidth={2} />
 				</div>
@@ -60,7 +60,7 @@
 				<button
 					type="button"
 					onclick={() => choose(oncancel)}
-					class="inline-flex h-8 items-center justify-center gap-1.5 rounded-md px-3 text-xs font-medium text-muted transition-colors hover:bg-ink-2 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/20 disabled:pointer-events-none disabled:opacity-40"
+					class="inline-flex h-8 items-center justify-center gap-1.5 rounded-md px-3 text-xs font-medium text-muted transition-colors hover:bg-ink-2 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-line-strong disabled:pointer-events-none disabled:opacity-40"
 				>
 					{cancelLabel}
 				</button>
@@ -68,7 +68,7 @@
 					<button
 						type="button"
 						onclick={() => choose(ondiscard)}
-						class="inline-flex h-8 items-center justify-center gap-1.5 rounded-md border border-line-strong px-3 text-xs font-medium text-ink transition-colors hover:bg-ink-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/20 disabled:pointer-events-none disabled:opacity-40"
+						class="inline-flex h-8 items-center justify-center gap-1.5 rounded-md border border-line-strong px-3 text-xs font-medium text-ink transition-colors hover:bg-ink-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-line-strong disabled:pointer-events-none disabled:opacity-40"
 					>
 						{discardLabel}
 					</button>
@@ -76,7 +76,7 @@
 				<button
 					type="button"
 					onclick={() => choose(onconfirm)}
-					class="inline-flex h-8 items-center justify-center gap-1.5 rounded-md bg-ink px-3.5 text-xs font-medium text-bg transition-colors hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/20 disabled:pointer-events-none disabled:opacity-40"
+					class="inline-flex h-8 items-center justify-center gap-1.5 rounded-md bg-ink px-3.5 text-xs font-medium text-bg transition-colors hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-line-strong disabled:pointer-events-none disabled:opacity-40"
 				>
 					{confirmLabel}
 				</button>

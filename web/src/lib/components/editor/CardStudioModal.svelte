@@ -118,14 +118,14 @@
 			<button
 				type="button"
 				onclick={requestClose}
-				class="inline-flex h-8 items-center justify-center gap-1.5 rounded-md border border-line-strong px-2.5 text-xs font-medium text-ink transition-colors hover:bg-ink-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/20 disabled:pointer-events-none disabled:opacity-40"
+				class="inline-flex h-8 items-center justify-center gap-1.5 rounded-md border border-line-strong px-2.5 text-xs font-medium text-ink transition-colors hover:bg-ink-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-line-strong disabled:pointer-events-none disabled:opacity-40"
 			>
 				<X size={13} /> Cancel
 			</button>
 			<button
 				type="button"
 				onclick={apply}
-				class="inline-flex h-8 items-center justify-center gap-1.5 rounded-md bg-ink px-2.5 text-xs font-medium text-bg transition-colors hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/20 disabled:pointer-events-none disabled:opacity-40"
+				class="inline-flex h-8 items-center justify-center gap-1.5 rounded-md bg-ink px-2.5 text-xs font-medium text-bg transition-colors hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-line-strong disabled:pointer-events-none disabled:opacity-40"
 			>
 				<Check size={13} /> Apply to card
 			</button>

@@ -45,7 +45,7 @@
 
 <div class="space-y-1.5">
 	<div
-		class="flex gap-1.5 rounded-md {dragover ? 'ring-1 ring-accent' : ''}"
+		class="flex gap-1.5 rounded-md {dragover ? 'ring-1 ring-faint' : ''}"
 		role="group"
 		ondragover={(e) => {
 			e.preventDefault();

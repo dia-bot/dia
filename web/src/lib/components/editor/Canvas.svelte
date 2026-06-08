@@ -1927,7 +1927,7 @@
 							}
 						}}
 						class="h-full w-full resize-none bg-transparent p-0 outline-none"
-						style="{textCss(l)} box-shadow:0 0 0 1px var(--color-accent);"
+						style="{textCss(l)} box-shadow:0 0 0 1px var(--vec);"
 					></textarea>
 				{:else}
 					<div class="h-full w-full" style={vAlignCss(l)}>
@@ -2072,8 +2072,8 @@
 	.marquee {
 		position: absolute;
 		z-index: 4;
-		border: 1px solid var(--color-accent);
-		background: color-mix(in srgb, var(--color-accent) 12%, transparent);
+		border: 1px solid var(--vec);
+		background: color-mix(in srgb, var(--vec) 12%, transparent);
 		pointer-events: none;
 	}
 
@@ -2272,7 +2272,7 @@
 		}
 	}
 	.handle:focus-visible {
-		outline: 2px solid var(--color-accent);
+		outline: 2px solid var(--vec);
 		outline-offset: 1px;
 	}
 </style>
