@@ -5,11 +5,13 @@
 	// open ({#if}), so a fresh EditorStore is seeded from a COPY of the incoming
 	// layout each time — Cancel always discards, Apply commits via onApply.
 	import { setContext, untrack, onMount } from 'svelte';
+	import { beforeNavigate, goto } from '$app/navigation';
 	import { fade } from 'svelte/transition';
 	import { EditorStore, EDITOR_CTX } from '$lib/layout/editor.svelte';
 	import type { Layout } from '$lib/layout/schema';
 	import { guildFonts } from '$lib/api';
 	import LayoutEditor from '$lib/components/editor/LayoutEditor.svelte';
+	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 	import { Check, X } from 'lucide-svelte';
 
 	let {
@@ -42,6 +44,54 @@
 		onApply(store.toJSON());
 		onClose();
 	}
+
+	// Unsaved-changes guard. "Dirty" = the studio's layout differs from what we were
+	// seeded with. Cancelling, or navigating away (switching tabs) while dirty, opens
+	// the confirm dialog instead of silently discarding. Computed on demand (never in
+	// a $derived) so it can't re-stringify the layout on every drag frame.
+	const baseline = untrack(() => JSON.stringify($state.snapshot(layout) as Layout));
+	function isDirty(): boolean {
+		return JSON.stringify(store.toJSON()) !== baseline;
+	}
+
+	let confirmOpen = $state(false);
+	let proceed: (() => void) | null = null; // what "leave" does once confirmed
+	let bypassGuard = false;
+
+	function requestClose() {
+		if (!isDirty()) {
+			onClose();
+			return;
+		}
+		proceed = onClose;
+		confirmOpen = true;
+	}
+	beforeNavigate((nav) => {
+		if (bypassGuard || nav.type === 'leave') return; // confirmed leave, or browser unload
+		if (!isDirty() || !nav.to) return;
+		const url = nav.to.url;
+		nav.cancel();
+		proceed = () => {
+			bypassGuard = true;
+			goto(url);
+		};
+		confirmOpen = true;
+	});
+	function keepEditing() {
+		proceed = null;
+	}
+	function discardAndLeave() {
+		const go = proceed;
+		proceed = null;
+		go?.();
+	}
+	function applyAndLeave() {
+		onApply(store.toJSON());
+		const go = proceed;
+		proceed = null;
+		if (go) go();
+		else onClose();
+	}
 </script>
 
 <!-- Fixed to the dashboard work area (below the 3.5rem header, right of the 260px
@@ -55,7 +105,7 @@
 		{#snippet actions()}
 			<button
 				type="button"
-				onclick={onClose}
+				onclick={requestClose}
 				class="flex h-7 items-center gap-1.5 rounded-md border border-line-strong px-2.5 text-[12px] font-medium text-muted transition-colors hover:bg-surface hover:text-ink"
 			>
 				<X size={13} /> Cancel
@@ -70,3 +120,15 @@
 		{/snippet}
 	</LayoutEditor>
 </div>
+
+<ConfirmDialog
+	bind:open={confirmOpen}
+	title="Unsaved changes"
+	description="You’ve made changes in the Card Studio that haven’t been applied yet. What would you like to do?"
+	cancelLabel="Keep editing"
+	discardLabel="Discard"
+	confirmLabel="Apply to card"
+	oncancel={keepEditing}
+	ondiscard={discardAndLeave}
+	onconfirm={applyAndLeave}
+/>

@@ -2,11 +2,12 @@
 	// Standalone Card Studio: owns an EditorStore, persists to localStorage per
 	// guild, and embeds the reusable LayoutEditor chrome.
 	import { getContext, setContext, onMount, onDestroy } from 'svelte';
-	import { beforeNavigate } from '$app/navigation';
+	import { beforeNavigate, goto } from '$app/navigation';
 	import { EditorStore, EDITOR_CTX } from '$lib/layout/editor.svelte';
 	import { GuildStore, GUILD_CTX } from '$lib/guild.svelte';
 	import { guildFonts } from '$lib/api';
 	import LayoutEditor from '$lib/components/editor/LayoutEditor.svelte';
+	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 	import { Save, Check } from 'lucide-svelte';
 
 	const guild = getContext<GuildStore>(GUILD_CTX);
@@ -51,13 +52,34 @@
 		savedTimer = setTimeout(() => (saved = false), 1800);
 	}
 
-	// Warn before leaving with unsaved changes — both in-app navigation (clicking
-	// another tab in the sidebar) and closing/reloading the browser tab.
+	// Unsaved-changes guard. In-app navigation (another sidebar tab, the back button…)
+	// is intercepted and routed through the polished confirm dialog below; the
+	// browser's own tab-close / reload prompt can only ever be the native one.
+	let leaveOpen = $state(false);
+	let pendingUrl: URL | null = null;
+	let bypassGuard = false;
+
 	beforeNavigate((nav) => {
-		if (isDirty() && !confirm('You have unsaved changes to this card. Leave without saving?')) {
-			nav.cancel();
-		}
+		if (bypassGuard || nav.type === 'leave') return; // a confirmed leave, or browser unload (native prompt)
+		if (!isDirty() || !nav.to) return;
+		nav.cancel();
+		pendingUrl = nav.to.url;
+		leaveOpen = true;
 	});
+	function leaveWithoutSaving() {
+		const url = pendingUrl;
+		pendingUrl = null;
+		bypassGuard = true;
+		if (url) goto(url);
+	}
+	function saveAndLeave() {
+		save();
+		leaveWithoutSaving();
+	}
+	function keepEditing() {
+		pendingUrl = null;
+	}
+
 	function onBeforeUnload(e: BeforeUnloadEvent) {
 		if (isDirty()) {
 			e.preventDefault();
@@ -96,3 +118,15 @@
 		{/snippet}
 	</LayoutEditor>
 </div>
+
+<ConfirmDialog
+	bind:open={leaveOpen}
+	title="Unsaved changes"
+	description="You’ve made changes to this card that haven’t been saved yet. What would you like to do?"
+	cancelLabel="Keep editing"
+	discardLabel="Discard"
+	confirmLabel="Save & leave"
+	oncancel={keepEditing}
+	ondiscard={leaveWithoutSaving}
+	onconfirm={saveAndLeave}
+/>
