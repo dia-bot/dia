@@ -21,14 +21,17 @@
 </script>
 
 <section class="border-t border-line first:border-t-0">
-	<div class="flex items-center gap-1.5 px-4 pb-1.5 pt-3">
+	<div class="flex items-center gap-1.5 px-4 pb-2 pt-3.5">
 		<button
 			type="button"
 			onclick={() => (open = !open)}
 			aria-expanded={open}
-			class="flex flex-1 items-center gap-1 text-[10px] font-medium uppercase tracking-[0.09em] text-faint transition-colors hover:text-muted"
+			class="-ml-1 flex flex-1 items-center gap-1 rounded px-1 py-0.5 text-[10px] font-semibold uppercase tracking-[0.09em] text-faint transition-colors hover:text-muted"
 		>
-			<ChevronRight size={11} class="transition-transform duration-150 {open ? 'rotate-90' : ''}" />
+			<ChevronRight
+				size={11}
+				class="text-faint/70 transition-transform duration-150 {open ? 'rotate-90' : ''}"
+			/>
 			{title}
 		</button>
 		{#if action}
@@ -36,7 +39,7 @@
 		{/if}
 	</div>
 	{#if open}
-		<div class="px-4 pb-3.5" transition:slide={{ duration: 160, easing: cubicOut }}>
+		<div class="px-4 pb-4" transition:slide={{ duration: 160, easing: cubicOut }}>
 			{@render children()}
 		</div>
 	{/if}

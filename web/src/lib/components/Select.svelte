@@ -9,15 +9,18 @@
 	let {
 		value = $bindable(''),
 		options = [],
-		placeholder = 'Select…'
-	}: { value?: string; options?: Opt[]; placeholder?: string } = $props();
+		placeholder = 'Select…',
+		dense = false
+	}: { value?: string; options?: Opt[]; placeholder?: string; dense?: boolean } = $props();
 
 	const selectedLabel = $derived(options.find((o) => o.value === value)?.label ?? '');
 </script>
 
 <Select.Root type="single" bind:value items={options}>
 	<Select.Trigger
-		class="group flex h-9 w-full items-center justify-between gap-2 rounded-lg border border-line bg-ink-2 px-3 text-sm outline-none transition-all hover:border-faint focus-visible:border-faint focus-visible:ring-2 focus-visible:ring-line-strong data-[state=open]:border-faint data-[state=open]:ring-2 data-[state=open]:ring-line-strong"
+		class="group flex w-full items-center justify-between gap-2 rounded-md border border-line bg-ink-2 outline-none transition-all hover:border-faint focus-visible:border-faint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/20 data-[state=open]:border-faint data-[state=open]:ring-2 data-[state=open]:ring-accent/20 {dense
+				? 'h-7 px-2.5 text-xs'
+				: 'h-9 px-3 text-sm'}"
 	>
 		<span class="truncate {selectedLabel ? 'text-ink' : 'text-faint'}">
 			{selectedLabel || placeholder}
@@ -34,7 +37,7 @@
 					<Select.Item
 						value={o.value}
 						label={o.label}
-						class="flex cursor-pointer items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-sm text-muted outline-none transition-colors data-[highlighted]:bg-ink-2 data-[highlighted]:text-ink data-[selected]:text-ink"
+						class="flex cursor-pointer items-center justify-between gap-2 rounded-md px-2.5 py-1.5 text-sm text-muted outline-none transition-colors data-[highlighted]:bg-ink-2 data-[highlighted]:text-ink data-[selected]:text-ink"
 					>
 						{#snippet children({ selected })}
 							<span class="truncate">{o.label}</span>

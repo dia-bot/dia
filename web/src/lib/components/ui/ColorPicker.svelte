@@ -141,7 +141,7 @@
 <Popover.Root>
 	<Popover.Trigger
 		class={cn(
-			'flex h-9 items-center gap-2 rounded-lg border border-line-strong bg-ink-2 px-2 transition-colors hover:border-faint',
+			'flex h-9 items-center gap-2 rounded-md border border-line bg-ink-2 px-2 outline-none transition-all hover:border-line-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/20 data-[state=open]:border-faint data-[state=open]:ring-2 data-[state=open]:ring-accent/20',
 			className
 		)}
 	>
@@ -186,7 +186,7 @@
 					value={value}
 					oninput={onHex}
 					spellcheck="false"
-					class="h-8 w-full rounded-lg border border-line-strong bg-ink-2 px-2 font-mono text-xs uppercase text-ink outline-none focus:border-accent"
+					class="h-8 w-full rounded-md border border-line-strong bg-ink-2 px-2 font-mono text-xs uppercase text-ink outline-none transition-all focus-visible:border-faint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/20"
 				/>
 			</div>
 			<div class="mt-2.5 flex flex-wrap gap-1.5">

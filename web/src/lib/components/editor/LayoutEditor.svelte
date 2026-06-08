@@ -50,6 +50,14 @@
 
 	const store = getContext<EditorStore>(EDITOR_CTX);
 
+	// Unified control variants (shadcn-on-Dia) — identical strings per variant so
+	// every editor control reads the same. See PropertiesPanel for the full set.
+	const btnBase =
+		'inline-flex items-center justify-center gap-1.5 rounded-md text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/20 disabled:pointer-events-none disabled:opacity-40';
+	const btnSecondary = `${btnBase} border border-line-strong text-ink hover:bg-ink-2`;
+	// Ghost icon-square toolbar button (undo/redo).
+	const iconGhost = `${btnBase} text-muted hover:bg-surface hover:text-ink`;
+
 	// The Bend tool only appears when there's a path to bend (a path is selected or
 	// being edited) — like Figma, where bend belongs to vector-edit mode.
 	const canBend = $derived(store.selected?.type === 'path' || !!store.editId);
@@ -192,7 +200,7 @@
 				disabled={!store.canUndo}
 				title="Undo (⌘Z)"
 				aria-label="Undo"
-				class="grid h-7 w-7 place-items-center rounded-md text-muted transition-colors hover:bg-surface hover:text-ink disabled:opacity-30 disabled:hover:bg-transparent"
+				class="{iconGhost} h-7 w-7"
 			>
 				<Undo2 size={14} />
 			</button>
@@ -202,7 +210,7 @@
 				disabled={!store.canRedo}
 				title="Redo (⇧⌘Z)"
 				aria-label="Redo"
-				class="grid h-7 w-7 place-items-center rounded-md text-muted transition-colors hover:bg-surface hover:text-ink disabled:opacity-30 disabled:hover:bg-transparent"
+				class="{iconGhost} h-7 w-7"
 			>
 				<Redo2 size={14} />
 			</button>
@@ -212,7 +220,7 @@
 			type="button"
 			onclick={renderServer}
 			disabled={previewing}
-			class="flex h-7 items-center gap-1.5 rounded-md border border-line-strong px-2.5 text-[12px] font-medium text-muted transition-colors hover:bg-surface hover:text-ink disabled:opacity-50"
+			class="{btnSecondary} h-8 px-2.5"
 		>
 			{#if previewing}<Loader2 size={13} class="animate-spin" />{:else}<Image size={13} />{/if}
 			Server render
@@ -245,9 +253,9 @@
 							title={t.key ? `${t.label} (${t.key})` : t.label}
 							aria-label={t.label}
 							aria-pressed={store.tool === t.id}
-							class="flex h-8 w-8 items-center justify-center rounded-lg transition-all {store.tool ===
+							class="grid h-8 w-8 place-items-center rounded-md outline-none transition-colors focus-visible:ring-2 focus-visible:ring-accent/20 {store.tool ===
 							t.id
-								? 'bg-surface text-ink shadow-[inset_0_1px_0_rgba(255,255,255,0.06)] ring-1 ring-line-strong'
+								? 'bg-ink-2 text-ink ring-1 ring-line-strong'
 								: 'text-muted hover:bg-ink-2 hover:text-ink'}"
 						>
 							<Icon size={16} />
@@ -259,9 +267,9 @@
 						<DropdownMenu.Trigger
 							title="Shapes — pick one, then drag on the canvas to draw it"
 							aria-label="Shapes"
-							class="flex h-8 w-8 items-center justify-center rounded-lg outline-none transition-all {store.tool ===
+							class="grid h-8 w-8 place-items-center rounded-md outline-none transition-colors focus-visible:ring-2 focus-visible:ring-accent/20 {store.tool ===
 							'shape'
-								? 'bg-surface text-ink shadow-[inset_0_1px_0_rgba(255,255,255,0.06)] ring-1 ring-line-strong'
+								? 'bg-ink-2 text-ink ring-1 ring-line-strong'
 								: 'text-muted hover:bg-ink-2 hover:text-ink data-[state=open]:bg-ink-2 data-[state=open]:text-ink'}"
 						>
 							<Shapes size={16} />

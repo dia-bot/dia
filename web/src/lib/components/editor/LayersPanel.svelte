@@ -250,6 +250,10 @@
 
 	const menuItem =
 		'flex cursor-pointer items-center gap-2.5 rounded-md px-2 py-1.5 text-[13px] text-muted outline-none transition-colors data-[highlighted]:bg-ink-2 data-[highlighted]:text-ink data-[disabled]:pointer-events-none data-[disabled]:opacity-40';
+
+	// Ghost icon button for the per-row eye / lock controls (shadcn-on-Dia ghost).
+	const rowIcon =
+		'inline-flex h-6 w-6 items-center justify-center rounded-md text-muted outline-none transition-colors hover:bg-ink-2 hover:text-ink focus-visible:ring-2 focus-visible:ring-accent/20';
 </script>
 
 <svelte:window onpointercancel={endDragGlobal} onblur={endDragGlobal} />
@@ -410,7 +414,7 @@
 														toggleGroupLock(row);
 													}}
 													aria-label={row.locked ? 'Unlock group' : 'Lock group'}
-													class="flex h-6 w-6 items-center justify-center rounded-md text-faint transition-colors hover:bg-ink-2 hover:text-ink"
+													class={rowIcon}
 												>
 													{#if row.locked}<Lock size={12} />{:else}<Unlock size={12} />{/if}
 												</button>
@@ -422,7 +426,7 @@
 														toggleGroupHidden(row);
 													}}
 													aria-label={row.hidden ? 'Show group' : 'Hide group'}
-													class="flex h-6 w-6 items-center justify-center rounded-md text-muted transition-colors hover:bg-ink-2 hover:text-ink"
+													class={rowIcon}
 												>
 													{#if row.hidden}<EyeOff size={13} />{:else}<Eye size={13} />{/if}
 												</button>
@@ -584,7 +588,7 @@
 														editor.toggleLock(layer.id);
 													}}
 													aria-label={layer.locked ? 'Unlock' : 'Lock'}
-													class="flex h-6 w-6 items-center justify-center rounded-md text-faint transition-colors hover:bg-ink-2 hover:text-ink"
+													class={rowIcon}
 												>
 													{#if layer.locked}<Lock size={12} />{:else}<Unlock size={12} />{/if}
 												</button>
@@ -596,7 +600,7 @@
 														editor.patch(layer.id, { hidden: !layer.hidden });
 													}}
 													aria-label={layer.hidden ? 'Show layer' : 'Hide layer'}
-													class="flex h-6 w-6 items-center justify-center rounded-md text-muted transition-colors hover:bg-ink-2 hover:text-ink"
+													class={rowIcon}
 												>
 													{#if layer.hidden}<EyeOff size={13} />{:else}<Eye size={13} />{/if}
 												</button>

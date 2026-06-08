@@ -38,10 +38,10 @@
 <AlertDialog.Root bind:open>
 	<AlertDialog.Portal>
 		<AlertDialog.Overlay
-			class="dialog-overlay fixed inset-0 z-[70] bg-ink/60 backdrop-blur-[3px]"
+			class="dialog-overlay fixed inset-0 z-[70] bg-black/65 backdrop-blur-sm"
 		/>
 		<AlertDialog.Content
-			class="dialog-content fixed left-1/2 top-1/2 z-[71] w-[min(92vw,26rem)] -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-line-strong bg-surface p-5 shadow-2xl outline-none"
+			class="dialog-content fixed left-1/2 top-1/2 z-[71] w-full max-w-sm -translate-x-1/2 -translate-y-1/2 rounded-xl border border-line-strong bg-surface p-5 shadow-2xl outline-none"
 		>
 			<div class="flex gap-3.5">
 				<div
@@ -50,8 +50,8 @@
 					<TriangleAlert size={18} strokeWidth={2} />
 				</div>
 				<div class="min-w-0 flex-1 pt-0.5">
-					<AlertDialog.Title class="text-[15px] font-semibold text-ink">{title}</AlertDialog.Title>
-					<AlertDialog.Description class="mt-1 text-[13px] leading-relaxed text-muted">
+					<AlertDialog.Title class="text-sm font-semibold text-ink">{title}</AlertDialog.Title>
+					<AlertDialog.Description class="mt-1 text-xs leading-relaxed text-muted">
 						{description}
 					</AlertDialog.Description>
 				</div>
@@ -60,7 +60,7 @@
 				<button
 					type="button"
 					onclick={() => choose(oncancel)}
-					class="h-8 rounded-lg px-3 text-[13px] font-medium text-muted transition-colors hover:bg-ink-2 hover:text-ink"
+					class="inline-flex h-8 items-center justify-center gap-1.5 rounded-md px-3 text-xs font-medium text-muted transition-colors hover:bg-ink-2 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/20 disabled:pointer-events-none disabled:opacity-40"
 				>
 					{cancelLabel}
 				</button>
@@ -68,7 +68,7 @@
 					<button
 						type="button"
 						onclick={() => choose(ondiscard)}
-						class="h-8 rounded-lg px-3 text-[13px] font-medium text-danger transition-colors hover:bg-danger/12"
+						class="inline-flex h-8 items-center justify-center gap-1.5 rounded-md border border-line-strong px-3 text-xs font-medium text-ink transition-colors hover:bg-ink-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/20 disabled:pointer-events-none disabled:opacity-40"
 					>
 						{discardLabel}
 					</button>
@@ -76,7 +76,7 @@
 				<button
 					type="button"
 					onclick={() => choose(onconfirm)}
-					class="h-8 rounded-lg bg-ink px-3.5 text-[13px] font-medium text-bg transition-opacity hover:opacity-90"
+					class="inline-flex h-8 items-center justify-center gap-1.5 rounded-md bg-ink px-3.5 text-xs font-medium text-bg transition-colors hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/20 disabled:pointer-events-none disabled:opacity-40"
 				>
 					{confirmLabel}
 				</button>
