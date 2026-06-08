@@ -7,7 +7,7 @@
 	// blur) by the live scale = renderedWidth / layout.width.
 	import { getContext } from 'svelte';
 	import { EditorStore, EDITOR_CTX } from '$lib/layout/editor.svelte';
-	import { resolveSrc, newLayer, cornerNode, pathD, type Layer, type PathNode, type ShapeKind } from '$lib/layout/schema';
+	import { resolveSrc, newLayer, cornerNode, pathD, type Layer, type PathNode, type ShapeKind, type Effect } from '$lib/layout/schema';
 	import { fontCss } from '$lib/layout/fonts';
 	import { ImageIcon, User } from 'lucide-svelte';
 
@@ -15,6 +15,8 @@
 	const layout = $derived(editor.layout);
 	// Only pay the per-layer CSS-mask cost when the document actually uses masks.
 	const hasMasks = $derived(layout.layers.some((l) => l.clip));
+	// Likewise for effect (shadow/blur) CSS — only compute it when some layer has any.
+	const hasFx = $derived(layout.layers.some((l) => (l.effects?.length ?? 0) > 0));
 
 	// Boolean groups: the visible members (bottom→top) of each group whose metadata
 	// carries a bool op, so the canvas can render the whole group as ONE composited
@@ -75,36 +77,155 @@
 
 	// ── masking preview: a white stencil shape (in canvas coords) for a mask layer.
 	// The exact alpha/luminance compositing happens in the Go renderer; this CSS
-	// mask reflects shape masks (rect/ellipse/circle/path) faithfully and falls
-	// back to the mask's bounding box for image/text masks. ───────────────────────
+	// mask reflects shape masks (rect/ellipse/circle/path) faithfully — with the
+	// stencil's own rotation/corner-radius baked via shapeD — and falls back to the
+	// mask's bounding box for image/text masks. ────────────────────────────────────
 	function shapeEl(m: Layer, fill: string): string {
 		if (m.type === 'image' && m.mask === 'circle') {
 			const r = Math.min(m.w, m.h) / 2;
 			return `<circle cx='${m.x + m.w / 2}' cy='${m.y + m.h / 2}' r='${r}' fill='${fill}'/>`;
 		}
-		if (m.type === 'ellipse' || (m.type === 'image' && m.mask === 'ellipse')) {
+		if (m.type === 'image' && m.mask === 'ellipse') {
 			return `<ellipse cx='${m.x + m.w / 2}' cy='${m.y + m.h / 2}' rx='${m.w / 2}' ry='${m.h / 2}' fill='${fill}'/>`;
 		}
-		if (m.type === 'path') {
-			const d = pathD(m.nodes, m.closed);
+		// rect / ellipse / path stencils → one path with rotation + corner radius baked
+		// in (shapeD), matching the Go renderer's drawSilhouette / clip shape.
+		if (m.type === 'rect' || m.type === 'ellipse' || m.type === 'path') {
+			const d = shapeD(m);
 			return d ? `<path d='${d}' fill='${fill}'/>` : '';
 		}
+		// image / text / avatar stencil with no explicit mask → its bounding box.
 		const rad = m.radius ?? 0;
 		return `<rect x='${m.x}' y='${m.y}' width='${m.w}' height='${m.h}' rx='${rad}' fill='${fill}'/>`;
 	}
-	function maskCss(l: Layer): string {
+	// maskCss builds the per-layer CSS mask. `stage` picks the coordinate frame of the
+	// masked ELEMENT: a `.layer` div is positioned at the layer's box (viewBox = that
+	// box), but a `.path-layer` SVG spans the whole stage (viewBox = the canvas) — using
+	// the wrong one stretches the stencil across the stage (the bug that broke shape
+	// masks). clip_mode maps to mask-mode; a rotated div's mask is counter-rotated so
+	// the stencil stays fixed in canvas space like the renderer.
+	function maskCss(l: Layer, stage = false): string {
 		const m = editor.maskFor(l);
 		if (!m) return '';
 		const shape = shapeEl(m, '#fff');
 		if (!shape) return '';
+		const vb = stage ? `0 0 ${layout.width} ${layout.height}` : `${l.x} ${l.y} ${l.w} ${l.h}`;
+		const cov = stage
+			? { x: 0, y: 0, w: layout.width, h: layout.height }
+			: { x: l.x, y: l.y, w: l.w, h: l.h };
 		// Inverted: white everywhere except the shape (a stencil with a hole).
-		const inner = m.clip_invert
-			? `<defs><mask id='im'><rect x='${l.x}' y='${l.y}' width='${l.w}' height='${l.h}' fill='#fff'/>${shapeEl(m, '#000')}</mask></defs><rect x='${l.x}' y='${l.y}' width='${l.w}' height='${l.h}' fill='#fff' mask='url(#im)'/>`
+		const body = m.clip_invert
+			? `<defs><mask id='im'><rect x='${cov.x}' y='${cov.y}' width='${cov.w}' height='${cov.h}' fill='#fff'/>${shapeEl(m, '#000')}</mask></defs><rect x='${cov.x}' y='${cov.y}' width='${cov.w}' height='${cov.h}' fill='#fff' mask='url(#im)'/>`
 			: shape;
-		// viewBox = THIS layer's box, so the canvas-space stencil maps onto it.
-		const svg = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='${l.x} ${l.y} ${l.w} ${l.h}' preserveAspectRatio='none'>${inner}</svg>`;
+		// A `.layer` div carries transform:rotate(); undo it on the stencil so the mask
+		// doesn't spin with the content. Full-stage path SVGs aren't rotated as a whole.
+		const inner =
+			!stage && l.rotation
+				? `<g transform='rotate(${-l.rotation} ${l.x + l.w / 2} ${l.y + l.h / 2})'>${body}</g>`
+				: body;
+		const svg = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='${vb}' preserveAspectRatio='none'>${inner}</svg>`;
 		const url = `url("data:image/svg+xml,${encodeURIComponent(svg)}")`;
-		return `-webkit-mask:${url} center/100% 100% no-repeat; mask:${url} center/100% 100% no-repeat;`;
+		const mode = m.clip_mode === 'luminance' ? 'luminance' : 'alpha';
+		return `-webkit-mask:${url} center/100% 100% no-repeat; mask:${url} center/100% 100% no-repeat; -webkit-mask-mode:${mode}; mask-mode:${mode};`;
+	}
+
+	// ── effect (shadow / blur) preview ──────────────────────────────────────────
+	// Mirror the Go renderer's effects with CSS. Blur radii are kept 1:1 with the
+	// renderer (× the live scale so on-screen px match the rendered px), exactly like
+	// the background-image blur. The PNG is authoritative where CSS can't match (e.g.
+	// CSS drop-shadow has no spread, and inset shadows only show on box-like layers).
+	function fxList(l: Layer): Effect[] {
+		return (l.effects ?? []).filter((e) => !e.hidden);
+	}
+	function rgba(hex: string | undefined, op: number | undefined): string {
+		let h = (hex ?? '#000000').replace('#', '');
+		if (h.length === 3) h = h.split('').map((c) => c + c).join('');
+		h = h.padEnd(6, '0').slice(0, 6);
+		const r = parseInt(h.slice(0, 2), 16) || 0;
+		const g = parseInt(h.slice(2, 4), 16) || 0;
+		const b = parseInt(h.slice(4, 6), 16) || 0;
+		return `rgba(${r},${g},${b},${op ?? 0.25})`;
+	}
+	// filter: layer blur + drop shadows (follows the layer's alpha — works for text,
+	// images and vector paths). Spread is folded into the blur as a coarse approximation.
+	function fxFilter(l: Layer): string {
+		const parts: string[] = [];
+		for (const e of fxList(l)) {
+			if (e.type === 'layer_blur' && (e.radius ?? 0) > 0) parts.push(`blur(${(e.radius ?? 0) * scale}px)`);
+		}
+		for (const e of fxList(l)) {
+			if (e.type !== 'drop_shadow') continue;
+			const r = Math.max(0, (e.radius ?? 0) + Math.max(0, e.spread ?? 0)) * scale;
+			parts.push(`drop-shadow(${(e.x ?? 0) * scale}px ${(e.y ?? 0) * scale}px ${r}px ${rgba(e.color, e.opacity)})`);
+		}
+		return parts.length ? `filter:${parts.join(' ')};` : '';
+	}
+	// backdrop-filter: a background-blur effect (frosted glass; needs a translucent fill).
+	function fxBackdrop(l: Layer): string {
+		const e = fxList(l).find((x) => x.type === 'background_blur' && (x.radius ?? 0) > 0);
+		if (!e) return '';
+		const r = (e.radius ?? 0) * scale;
+		return `-webkit-backdrop-filter:blur(${r}px); backdrop-filter:blur(${r}px);`;
+	}
+	// inset box-shadow(s) for inner-shadow effects — merged into a box layer's existing
+	// stroke/ring box-shadow. Box-like layers only (rect/ellipse/image); the PNG covers
+	// text/paths, which CSS can't inset-shadow.
+	function fxInset(l: Layer): string[] {
+		return fxList(l)
+			.filter((e) => e.type === 'inner_shadow')
+			.map(
+				(e) =>
+					`inset ${(e.x ?? 0) * scale}px ${(e.y ?? 0) * scale}px ${(e.radius ?? 0) * scale}px ${(e.spread ?? 0) * scale}px ${rgba(e.color, e.opacity)}`
+			);
+	}
+	// boxShadow joins a layer's stroke/ring shadow with its inner-shadow effects.
+	// Inner shadows are listed FIRST so they paint OVER the stroke/ring (CSS box-shadow
+	// paints the first entry on top), matching the Go draw order (content+stroke, then
+	// inner shadows). A stencil (l.clip) is never composited, so it carries no effects.
+	function boxShadow(l: Layer, base: string): string {
+		const parts = [...(hasFx && !l.clip ? fxInset(l) : []), base].filter(Boolean);
+		return parts.length ? `box-shadow:${parts.join(', ')};` : '';
+	}
+
+	// ── corner radius + typography (mirror the Go renderer) ─────────────────────
+	// radiusCss: independent per-corner radii (tl tr br bl) when set, else uniform.
+	function radiusCss(l: Layer): string {
+		const c = l.corners;
+		if (Array.isArray(c) && c.length === 4) {
+			return `${c[0] * scale}px ${c[1] * scale}px ${c[2] * scale}px ${c[3] * scale}px`;
+		}
+		return `${(l.radius ?? 0) * scale}px`;
+	}
+	// textCss: the shared text typography (font/size/weight/colour/align + line height,
+	// letter spacing, case, decoration). Sizes scale with the preview like everything.
+	function textCss(l: Layer): string {
+		const lh = l.line_height && l.line_height > 0 ? l.line_height : 1.3;
+		const ls = (l.letter_spacing ?? 0) * scale;
+		const tc =
+			l.text_case === 'upper'
+				? 'uppercase'
+				: l.text_case === 'lower'
+					? 'lowercase'
+					: l.text_case === 'title'
+						? 'capitalize'
+						: 'none';
+		const td =
+			l.text_decoration === 'underline'
+				? 'underline'
+				: l.text_decoration === 'strike'
+					? 'line-through'
+					: 'none';
+		return (
+			`white-space:pre-wrap; overflow-wrap:break-word; text-align:${l.align ?? 'left'};` +
+			` font-family:${fontCss(l.font_family)}; font-size:${(l.font_size ?? 16) * scale}px;` +
+			` font-weight:${l.font_weight ?? 400}; color:${l.color ?? '#fff'}; line-height:${lh};` +
+			` letter-spacing:${ls}px; text-transform:${tc}; text-decoration:${td};`
+		);
+	}
+	// vertical alignment of the text block within its box.
+	function vAlignCss(l: Layer): string {
+		const j = l.valign === 'middle' ? 'center' : l.valign === 'bottom' ? 'flex-end' : 'flex-start';
+		return `display:flex; flex-direction:column; justify-content:${j};`;
 	}
 
 	// ── boolean group preview ───────────────────────────────────────────────────
@@ -185,6 +306,36 @@
 		if (opacity <= 0) return '';
 		const sid = gid.replace(/[^a-zA-Z0-9_-]/g, ''); // safe <defs> id fragment
 		const ds = members.map(shapeD);
+		// An image/avatar source keeps its pixels: clip the real image to the boolean
+		// coverage (mirrors the Go renderer). A non-image source fills with its colour.
+		const imgSrc = src.type === 'image' || src.type === 'avatar' ? dsrc(src) : '';
+		if (imgSrc) {
+			const href = imgSrc.replace(/&/g, '&amp;').replace(/'/g, '&#39;');
+			const par = (src.fit ?? 'cover') === 'contain' ? 'xMidYMid meet' : 'xMidYMid slice';
+			const img = `<image href='${href}' x='${src.x}' y='${src.y}' width='${src.w}' height='${src.h}' preserveAspectRatio='${par}' opacity='${opacity}'`;
+			if (op === 'subtract') {
+				const holes = ds
+					.slice(1)
+					.map((d) => `<path d='${d}' fill='#000'/>`)
+					.join('');
+				return `<defs><mask id='bm_${sid}'><path d='${ds[0]}' fill='#fff'/>${holes}</mask></defs>${img} mask='url(#bm_${sid})'/>`;
+			}
+			if (op === 'exclude') {
+				return `<defs><clipPath id='bx_${sid}'><path d='${ds.join(' ')}' clip-rule='evenodd'/></clipPath></defs>${img} clip-path='url(#bx_${sid})'/>`;
+			}
+			if (op === 'intersect') {
+				// nested clip-paths over EVERY member → image ∩ all members
+				let defs = '';
+				for (let k = 0; k < ds.length; k++) {
+					const ref = k > 0 ? ` clip-path='url(#bc_${sid}_${k - 1})'` : '';
+					defs += `<clipPath id='bc_${sid}_${k}'${ref}><path d='${ds[k]}'/></clipPath>`;
+				}
+				return `<defs>${defs}</defs>${img} clip-path='url(#bc_${sid}_${ds.length - 1})'/>`;
+			}
+			// union: clip the image to the union of every member shape
+			const cp = ds.map((d) => `<path d='${d}'/>`).join('');
+			return `<defs><clipPath id='bu_${sid}'>${cp}</clipPath></defs>${img} clip-path='url(#bu_${sid})'/>`;
+		}
 		if (op === 'exclude') {
 			return `<path d='${ds.join(' ')}' fill='${fill}' fill-rule='evenodd' opacity='${opacity}'/>`;
 		}
@@ -1628,15 +1779,15 @@
 				class="path-layer"
 				viewBox="0 0 {layout.width} {layout.height}"
 				preserveAspectRatio="none"
-				style="opacity:{l.opacity ?? 1}; {!hasMasks || l.id === editor.editId ? '' : maskCss(l)}"
+				style="opacity:{l.opacity ?? 1}; {!hasMasks || l.id === editor.editId ? '' : maskCss(l, true)} {hasFx && !l.clip ? fxFilter(l) : ''}"
 			>
 				<g transform="rotate({l.rotation ?? 0} {cx} {cy})">
 					{#if d}
 						<path
 							{d}
-							fill={l.closed && l.fill && (l.nodes?.length ?? 0) >= 3 ? l.fill : 'none'}
-							stroke={l.stroke_color ?? '#fff'}
-							stroke-width={l.stroke_width ?? 4}
+							fill={l.clip ? 'transparent' : l.closed && l.fill && (l.nodes?.length ?? 0) >= 3 ? l.fill : 'none'}
+							stroke={l.clip ? 'none' : (l.stroke_color ?? '#fff')}
+							stroke-width={l.clip ? 0 : (l.stroke_width ?? 4)}
 							stroke-linecap="round"
 							stroke-linejoin="round"
 							class="path-stroke"
@@ -1754,7 +1905,9 @@
 			class="layer"
 			class:selected={isSel}
 			style="left:{b.left}; top:{b.top}; width:{b.width}; height:{b.height}; opacity:{l.opacity ??
-				1}; transform:rotate({l.rotation ?? 0}deg); {hasMasks ? maskCss(l) : ''}"
+				1}; transform:rotate({l.rotation ?? 0}deg); {hasMasks ? maskCss(l) : ''} {hasFx && !l.clip
+				? fxFilter(l) + fxBackdrop(l)
+				: ''}"
 			onpointerdown={(e) => beginBody(e, l)}
 			onpointermove={onMove}
 			onpointerup={endGesture}
@@ -1774,18 +1927,13 @@
 							}
 						}}
 						class="h-full w-full resize-none bg-transparent p-0 outline-none"
-						style="white-space:pre-wrap; overflow-wrap:break-word; text-align:{l.align ??
-							'left'}; font-family:{fontCss(l.font_family)}; font-size:{(l.font_size ?? 16) * scale}px; font-weight:{l.font_weight ??
-							400}; color:{l.color ?? '#fff'}; line-height:1.3; box-shadow:0 0 0 1px var(--color-accent);"
+						style="{textCss(l)} box-shadow:0 0 0 1px var(--color-accent);"
 					></textarea>
 				{:else}
-					<div
-						class="h-full w-full"
-						style="white-space:pre-wrap; overflow-wrap:break-word; text-align:{l.align ??
-							'left'}; font-family:{fontCss(l.font_family)}; font-size:{(l.font_size ?? 16) * scale}px; font-weight:{l.font_weight ??
-							400}; color:{l.color ?? '#fff'}; line-height:1.3;"
-					>
-						{dtext(l)}
+					<div class="h-full w-full" style={vAlignCss(l)}>
+						<div style="width:100%; {textCss(l)}">
+							{dtext(l)}
+						</div>
 					</div>
 				{/if}
 			{:else if l.type === 'image' || l.type === 'avatar'}
@@ -1796,16 +1944,19 @@
 				{@const circle = (l.type === 'avatar' && l.shape !== 'rounded') || (l.type === 'image' && l.mask === 'circle')}
 				{@const ellipseMask = l.type === 'image' && l.mask === 'ellipse'}
 				{@const ring = (l.ring_width ?? 0) * scale}
-				{@const rad = circle || ellipseMask ? '50%' : `${(l.radius ?? 0) * scale}px`}
-				{@const ringCss = ring > 0 ? `box-shadow:0 0 0 ${ring}px ${l.ring_color ?? '#fff'};` : ''}
+				{@const rad = circle || ellipseMask ? '50%' : radiusCss(l)}
+				{@const ringBase = ring > 0 && !l.clip ? `0 0 0 ${ring}px ${l.ring_color ?? '#fff'}` : ''}
+				{@const ringCss = boxShadow(l, ringBase)}
 				{@const sz = circle ? `width:${Math.min(l.w, l.h) * scale}px;height:${Math.min(l.w, l.h) * scale}px;` : 'width:100%;height:100%;'}
-				<div class="grid h-full w-full place-items-center">
+				<div class="grid h-full w-full place-items-center" class:stencil-ghost={l.clip && isSel}>
 					{#if src}
 						<img
 							src={src}
 							alt={l.name}
 							draggable="false"
 							class="block select-none"
+							class:opacity-40={l.clip && isSel}
+							class:opacity-0={l.clip && !isSel}
 							style="{sz} object-fit:{l.fit ?? 'cover'}; border-radius:{rad}; {ringCss}"
 						/>
 					{:else}
@@ -1821,19 +1972,19 @@
 				</div>
 			{:else if l.type === 'rect'}
 				{@const sw = (l.stroke_width ?? 0) * scale}
+				{@const strokeBase = sw > 0 && !l.clip ? `inset 0 0 0 ${sw}px ${l.stroke_color ?? '#fff'}` : ''}
 				<div
 					class="h-full w-full"
-					style="background:{l.fill ?? '#000'}; border-radius:{(l.radius ?? 0) * scale}px; {sw > 0
-						? `box-shadow:inset 0 0 0 ${sw}px ${l.stroke_color ?? '#fff'};`
-						: ''}"
+					class:stencil-ghost={l.clip && isSel}
+					style="background:{l.clip ? 'transparent' : (l.fill ?? '#000')}; border-radius:{radiusCss(l)}; {boxShadow(l, strokeBase)}"
 				></div>
 			{:else if l.type === 'ellipse'}
 				{@const sw = (l.stroke_width ?? 0) * scale}
+				{@const strokeBase = sw > 0 && !l.clip ? `inset 0 0 0 ${sw}px ${l.stroke_color ?? '#fff'}` : ''}
 				<div
 					class="h-full w-full"
-					style="background:{l.fill ?? '#000'}; border-radius:50%; {sw > 0
-						? `box-shadow:inset 0 0 0 ${sw}px ${l.stroke_color ?? '#fff'};`
-						: ''}"
+					class:stencil-ghost={l.clip && isSel}
+					style="background:{l.clip ? 'transparent' : (l.fill ?? '#000')}; border-radius:50%; {boxShadow(l, strokeBase)}"
 				></div>
 			{/if}
 
@@ -1955,6 +2106,13 @@
 		background: var(--color-ink-2);
 	}
 
+	/* A mask stencil is shown in the editor as a dashed outline, not a solid fill —
+	   so it never obscures the content it clips, even when selecting it lifts its
+	   z-index above that content (Figma shows mask shapes the same way). The mask
+	   itself reads the stencil's geometry, not this DOM fill, so it's unaffected. */
+	.stencil-ghost {
+		border: 1px dashed color-mix(in srgb, var(--vec) 60%, transparent);
+	}
 	.layer {
 		position: absolute;
 		cursor: default;
