@@ -1020,6 +1020,16 @@ export class EditorStore {
 		const s = this.maskStencil;
 		if (s) s.clip_mode = mode;
 	}
+	// maskAs is the one-click "make this a <mode> mask" used by the header menu: it
+	// creates the mask group first (so picking a type actually does something), then
+	// sets the clip mode. No-op when masking isn't possible.
+	maskAs(mode: ClipMode) {
+		if (!this.isMask) {
+			if (!this.canMask) return;
+			this.useAsMask();
+		}
+		this.setClipMode(mode);
+	}
 	get clipInvert(): boolean {
 		return !!this.maskStencil?.clip_invert;
 	}
@@ -1312,6 +1322,94 @@ export class EditorStore {
 			}
 			l.corners[i] = Math.max(0, Math.round(v));
 		});
+	}
+	// setAllCorners sets every corner uniformly across the selection — the single "R"
+	// field shown above the per-corner grid. Keeps the per-corner array when it's
+	// active (so the grid stays open) and writes the uniform radius otherwise.
+	setAllCorners(v: number) {
+		v = Math.max(0, Math.round(v));
+		this.setAll((l) => {
+			if (Array.isArray(l.corners) && l.corners.length === 4) l.corners = [v, v, v, v];
+			else l.radius = v;
+		});
+	}
+
+	// ── resize / transform (the Scale tool's dedicated inspector) ────────────────
+	// aspectLocked: keep each layer's W:H ratio when resizing from the panel.
+	aspectLocked = $state(false);
+	toggleAspect() {
+		this.aspectLocked = !this.aspectLocked;
+	}
+	// #scaleNodes maps a path's nodes (+ handles) about (ox,oy) by (fx,fy).
+	#scaleNodes(l: Layer, fx: number, fy: number, ox: number, oy: number) {
+		if (!l.nodes) return;
+		l.nodes = l.nodes.map((n) => ({
+			x: Math.round(ox + (n.x - ox) * fx),
+			y: Math.round(oy + (n.y - oy) * fy),
+			h1x: Math.round(ox + (n.h1x - ox) * fx),
+			h1y: Math.round(oy + (n.h1y - oy) * fy),
+			h2x: Math.round(ox + (n.h2x - ox) * fx),
+			h2y: Math.round(oy + (n.h2y - oy) * fy),
+			m: n.m
+		}));
+		this.fitPath(l);
+	}
+	// #scaleIntrinsic scales a layer's size-like properties by a uniform factor f.
+	#scaleIntrinsic(l: Layer, f: number) {
+		if (l.font_size) l.font_size = Math.max(1, Math.round(l.font_size * f));
+		if (l.stroke_width) l.stroke_width = Math.max(0, Math.round(l.stroke_width * f * 10) / 10);
+		if (l.radius) l.radius = Math.max(0, Math.round(l.radius * f));
+		if (Array.isArray(l.corners)) l.corners = l.corners.map((c) => Math.max(0, Math.round(c * f))) as [number, number, number, number];
+		if (l.ring_width) l.ring_width = Math.max(0, Math.round(l.ring_width * f));
+		if (l.letter_spacing) l.letter_spacing = Math.round(l.letter_spacing * f);
+	}
+	// resizeW/resizeH set a new width/height across the selection (each layer from its
+	// own top-left). With aspectLocked, the other dimension + size-like props scale by
+	// the same factor; paths scale their nodes.
+	resizeW(n: number) {
+		n = Math.max(8, Math.round(n));
+		for (const l of this.selectedLayers) {
+			const fx = l.w ? n / l.w : 1;
+			const fy = this.aspectLocked ? fx : 1;
+			if (l.nodes) this.#scaleNodes(l, fx, fy, l.x, l.y);
+			else {
+				l.w = n;
+				if (this.aspectLocked) l.h = Math.max(8, Math.round(l.h * fx));
+			}
+			if (this.aspectLocked) this.#scaleIntrinsic(l, fx);
+		}
+	}
+	resizeH(n: number) {
+		n = Math.max(8, Math.round(n));
+		for (const l of this.selectedLayers) {
+			const fy = l.h ? n / l.h : 1;
+			const fx = this.aspectLocked ? fy : 1;
+			if (l.nodes) this.#scaleNodes(l, fx, fy, l.x, l.y);
+			else {
+				l.h = n;
+				if (this.aspectLocked) l.w = Math.max(8, Math.round(l.w * fy));
+			}
+			if (this.aspectLocked) this.#scaleIntrinsic(l, fy);
+		}
+	}
+	// scaleSelection scales every selected layer about its OWN centre by `factor`
+	// (size + text + strokes + radius + nodes) — the quick ½×/2× buttons.
+	scaleSelection(factor: number) {
+		if (factor <= 0) return;
+		for (const l of this.selectedLayers) {
+			const cx = l.x + l.w / 2;
+			const cy = l.y + l.h / 2;
+			if (l.nodes) this.#scaleNodes(l, factor, factor, cx, cy);
+			else {
+				const nw = Math.max(8, Math.round(l.w * factor));
+				const nh = Math.max(8, Math.round(l.h * factor));
+				l.x = Math.round(cx - nw / 2);
+				l.y = Math.round(cy - nh / 2);
+				l.w = nw;
+				l.h = nh;
+			}
+			this.#scaleIntrinsic(l, factor);
+		}
 	}
 
 	// ── undo / redo ────────────────────────────────────────────────────────────────
