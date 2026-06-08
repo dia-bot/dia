@@ -112,10 +112,11 @@
 <div class="flex h-screen flex-col bg-ink-2 text-ink">
 	<!-- ── Header ─────────────────────────────────────────────── -->
 	<header class="flex h-14 shrink-0 items-center pr-3">
-		<!-- Logo zone (sidebar width) -->
+		<!-- Logo zone (matches the sidebar width on md+; auto width on mobile so the
+		     header can't overflow on a phone). -->
 		<a
 			href="/servers"
-			class="flex h-full w-[260px] shrink-0 items-center gap-2 px-5 transition-opacity hover:opacity-80"
+			class="flex h-full w-auto shrink-0 items-center gap-2 px-4 transition-opacity hover:opacity-80 md:w-[260px] md:px-5"
 		>
 			<Logo size={24} wordmark />
 		</a>

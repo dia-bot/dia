@@ -268,7 +268,7 @@
 		<!-- Hint -->
 		<div class="rounded-xl border border-line bg-blush/40 p-4 text-sm text-muted">
 			After saving a menu, run
-			<code class="rounded bg-ink-2 px-1.5 py-0.5 font-mono text-[13px] text-accent-ink">/reactionroles post &lt;id&gt; &lt;channel&gt;</code>
+			<code class="break-words rounded bg-ink-2 px-1.5 py-0.5 font-mono text-[13px] text-accent-ink">/reactionroles post &lt;id&gt; &lt;channel&gt;</code>
 			in your server to post it.
 		</div>
 	</div>

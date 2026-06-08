@@ -484,11 +484,11 @@
 					<div class="divide-y divide-line rounded-xl border border-line">
 						{#each board as e, i (e.user_id ?? i)}
 							<div class="flex items-center justify-between gap-3 px-4 py-3 text-sm">
-								<div class="flex items-center gap-3">
-									<span class="w-6 text-right font-mono text-muted">#{e.rank ?? i + 1}</span>
-									<span class="font-medium">&lt;@{e.user_id}&gt;</span>
+								<div class="flex min-w-0 items-center gap-3">
+									<span class="w-6 shrink-0 text-right font-mono text-muted">#{e.rank ?? i + 1}</span>
+									<span class="truncate font-medium">&lt;@{e.user_id}&gt;</span>
 								</div>
-								<div class="flex items-center gap-4 text-muted">
+								<div class="flex shrink-0 items-center gap-4 text-muted">
 									<span>Level {e.level}</span>
 									<span class="font-mono text-xs">{e.xp} XP</span>
 								</div>

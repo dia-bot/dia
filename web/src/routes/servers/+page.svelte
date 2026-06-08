@@ -185,7 +185,7 @@
 
 <div class="min-h-screen">
 	<header class="sticky top-0 z-10 border-b border-line bg-bg/75 backdrop-blur-md">
-		<div class="mx-auto flex max-w-4xl items-center justify-between px-6 py-3">
+		<div class="mx-auto flex max-w-4xl items-center justify-between px-4 py-3 sm:px-6">
 			<a href="/" class="flex items-center"><Logo size={24} wordmark /></a>
 			<div class="flex items-center gap-3">
 				{#if data.user.avatar_url}
@@ -200,7 +200,7 @@
 		</div>
 	</header>
 
-	<main class="mx-auto max-w-4xl px-6 pb-24 pt-10 sm:pt-14">
+	<main class="mx-auto max-w-4xl px-4 pb-24 pt-10 sm:px-6 sm:pt-14">
 		<h1 class="text-2xl font-semibold tracking-tight text-ink">Select a server</h1>
 		<p class="mt-1 text-sm text-muted">Open a server to configure Dia, or add it to a new one.</p>
 

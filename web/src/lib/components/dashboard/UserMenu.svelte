@@ -44,7 +44,7 @@
 			side="top"
 			align="start"
 			sideOffset={6}
-			class="menu-pop z-50 min-w-[240px] overflow-hidden rounded-xl border border-line-strong bg-surface p-1.5 shadow-2xl outline-none"
+			class="menu-pop z-50 min-w-[240px] max-w-[calc(100vw-2rem)] overflow-hidden rounded-xl border border-line-strong bg-surface p-1.5 shadow-2xl outline-none"
 		>
 			<div class="-mx-1.5 -mt-1.5 mb-1.5 border-b border-line px-3 py-2.5">
 				<div class="truncate text-[12.5px] font-medium text-ink">{name}</div>

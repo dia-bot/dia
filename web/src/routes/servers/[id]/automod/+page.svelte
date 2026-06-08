@@ -117,7 +117,7 @@
 {:else}
 	<div class="space-y-5">
 		<!-- Rules -->
-		<section class="card p-6">
+		<section class="card p-4 sm:p-6">
 			<h2 class="mb-4 text-base font-semibold">Rules</h2>
 
 			<label class="mb-4 flex items-center justify-between gap-4">
@@ -159,7 +159,7 @@
 		</section>
 
 		<!-- Action -->
-		<section class="card p-6">
+		<section class="card p-4 sm:p-6">
 			<h2 class="mb-4 text-base font-semibold">Action</h2>
 			<Field label="When a rule is broken">
 				<Select bind:value={cfg.action} options={actionOpts} />
@@ -172,7 +172,7 @@
 		</section>
 
 		<!-- Exemptions -->
-		<section class="card p-6">
+		<section class="card p-4 sm:p-6">
 			<h2 class="mb-4 text-base font-semibold">Exemptions</h2>
 			<Field label="Ignored channels" hint="AutoMod will not act in these channels.">
 				<MultiSelect bind:value={cfg.ignored_channels} options={channelOpts} placeholder="Add a channel…" />

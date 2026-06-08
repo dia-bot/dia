@@ -135,13 +135,13 @@
 
 <svelte:head><title>Commands · {store.name} · Dia</title></svelte:head>
 
-<header class="mb-6 flex items-start justify-between gap-4">
+<header class="mb-6 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
 	<div>
 		<h1 class="text-2xl font-bold tracking-tight">Custom commands</h1>
 		<p class="mt-1 text-muted">Create your own slash commands with custom replies and embeds.</p>
 	</div>
 	{#if loaded && !editing}
-		<button class="btn btn-accent" onclick={startCreate}>
+		<button class="btn btn-accent shrink-0" onclick={startCreate}>
 			<Plus size={16} /> New command
 		</button>
 	{/if}

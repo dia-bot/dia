@@ -46,7 +46,7 @@
 		<Popover.Content
 			sideOffset={6}
 			align="start"
-			class="menu-pop z-50 w-72 overflow-hidden rounded-xl border border-line-strong bg-surface shadow-2xl outline-none"
+			class="menu-pop z-50 w-72 max-w-[calc(100vw-2rem)] overflow-hidden rounded-xl border border-line-strong bg-surface shadow-2xl outline-none"
 		>
 			<Command.Root class="flex flex-col">
 				<div class="flex items-center gap-2 border-b border-line px-3">

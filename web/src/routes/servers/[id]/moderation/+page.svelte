@@ -120,7 +120,7 @@
 {:else}
 	<div class="space-y-5">
 		<!-- Settings -->
-		<section class="card p-6">
+		<section class="card p-4 sm:p-6">
 			<h2 class="mb-4 text-base font-semibold">Settings</h2>
 			<Field
 				label="Moderation log channel"
@@ -135,7 +135,7 @@
 		</section>
 
 		<!-- Recent cases -->
-		<section class="card p-6">
+		<section class="card p-4 sm:p-6">
 			<h2 class="mb-4 text-base font-semibold">Recent cases</h2>
 			{#if casesLoading}
 				<div class="text-sm text-muted">Loading cases…</div>
