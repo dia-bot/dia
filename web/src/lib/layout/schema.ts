@@ -7,6 +7,12 @@
 
 export type LayerType = 'text' | 'image' | 'avatar' | 'rect' | 'ellipse' | 'path';
 export type Align = 'left' | 'center' | 'right';
+// Vertical alignment of text within its layer box (Figma's text vertical-align).
+export type VAlign = 'top' | 'middle' | 'bottom';
+// Case transform applied at render (Figma's "Type details" case control).
+export type TextCase = 'none' | 'upper' | 'lower' | 'title';
+// Underline / strikethrough (Figma's text decoration).
+export type TextDecoration = 'none' | 'underline' | 'strike';
 
 // How a node's two bezier handles relate while you drag one (Figma's three
 // point types). 'corner' = independent (a sharp corner, or one with two freely
@@ -40,6 +46,27 @@ export type ClipMode = 'alpha' | 'vector' | 'luminance';
 // group's metadata to combine its (vector) members into one composited silhouette.
 // Non-destructive: the member shapes stay editable; the op can change anytime.
 export type BoolOp = 'union' | 'subtract' | 'intersect' | 'exclude';
+
+// Layer effects — Figma's "Effects" panel. Each layer carries an ordered list of
+// effects; the renderer applies them per layer in a fixed order regardless of list
+// position: background blur (frost what's behind) → layer blur (soften the layer) →
+// drop shadows (painted under) → the layer's own content → inner shadows (over).
+//   'drop_shadow'      — blurred, offset, tinted copy of the layer's silhouette behind it
+//   'inner_shadow'     — the same, painted inside the silhouette (edge shading)
+//   'layer_blur'       — gaussian-blur the layer's own pixels
+//   'background_blur'  — gaussian-blur whatever sits behind the (translucent) layer
+// Mirrored in schema.go (same JSON shape).
+export type EffectType = 'drop_shadow' | 'inner_shadow' | 'layer_blur' | 'background_blur';
+export interface Effect {
+	type: EffectType;
+	x?: number; // shadow offset, canvas px (shadows only)
+	y?: number;
+	radius?: number; // blur radius, canvas px — shadow softness OR blur strength
+	spread?: number; // shadow grow(+)/shrink(−), canvas px (shadows only)
+	color?: string; // shadow colour hex (shadows only)
+	opacity?: number; // shadow colour alpha 0..1 (shadows only; default 0.25)
+	hidden?: boolean; // skip this effect without removing it (default visible)
+}
 
 // The card renders server-side on every member join, so we cap layer count to
 // keep that cheap — masking + vector shapes mean you rarely need many layers.
@@ -109,7 +136,13 @@ export interface Layer {
 	font_weight?: number; // 400 | 700
 	font_family?: string; // card-font family name ('' = default); see layout/fonts.ts
 	color?: string; // hex
-	align?: Align;
+	align?: Align; // horizontal alignment
+	// typography (Figma's Type panel) — all renderable in both the DOM preview and Go:
+	line_height?: number; // line-height multiplier (default 1.3)
+	letter_spacing?: number; // tracking in canvas px (default 0; may be negative)
+	valign?: VAlign; // vertical alignment within the layer box (default 'top')
+	text_case?: TextCase; // case transform (default 'none')
+	text_decoration?: TextDecoration; // underline / strikethrough (default 'none')
 	// image / avatar
 	src?: string; // url or {user.avatar}
 	fit?: Fit;
@@ -120,6 +153,7 @@ export interface Layer {
 	// rect / ellipse / common
 	fill?: string; // hex (rect/ellipse/path fill)
 	radius?: number; // corner radius (rect / image / rounded avatar)
+	corners?: [number, number, number, number]; // independent corner radii [tl,tr,br,bl]; overrides `radius` when set (rect/image)
 	stroke_color?: string; // outline colour (rect / ellipse / path)
 	stroke_width?: number; // outline width in canvas px
 	// path (pen / pencil)
@@ -132,6 +166,8 @@ export interface Layer {
 	clip?: boolean;
 	clip_mode?: ClipMode;
 	clip_invert?: boolean; // invert the mask (hide inside the shape / show outside)
+	// effects (shadows / blur) — see Effect above. Applied in a fixed order, not list order.
+	effects?: Effect[];
 }
 
 export type BackgroundType = 'solid' | 'gradient' | 'image';
@@ -204,6 +240,23 @@ export function newLayer(type: LayerType): Layer {
 	// rect — solid, fully visible, sharp corners, no border (Figma's default shape)
 	return { ...base, name: 'Rectangle', fill: '#FFFFFF', radius: 0, opacity: 1, w: 400, h: 160 };
 }
+
+// newEffect returns a Figma-style default effect of the given type. Shadows default
+// to a soft black X0 Y4 blur4 at 25% (Figma's "add shadow" default); blurs to 8px.
+export function newEffect(type: EffectType): Effect {
+	if (type === 'layer_blur' || type === 'background_blur') {
+		return { type, radius: 8 };
+	}
+	return { type, x: 0, y: 4, radius: 4, spread: 0, color: '#000000', opacity: 0.25 };
+}
+
+// EFFECT_LABELS — display names for the inspector's effect rows / add menu.
+export const EFFECT_LABELS: Record<EffectType, string> = {
+	drop_shadow: 'Drop shadow',
+	inner_shadow: 'Inner shadow',
+	layer_blur: 'Layer blur',
+	background_blur: 'Background blur'
+};
 
 // newAvatarImage returns an image layer pre-configured as a circular member
 // avatar — the "avatar" is just an image bound to the {{.User.Avatar}} template,

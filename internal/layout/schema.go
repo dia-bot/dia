@@ -27,7 +27,13 @@ type Layer struct {
 	FontWeight int     `json:"font_weight,omitempty"`
 	FontFamily string  `json:"font_family,omitempty"` // picker family name; "" = default
 	Color      string  `json:"color,omitempty"`
-	Align      string  `json:"align,omitempty"`
+	Align      string  `json:"align,omitempty"` // horizontal alignment
+	// typography (Figma's Type panel). Kept in sync with web/src/lib/layout/schema.ts.
+	LineHeight     float64 `json:"line_height,omitempty"`     // multiplier (default 1.3)
+	LetterSpacing  float64 `json:"letter_spacing,omitempty"`  // tracking in canvas px
+	VAlign         string  `json:"valign,omitempty"`          // top|middle|bottom (default top)
+	TextCase       string  `json:"text_case,omitempty"`       // none|upper|lower|title
+	TextDecoration string  `json:"text_decoration,omitempty"` // none|underline|strike
 
 	// image / avatar
 	Src       string  `json:"src,omitempty"`
@@ -38,10 +44,11 @@ type Layer struct {
 	RingWidth float64 `json:"ring_width,omitempty"`
 
 	// rect / ellipse / common
-	Fill        string  `json:"fill,omitempty"`
-	Radius      float64 `json:"radius,omitempty"`
-	StrokeColor string  `json:"stroke_color,omitempty"`
-	StrokeWidth float64 `json:"stroke_width,omitempty"`
+	Fill        string    `json:"fill,omitempty"`
+	Radius      float64   `json:"radius,omitempty"`
+	Corners     []float64 `json:"corners,omitempty"` // independent corner radii [tl,tr,br,bl]; overrides Radius when len==4
+	StrokeColor string    `json:"stroke_color,omitempty"`
+	StrokeWidth float64   `json:"stroke_width,omitempty"`
 
 	// path (pen / pencil)
 	Nodes  []PathNode `json:"nodes,omitempty"`
@@ -52,6 +59,28 @@ type Layer struct {
 	Clip       bool   `json:"clip,omitempty"`
 	ClipMode   string `json:"clip_mode,omitempty"`
 	ClipInvert bool   `json:"clip_invert,omitempty"` // hide inside the shape / show outside
+
+	// effects (shadows / blur), applied per layer in a fixed order. Kept in sync
+	// with web/src/lib/layout/schema.ts.
+	Effects []Effect `json:"effects,omitempty"`
+}
+
+// Effect is a single layer effect (shadow or blur). Only the fields relevant to
+// Type are used. Geometry is in canvas px. Mirrors web/src/lib/layout/schema.ts.
+//
+//	"drop_shadow"     — blurred, offset, tinted copy of the layer behind it
+//	"inner_shadow"    — the same painted inside the silhouette (edge shading)
+//	"layer_blur"      — gaussian-blur the layer's own pixels
+//	"background_blur" — gaussian-blur whatever sits behind a translucent layer
+type Effect struct {
+	Type    string   `json:"type"`
+	X       float64  `json:"x,omitempty"`       // shadow offset
+	Y       float64  `json:"y,omitempty"`       //
+	Radius  float64  `json:"radius,omitempty"`  // blur radius (shadow softness or blur strength)
+	Spread  float64  `json:"spread,omitempty"`  // shadow grow(+)/shrink(−)
+	Color   string   `json:"color,omitempty"`   // shadow colour
+	Opacity *float64 `json:"opacity,omitempty"` // shadow alpha 0..1 (pointer: 0 ≠ unset; unset ⇒ 0.25)
+	Hidden  bool     `json:"hidden,omitempty"`  // skip without removing
 }
 
 // PathNode is a bezier anchor with its two cubic control handles (absolute
