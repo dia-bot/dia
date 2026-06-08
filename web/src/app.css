@@ -278,6 +278,40 @@ body {
 		transform: translate(-50%, 6px) scale(0.98);
 	}
 }
+/* Modal (bits-ui AlertDialog/Dialog) motion: the backdrop fades while the panel
+   springs up + scales in, and both reverse on close (Bits keeps the node mounted
+   for the exit). The translate(-50%,-50%) is baked into every frame so the scale
+   never fights the centering transform. */
+@keyframes overlay-in {
+	from {
+		opacity: 0;
+	}
+}
+@keyframes overlay-out {
+	to {
+		opacity: 0;
+	}
+}
+@keyframes panel-in {
+	from {
+		opacity: 0;
+		transform: translate(-50%, calc(-50% + 8px)) scale(0.96);
+	}
+	to {
+		opacity: 1;
+		transform: translate(-50%, -50%) scale(1);
+	}
+}
+@keyframes panel-out {
+	from {
+		opacity: 1;
+		transform: translate(-50%, -50%) scale(1);
+	}
+	to {
+		opacity: 0;
+		transform: translate(-50%, calc(-50% + 6px)) scale(0.97);
+	}
+}
 @layer components {
 	.menu-pop {
 		transform-origin: var(--bits-floating-transform-origin, top);
@@ -292,11 +326,33 @@ body {
 	.dialog-pop {
 		animation: dialog-pop 160ms cubic-bezier(0.16, 1, 0.3, 1);
 	}
+	.dialog-overlay {
+		will-change: opacity;
+	}
+	.dialog-overlay[data-state='open'] {
+		animation: overlay-in 200ms cubic-bezier(0.16, 1, 0.3, 1);
+	}
+	.dialog-overlay[data-state='closed'] {
+		animation: overlay-out 150ms cubic-bezier(0.4, 0, 0.9, 0.2);
+	}
+	.dialog-content {
+		will-change: transform, opacity;
+	}
+	.dialog-content[data-state='open'] {
+		animation: panel-in 220ms cubic-bezier(0.16, 1, 0.3, 1);
+	}
+	.dialog-content[data-state='closed'] {
+		animation: panel-out 150ms cubic-bezier(0.4, 0, 0.9, 0.2);
+	}
 }
 @media (prefers-reduced-motion: reduce) {
 	.menu-pop[data-state='open'],
 	.menu-pop[data-state='closed'],
-	.dialog-pop {
+	.dialog-pop,
+	.dialog-overlay[data-state='open'],
+	.dialog-overlay[data-state='closed'],
+	.dialog-content[data-state='open'],
+	.dialog-content[data-state='closed'] {
 		animation: none;
 	}
 }
