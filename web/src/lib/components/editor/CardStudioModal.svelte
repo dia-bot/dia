@@ -94,26 +94,38 @@
 	}
 </script>
 
-<!-- Fixed to the dashboard work area (below the 3.5rem header, right of the 260px
-     sidebar) so it stays put regardless of page scroll — never anchored to the
-     scrolled content. Full-bleed on mobile where the sidebar is off-canvas. -->
+<svelte:window
+	onkeydown={(e) => {
+		if (e.key === 'Escape' && !confirmOpen) requestClose();
+	}}
+/>
+
+<!-- A large, obviously-floating popup over a dimmed, blurred backdrop. Clicking the
+     margin (backdrop) or pressing Esc closes it — guarded by the unsaved check. -->
+<button
+	type="button"
+	aria-label="Close Card Studio"
+	onclick={requestClose}
+	transition:fade={{ duration: 120 }}
+	class="fixed inset-0 z-40 cursor-default bg-black/65 backdrop-blur-sm"
+></button>
 <div
 	transition:fade={{ duration: 120 }}
-	class="fixed inset-x-0 bottom-0 top-14 z-40 overflow-hidden bg-bg md:left-[260px] md:rounded-tl-2xl"
+	class="fixed inset-3 z-50 overflow-hidden rounded-2xl border border-line-strong bg-bg shadow-2xl md:inset-6 lg:inset-8"
 >
 	<LayoutEditor {guildId} {extraVars} title="Card Studio">
 		{#snippet actions()}
 			<button
 				type="button"
 				onclick={requestClose}
-				class="flex h-7 items-center gap-1.5 rounded-md border border-line-strong px-2.5 text-[12px] font-medium text-muted transition-colors hover:bg-surface hover:text-ink"
+				class="inline-flex h-8 items-center justify-center gap-1.5 rounded-md border border-line-strong px-2.5 text-xs font-medium text-ink transition-colors hover:bg-ink-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/20 disabled:pointer-events-none disabled:opacity-40"
 			>
 				<X size={13} /> Cancel
 			</button>
 			<button
 				type="button"
 				onclick={apply}
-				class="flex h-7 items-center gap-1.5 rounded-md bg-ink px-2.5 text-[12px] font-medium text-bg transition-opacity hover:opacity-90"
+				class="inline-flex h-8 items-center justify-center gap-1.5 rounded-md bg-ink px-2.5 text-xs font-medium text-bg transition-colors hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/20 disabled:pointer-events-none disabled:opacity-40"
 			>
 				<Check size={13} /> Apply to card
 			</button>
