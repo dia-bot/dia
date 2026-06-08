@@ -652,10 +652,24 @@
 			editor.select(l.id, true); // toggle this layer in/out of the selection
 			return; // a modifier-click toggles; it doesn't start a drag
 		}
-		// Plain click on an unselected layer selects just it; clicking one that's
-		// already part of a multi-selection keeps the whole set so they drag together.
-		if (!editor.isSelected(l.id)) editor.select(l.id);
-		start(e, l, null);
+		// Group drill-in (Figma): the first click on a grouped object selects the whole
+		// group so it drags as a unit; once you're "inside" a group (a single member of
+		// it is selected) clicking its siblings — or clicking the same member again —
+		// targets that one object directly, so you can control it alone right on the
+		// canvas without going to the layers panel.
+		const inSelection = editor.isSelected(l.id);
+		const drilled =
+			!!l.group && editor.selectedIds.length === 1 && editor.selected?.group === l.group;
+		if (drilled) {
+			if (!inSelection) editor.selectOne(l.id); // step sideways to a sibling
+			start(e, l, null, false); // already a single object → no further drill on click-up
+			return;
+		}
+		// Plain click on an unselected layer selects it (a grouped layer brings its whole
+		// group); clicking one that's already selected keeps the set so it drags together,
+		// and a click without a drag then drills to just this object (see start/endGesture).
+		if (!inSelection) editor.select(l.id);
+		start(e, l, null, inSelection);
 	}
 
 	function beginHandle(e: PointerEvent, l: Layer, handle: Dir) {
@@ -668,7 +682,7 @@
 		start(e, l, handle);
 	}
 
-	function start(e: PointerEvent, l: Layer, handle: Dir | null) {
+	function start(e: PointerEvent, l: Layer, handle: Dir | null, wasSelected = false) {
 		const target = e.currentTarget as HTMLElement;
 		target.setPointerCapture(e.pointerId);
 		g = {
@@ -683,8 +697,11 @@
 			pointerId: e.pointerId,
 			pointerType: e.pointerType,
 			moved: false,
-			// A plain click (no drag) on a member of a multi-selection collapses to it.
-			isolate: handle === null && editor.selectedIds.length > 1 ? l.id : null,
+			// A plain click (no drag) on a member of an ALREADY-selected multi-selection
+			// collapses to just that one (drilling into a group / picking one of a marquee).
+			// Gated on wasSelected so the first click that forms the selection doesn't
+			// immediately collapse it — you get the group, then drill with the next click.
+			isolate: handle === null && wasSelected && editor.selectedIds.length > 1 ? l.id : null,
 			target,
 			startNodes: l.type === 'path' && l.nodes ? l.nodes.map((n) => ({ ...n })) : undefined,
 			startProps: {
@@ -856,8 +873,10 @@
 		} catch {
 			/* capture may already be gone */
 		}
-		// A click (no drag) on a member of a multi-selection isolates it (Figma).
-		if (!g.moved && g.isolate) editor.select(g.isolate);
+		// A click (no drag) on a member of a multi-selection isolates it (Figma). Use
+		// selectOne, not select, so a grouped member collapses to itself instead of
+		// re-expanding to the whole group (which made canvas drill-in impossible).
+		if (!g.moved && g.isolate) editor.selectOne(g.isolate);
 		g = null;
 		guideX = null;
 		guideY = null;
