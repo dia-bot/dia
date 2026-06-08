@@ -77,7 +77,14 @@
 		CaseLower,
 		Underline,
 		Strikethrough,
-		SlidersHorizontal
+		SlidersHorizontal,
+		Scaling,
+		Link2,
+		Unlink,
+		Blend,
+		Crop,
+		SunMedium,
+		Eclipse
 	} from 'lucide-svelte';
 	import { slide, fade } from 'svelte/transition';
 	import { cubicOut } from 'svelte/easing';
@@ -120,10 +127,10 @@
 		['exclude', 'Exclude']
 	];
 
-	const clipModes: [ClipMode, string][] = [
-		['alpha', 'Alpha'],
-		['vector', 'Vector'],
-		['luminance', 'Luminance']
+	const clipModes: [ClipMode, string, typeof Group][] = [
+		['alpha', 'Alpha', Blend],
+		['vector', 'Vector', Crop],
+		['luminance', 'Luminance', SunMedium]
 	];
 
 	const effectTypeOptions = (
@@ -134,6 +141,18 @@
 	// from LayersPanel's `menuItem`, so highlighting/disabled match the rest).
 	const menuItem =
 		'flex w-full cursor-pointer items-center gap-2.5 rounded-md px-2 py-1.5 text-[13px] text-muted outline-none transition-colors data-[highlighted]:bg-ink-2 data-[highlighted]:text-ink data-[disabled]:pointer-events-none data-[disabled]:opacity-40';
+
+	// ── Unified control variants (shadcn-on-Dia) ──────────────────────────────
+	// One set of button class strings, applied identically wherever the same
+	// variant intent appears, so every control in the editor reads the same.
+	const btnBase =
+		'inline-flex items-center justify-center gap-1.5 rounded-md text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/20 disabled:pointer-events-none disabled:opacity-40';
+	const btnSecondary = `${btnBase} border border-line-strong text-ink hover:bg-ink-2`;
+	const btnGhost = `${btnBase} text-muted hover:bg-ink-2 hover:text-ink`;
+	const btnDestructive = `${btnBase} border border-line-strong text-muted hover:border-accent hover:text-accent-ink`;
+	// icon-square base: add the active treatment (`border-faint bg-ink-2 text-ink`)
+	// or the rest treatment per-use; sizes (h-7 w-7 / h-8 w-8) are appended inline.
+	const btnIcon = btnBase;
 
 	// Whether the selection can carry a corner radius (rect / image, or a rounded
 	// avatar). Multi-aware via selectionType + a common shape check for avatars.
@@ -153,6 +172,9 @@
 	const presetValue = () =>
 		SIZE_PRESETS.find((p) => p.width === editor.layout.width && p.height === editor.layout.height)
 			?.label ?? 'custom';
+
+	// Typed scale factor for the Resize tool's Apply (e.g. 1.0, 1.2, 0.75).
+	let scaleInput = $state(1);
 
 	// Opacity reads/writes as a whole-number percent (0..100) → the field, not a slider.
 	const opacityPct = $derived.by(() => {
@@ -216,15 +238,14 @@
 	opts: { min?: number; max?: number; step?: number; suffix?: string } = {}
 )}
 	<label
-		class="flex h-8 min-w-0 items-center gap-1.5 rounded-lg border border-line bg-ink-2 px-2 transition-all hover:border-faint focus-within:border-faint focus-within:ring-2 focus-within:ring-line-strong"
+		class="group flex h-7 min-w-0 items-stretch overflow-hidden rounded-md border border-line bg-ink-2 transition-all hover:border-line-strong focus-within:border-accent-ink/60 focus-within:ring-2 focus-within:ring-accent/15"
 	>
 		<span
 			use:scrub={{ get: () => value ?? 0, set, step: opts.step ?? 1, min: opts.min, max: opts.max }}
 			title="Drag to change"
-			class="grid shrink-0 cursor-ew-resize select-none place-items-center text-faint"
+			class="grid w-6 shrink-0 cursor-ew-resize select-none place-items-center border-r border-line/70 bg-white/[0.02] text-[10px] font-semibold leading-none text-faint transition-colors group-hover:text-muted group-focus-within:text-accent-ink"
 		>
-			{#if typeof glyph === 'string'}<span class="text-[11px] font-medium">{glyph}</span>{:else}{@const I =
-					glyph}<I size={13} strokeWidth={2} />{/if}
+			{#if typeof glyph === 'string'}{glyph}{:else}{@const I = glyph}<I size={12} strokeWidth={2} />{/if}
 		</span>
 		<input
 			type="number"
@@ -234,9 +255,9 @@
 			max={opts.max}
 			step={opts.step ?? 1}
 			oninput={(e) => set(e.currentTarget.valueAsNumber || 0)}
-			class="w-full min-w-0 bg-transparent text-sm tabular-nums text-ink outline-none placeholder:text-faint"
+			class="w-full min-w-0 bg-transparent px-2 text-xs tabular-nums text-ink outline-none placeholder:text-faint"
 		/>
-		{#if opts.suffix}<span class="shrink-0 select-none text-[11px] text-faint">{opts.suffix}</span>{/if}
+		{#if opts.suffix}<span class="grid shrink-0 select-none place-items-center pr-2 text-[10px] text-faint">{opts.suffix}</span>{/if}
 	</label>
 {/snippet}
 
@@ -316,7 +337,7 @@
 					aria-label={label}
 					{disabled}
 					{onclick}
-					class="grid h-8 w-8 place-items-center rounded-md border transition-colors disabled:opacity-40 {active
+					class="{btnIcon} h-8 w-8 border {active
 						? 'border-faint bg-ink-2 text-ink'
 						: 'border-line-strong text-muted hover:border-faint hover:text-ink'}"
 				>
@@ -335,6 +356,171 @@
 	</Tooltip.Root>
 {/snippet}
 
+<!-- boolGlyph: Figma-style boolean-op icons (lucide has no squares-* set). -->
+{#snippet boolGlyph(op: string)}
+	<svg width="14" height="14" viewBox="0 0 18 18" fill="none" aria-hidden="true">
+		{#if op === 'union'}
+			<rect x="2.5" y="2.5" width="9" height="9" rx="2" fill="currentColor" />
+			<rect x="6.5" y="6.5" width="9" height="9" rx="2" fill="currentColor" />
+		{:else if op === 'subtract'}
+			<rect x="2.5" y="2.5" width="9" height="9" rx="2" fill="currentColor" />
+			<rect
+				x="6.5"
+				y="6.5"
+				width="9"
+				height="9"
+				rx="2"
+				fill="var(--color-surface)"
+				stroke="currentColor"
+				stroke-width="1.5"
+			/>
+		{:else if op === 'intersect'}
+			<rect x="2.5" y="2.5" width="9" height="9" rx="2" stroke="currentColor" stroke-width="1.5" />
+			<rect x="6.5" y="6.5" width="9" height="9" rx="2" stroke="currentColor" stroke-width="1.5" />
+			<rect x="6.5" y="6.5" width="5" height="5" fill="currentColor" />
+		{:else}
+			<rect x="2.5" y="2.5" width="9" height="9" rx="2" fill="currentColor" />
+			<rect x="6.5" y="6.5" width="9" height="9" rx="2" fill="currentColor" />
+			<rect x="6.5" y="6.5" width="5" height="5" fill="var(--color-surface)" />
+		{/if}
+	</svg>
+{/snippet}
+
+<!-- resizeView: the Scale tool's dedicated transform inspector (Figma-style) — a
+     different right-sidebar focused purely on resizing/transforming the selection. -->
+{#snippet resizeView()}
+	{@const one = editor.selected}
+	{@const multi = editor.selectedIds.length > 1}
+	<header class="flex items-center justify-between gap-2 border-b border-line px-4 py-3">
+		<div class="flex min-w-0 items-center gap-2">
+			<Scaling size={15} class="shrink-0 text-accent-ink" />
+			<h2 class="truncate text-sm font-semibold text-ink">Resize</h2>
+		</div>
+		<span class="shrink-0 text-xs text-faint">
+			{multi ? `${editor.selectedIds.length} layers` : one ? typeLabel(one.type) : ''}
+		</span>
+	</header>
+
+	<InspectorSection title="Dimensions">
+		<div class="flex items-center gap-1.5">
+			<div class="min-w-0 flex-1">
+				{@render field('W', editor.common((l) => l.w), (n) => editor.resizeW(n), { min: 8 })}
+			</div>
+			<button
+				type="button"
+				title={editor.aspectLocked ? 'Aspect ratio locked' : 'Lock aspect ratio'}
+				aria-label="Lock aspect ratio"
+				aria-pressed={editor.aspectLocked}
+				onclick={() => editor.toggleAspect()}
+				class="{btnIcon} h-8 w-8 shrink-0 border {editor.aspectLocked
+					? 'border-faint bg-ink-2 text-ink'
+					: 'border-line-strong text-muted hover:border-faint hover:text-ink'}"
+			>
+				{#if editor.aspectLocked}<Link2 size={14} />{:else}<Unlink size={14} />{/if}
+			</button>
+			<div class="min-w-0 flex-1">
+				{@render field('H', editor.common((l) => l.h), (n) => editor.resizeH(n), { min: 8 })}
+			</div>
+		</div>
+		<p class="mt-2 text-[11px] text-faint">
+			{editor.aspectLocked
+				? 'Width & height scale together.'
+				: 'Width & height resize independently.'}
+		</p>
+	</InspectorSection>
+
+	<InspectorSection title="Scale">
+		<div class="flex items-center gap-1.5">
+			<div class="flex-1">
+				{@render field('×', scaleInput, (n) => (scaleInput = n), { step: 0.1, min: 0.01 })}
+			</div>
+			<button
+				type="button"
+				title="Scale the selection by this factor"
+				onclick={() => editor.scaleSelection(scaleInput)}
+				class="{btnSecondary} h-7 shrink-0 px-3"
+			>
+				Apply
+			</button>
+		</div>
+		<div class="mt-2 grid grid-cols-2 gap-2">
+			<button type="button" onclick={() => editor.scaleSelection(0.5)} class="{btnSecondary} h-7">
+				50%
+			</button>
+			<button type="button" onclick={() => editor.scaleSelection(2)} class="{btnSecondary} h-7">
+				200%
+			</button>
+		</div>
+		<p class="mt-2 text-[11px] text-faint">
+			Type a factor (1.0 = no change, 1.2 = +20%) and Apply, or use a preset. Scales size, text,
+			strokes & radius about each layer's centre.
+		</p>
+	</InspectorSection>
+
+	<InspectorSection title="Position">
+		<div class="grid grid-cols-2 gap-2">
+			{@render field('X', editor.common((l) => l.x), (n) =>
+				editor.setAll((l) => (l.x = Math.round(n)))
+			)}
+			{@render field('Y', editor.common((l) => l.y), (n) =>
+				editor.setAll((l) => (l.y = Math.round(n)))
+			)}
+		</div>
+		<div class="mt-2">
+			{@render field('°', editor.common((l) => l.rotation ?? 0), (n) =>
+				editor.setAll((l) => (l.rotation = n))
+			)}
+		</div>
+	</InspectorSection>
+
+	{#if multi}
+		<InspectorSection title="Align">
+			<div class="grid grid-cols-6 gap-1">
+				{#each alignButtons as a (a.edge)}
+					{@const Icon = a.icon}
+					<button
+						type="button"
+						title={a.label}
+						aria-label={a.label}
+						onclick={() => editor.align(a.edge)}
+						class="{btnIcon} h-8 border border-line-strong text-muted hover:border-faint hover:text-ink"
+					>
+						<Icon size={15} />
+					</button>
+				{/each}
+			</div>
+		</InspectorSection>
+		<InspectorSection title="Distribute">
+			<div class="grid grid-cols-2 gap-1">
+				<button
+					type="button"
+					title="Even horizontal spacing (3+ layers)"
+					onclick={() => editor.distribute('h')}
+					disabled={editor.selectedIds.length < 3}
+					class="{btnSecondary} h-8"
+				>
+					<AlignHorizontalDistributeCenter size={15} /> Horizontal
+				</button>
+				<button
+					type="button"
+					title="Even vertical spacing (3+ layers)"
+					onclick={() => editor.distribute('v')}
+					disabled={editor.selectedIds.length < 3}
+					class="{btnSecondary} h-8"
+				>
+					<AlignVerticalDistributeCenter size={15} /> Vertical
+				</button>
+			</div>
+		</InspectorSection>
+	{/if}
+
+	<footer class="mt-auto border-t border-line bg-surface px-4 py-3">
+		<p class="text-[11px] text-faint">
+			Tip: drag the canvas handles with the Scale tool to resize visually.
+		</p>
+	</footer>
+{/snippet}
+
 <!-- Panel ──────────────────────────────────────────────────────────────────── -->
 
 <aside class="flex h-full w-full flex-col overflow-y-auto bg-surface text-sm">
@@ -345,6 +531,9 @@
 				{@const one = editor.selected}
 				{@const multi = editor.selectedIds.length > 1}
 
+				{#if editor.tool === 'scale'}
+					{@render resizeView()}
+				{:else}
 				<header class="flex items-center justify-between gap-2 border-b border-line px-4 py-3">
 					{#if multi}
 						<div class="min-w-0">
@@ -405,7 +594,7 @@
 							<DropdownMenu.Trigger
 								title="All operations"
 								aria-label="All operations"
-								class="grid h-8 w-8 place-items-center rounded-md border border-line-strong text-muted outline-none transition-colors hover:border-faint hover:text-ink data-[state=open]:border-faint data-[state=open]:text-ink"
+								class="{btnIcon} h-8 w-8 border border-line-strong text-muted hover:border-faint hover:text-ink data-[state=open]:border-faint data-[state=open]:text-ink"
 							>
 								<Ellipsis size={15} />
 							</DropdownMenu.Trigger>
@@ -427,11 +616,11 @@
 										<DropdownMenu.Separator class="my-1 h-px bg-line" />
 									{/if}
 
-									<DropdownMenu.GroupHeading
+									<div
 										class="px-2 py-1 text-[10px] font-medium uppercase tracking-[0.09em] text-faint"
 									>
 										Mask
-									</DropdownMenu.GroupHeading>
+									</div>
 									{#if !editor.isMask}
 										<DropdownMenu.Item
 											class={menuItem}
@@ -445,20 +634,18 @@
 											<Scissors size={14} class="text-faint" /> Release mask
 										</DropdownMenu.Item>
 									{/if}
-									{#each clipModes as [val, lbl] (val)}
+									{#each clipModes as [val, lbl, Icon] (val)}
 										<DropdownMenu.Item
 											class={menuItem}
-											disabled={!editor.isMask}
+											disabled={!editor.isMask && !editor.canMask}
 											closeOnSelect={false}
-											onSelect={() => editor.setClipMode(val)}
+											onSelect={() => editor.maskAs(val)}
 										>
-											<span class="grid w-3.5 place-items-center">
-												{#if editor.isMask && editor.clipMode === val}<Check
-														size={14}
-														class="text-ink"
-													/>{/if}
-											</span>
+											<Icon size={14} class="text-faint" />
 											{lbl}
+											{#if editor.isMask && editor.clipMode === val}
+												<Check size={14} class="ml-auto text-ink" />
+											{/if}
 										</DropdownMenu.Item>
 									{/each}
 									<DropdownMenu.Item
@@ -467,18 +654,19 @@
 										closeOnSelect={false}
 										onSelect={() => editor.setClipInvert(!editor.clipInvert)}
 									>
-										<span class="grid w-3.5 place-items-center">
-											{#if editor.isMask && editor.clipInvert}<Check size={14} class="text-ink" />{/if}
-										</span>
+										<Eclipse size={14} class="text-faint" />
 										Invert
+										{#if editor.isMask && editor.clipInvert}
+											<Check size={14} class="ml-auto text-ink" />
+										{/if}
 									</DropdownMenu.Item>
 
 									<DropdownMenu.Separator class="my-1 h-px bg-line" />
-									<DropdownMenu.GroupHeading
+									<div
 										class="px-2 py-1 text-[10px] font-medium uppercase tracking-[0.09em] text-faint"
 									>
 										Combine
-									</DropdownMenu.GroupHeading>
+									</div>
 									{#each boolOps as [val, lbl] (val)}
 										<DropdownMenu.Item
 											class={menuItem}
@@ -486,18 +674,18 @@
 											closeOnSelect={false}
 											onSelect={() => editor.applyBoolean(val)}
 										>
-											<span class="grid w-3.5 place-items-center">
-												{#if editor.isBoolean && editor.boolOp === val}<Check
-														size={14}
-														class="text-ink"
-													/>{/if}
+											<span class="grid w-3.5 shrink-0 place-items-center text-faint">
+												{@render boolGlyph(val)}
 											</span>
 											{lbl}
+											{#if editor.isBoolean && editor.boolOp === val}
+												<Check size={14} class="ml-auto text-ink" />
+											{/if}
 										</DropdownMenu.Item>
 									{/each}
 									{#if editor.isBoolean}
 										<DropdownMenu.Item class={menuItem} onSelect={() => editor.clearBoolean()}>
-											<span class="w-3.5"></span> Release combine
+											<Ungroup size={14} class="text-faint" /> Release combine
 										</DropdownMenu.Item>
 									{/if}
 
@@ -557,42 +745,35 @@
 				<!-- ── Appearance (corner radius) ────────────────────────────────── -->
 				{#if showCorners}
 					<InspectorSection title="Corners">
-						{#if !editor.cornersActive}
-							<div class="flex items-center gap-2">
-								<div class="flex-1">
-									{@render field(
-										'R',
-										editor.common((l) => l.radius ?? 0),
-										(n) => editor.setRadius(n),
-										{ min: 0 }
-									)}
-								</div>
-								<button
-									type="button"
-									title="Independent corners"
-									aria-label="Independent corners"
-									onclick={() => editor.expandCorners()}
-									class="grid h-8 w-8 shrink-0 place-items-center rounded-md border border-line-strong text-muted transition-colors hover:border-faint hover:text-ink"
-								>
-									<CornerUpLeft size={14} />
-								</button>
+						<div class="flex items-center gap-2">
+							<div class="flex-1">
+								{@render field(
+									'R',
+									editor.common((l) =>
+										Array.isArray(l.corners) && l.corners.length === 4 ? l.corners[0] : (l.radius ?? 0)
+									),
+									(n) => editor.setAllCorners(n),
+									{ min: 0 }
+								)}
 							</div>
-						{:else}
-							<div class="flex items-center justify-between">
-								<span class="text-[10px] font-medium uppercase tracking-[0.09em] text-faint"
-									>Corner radius</span
-								>
-								<button
-									type="button"
-									title="Uniform radius"
-									aria-label="Uniform radius"
-									onclick={() => editor.collapseCorners()}
-									class="grid h-6 w-6 shrink-0 place-items-center rounded text-faint transition-colors hover:bg-ink-2 hover:text-ink"
-								>
-									<SquareDashedBottom size={14} />
-								</button>
-							</div>
-							<div class="mt-1.5 grid grid-cols-2 gap-2">
+							<button
+								type="button"
+								title={editor.cornersActive ? 'Uniform radius' : 'Independent corners'}
+								aria-label={editor.cornersActive ? 'Uniform radius' : 'Independent corners'}
+								aria-pressed={editor.cornersActive}
+								onclick={() => (editor.cornersActive ? editor.collapseCorners() : editor.expandCorners())}
+								class="{btnIcon} h-7 w-7 shrink-0 border {editor.cornersActive
+									? 'border-faint bg-ink-2 text-ink'
+									: 'border-line-strong text-muted hover:border-faint hover:text-ink'}"
+							>
+								<CornerUpLeft size={14} />
+							</button>
+						</div>
+						{#if editor.cornersActive}
+							<div
+								class="mt-2 grid grid-cols-2 gap-2"
+								transition:slide={{ duration: 180, easing: cubicOut }}
+							>
 								{@render field(
 									'TL',
 									editor.common((l) => l.corners?.[0] ?? l.radius ?? 0),
@@ -648,6 +829,7 @@
 							</div>
 
 							<Select
+								dense
 								bind:value={
 									() => editor.common((l) => l.font_family ?? '') ?? '',
 									(v) => editor.setAll((l) => (l.font_family = v))
@@ -672,7 +854,7 @@
 										type="button"
 										onclick={() => fontFile?.click()}
 										disabled={fontBusy}
-										class="flex w-full items-center justify-center gap-1.5 rounded-md border border-line-strong px-2 py-1.5 text-xs font-medium text-muted transition-colors hover:border-faint hover:text-ink disabled:opacity-50"
+										class="{btnSecondary} w-full px-2 py-1.5"
 									>
 										{#if fontBusy}<Loader2 size={13} class="animate-spin" />{:else}<Upload
 												size={13}
@@ -720,6 +902,7 @@
 									{ min: 1 }
 								)}
 								<Select
+									dense
 									bind:value={
 										() => {
 											const c = editor.common((l) => l.font_weight ?? 400);
@@ -822,6 +1005,7 @@
 								{@render row('Fit')}
 								<div class="w-full">
 									<Select
+										dense
 										bind:value={
 											() => editor.common((l) => l.fit ?? 'cover') ?? '',
 											(v) => editor.setAll((l) => (l.fit = v as 'cover' | 'contain'))
@@ -838,6 +1022,7 @@
 								{@render row('Mask')}
 								<div class="w-full">
 									<Select
+										dense
 										bind:value={
 											() => editor.common((l) => l.mask ?? '') ?? '',
 											(v) => editor.setAll((l) => (l.mask = v as Mask))
@@ -886,6 +1071,7 @@
 								{@render row('Shape')}
 								<div class="w-full">
 									<Select
+										dense
 										bind:value={
 											() => editor.common((l) => l.shape ?? 'circle') ?? '',
 											(v) => editor.setAll((l) => (l.shape = v as 'circle' | 'rounded'))
@@ -969,7 +1155,7 @@
 										type="button"
 										onclick={() => editor.deleteActiveNode()}
 										disabled={(one.nodes?.length ?? 0) <= 2}
-										class="flex w-full items-center justify-center gap-1.5 rounded-md border border-line-strong px-2 py-1.5 text-xs font-medium text-muted transition-colors hover:border-accent hover:text-accent-ink disabled:opacity-40"
+										class="{btnDestructive} w-full px-2 py-1.5"
 									>
 										<Trash2 size={13} /> Delete point
 									</button>
@@ -999,7 +1185,7 @@
 								<button
 									type="button"
 									onclick={() => editor.reversePath()}
-									class="flex w-full items-center justify-center gap-1.5 rounded-md border border-line-strong px-2 py-1.5 text-xs font-medium text-ink transition-colors hover:bg-ink-2"
+									class="{btnSecondary} w-full px-2 py-1.5"
 								>
 									<Repeat2 size={13} /> Reverse direction
 								</button>
@@ -1065,7 +1251,7 @@
 								title="Add drop shadow"
 								aria-label="Add drop shadow"
 								onclick={() => editor.addEffect('drop_shadow')}
-								class="grid h-5 w-5 place-items-center rounded text-faint transition-colors hover:bg-ink-2 hover:text-ink"
+								class="{btnGhost} h-5 w-5"
 							>
 								<Plus size={14} />
 							</button>
@@ -1082,12 +1268,13 @@
 											title={e.hidden ? 'Show effect' : 'Hide effect'}
 											aria-label={e.hidden ? 'Show effect' : 'Hide effect'}
 											onclick={() => editor.toggleEffectHidden(i)}
-											class="grid h-8 w-8 shrink-0 place-items-center rounded text-faint transition-colors hover:bg-ink-2 hover:text-ink"
+											class="{btnGhost} h-8 w-8 shrink-0"
 										>
 											{#if e.hidden}<EyeOff size={14} />{:else}<Eye size={14} />{/if}
 										</button>
 										<div class="min-w-0 flex-1">
 											<Select
+												dense
 												bind:value={
 													() => e.type,
 													(v) => editor.updateEffect(i, { type: v as EffectType })
@@ -1101,7 +1288,7 @@
 											<Popover.Trigger
 												title="Effect settings"
 												aria-label="Effect settings"
-												class="grid h-8 w-8 shrink-0 place-items-center rounded text-faint outline-none transition-colors hover:bg-ink-2 hover:text-ink data-[state=open]:bg-ink-2 data-[state=open]:text-ink"
+												class="{btnGhost} h-8 w-8 shrink-0 data-[state=open]:bg-ink-2 data-[state=open]:text-ink"
 											>
 												<SlidersHorizontal size={14} />
 											</Popover.Trigger>
@@ -1166,7 +1353,7 @@
 											title="Remove effect"
 											aria-label="Remove effect"
 											onclick={() => editor.removeEffect(i)}
-											class="grid h-8 w-8 shrink-0 place-items-center rounded text-faint transition-colors hover:bg-ink-2 hover:text-danger"
+											class="{btnBase} h-8 w-8 shrink-0 text-faint hover:bg-ink-2 hover:text-danger"
 										>
 											<X size={14} />
 										</button>
@@ -1188,7 +1375,7 @@
 									title={a.label}
 									aria-label={a.label}
 									onclick={() => editor.align(a.edge)}
-									class="grid h-8 place-items-center rounded-md border border-line-strong text-muted transition-colors hover:border-faint hover:text-ink"
+									class="{btnIcon} h-8 border border-line-strong text-muted hover:border-faint hover:text-ink"
 								>
 									<Icon size={15} />
 								</button>
@@ -1204,7 +1391,7 @@
 								title="Even horizontal spacing — equalise the left-to-right gaps between 3+ layers"
 								onclick={() => editor.distribute('h')}
 								disabled={editor.selectedIds.length < 3}
-								class="flex h-8 items-center justify-center gap-1.5 rounded-md border border-line-strong text-xs text-muted transition-colors hover:border-faint hover:text-ink disabled:opacity-40"
+								class="{btnSecondary} h-8"
 							>
 								<AlignHorizontalDistributeCenter size={15} /> Horizontal
 							</button>
@@ -1213,7 +1400,7 @@
 								title="Even vertical spacing — equalise the top-to-bottom gaps between 3+ layers"
 								onclick={() => editor.distribute('v')}
 								disabled={editor.selectedIds.length < 3}
-								class="flex h-8 items-center justify-center gap-1.5 rounded-md border border-line-strong text-xs text-muted transition-colors hover:border-faint hover:text-ink disabled:opacity-40"
+								class="{btnSecondary} h-8"
 							>
 								<AlignVerticalDistributeCenter size={15} /> Vertical
 							</button>
@@ -1226,7 +1413,7 @@
 								<button
 									type="button"
 									onclick={() => editor.ungroup()}
-									class="flex flex-1 items-center justify-center gap-1.5 rounded-md border border-line-strong px-2 py-1.5 text-xs font-medium text-ink transition-colors hover:bg-ink-2"
+									class="{btnSecondary} flex-1 px-2 py-1.5"
 								>
 									<Ungroup size={13} /> Ungroup
 								</button>
@@ -1234,7 +1421,7 @@
 								<button
 									type="button"
 									onclick={() => editor.group()}
-									class="flex flex-1 items-center justify-center gap-1.5 rounded-md border border-line-strong px-2 py-1.5 text-xs font-medium text-ink transition-colors hover:bg-ink-2"
+									class="{btnSecondary} flex-1 px-2 py-1.5"
 								>
 									<Group size={13} /> Group
 								</button>
@@ -1249,7 +1436,7 @@
 						<button
 							type="button"
 							onclick={() => editor.removeSelected()}
-							class="flex w-full items-center justify-center gap-1.5 rounded-md border border-line-strong px-2 py-1.5 text-xs font-medium text-muted transition-colors hover:border-accent hover:text-accent-ink"
+							class="{btnDestructive} w-full px-2 py-1.5"
 						>
 							<Trash2 size={13} /> Delete {editor.selectedIds.length} layers
 						</button>
@@ -1259,18 +1446,19 @@
 						<button
 							type="button"
 							onclick={() => editor.duplicateLayer(one.id)}
-							class="flex flex-1 items-center justify-center gap-1.5 rounded-md border border-line-strong px-2 py-1.5 text-xs font-medium text-ink transition-colors hover:bg-ink-2"
+							class="{btnSecondary} flex-1 px-2 py-1.5"
 						>
 							<Copy size={13} /> Duplicate
 						</button>
 						<button
 							type="button"
 							onclick={() => editor.removeLayer(one.id)}
-							class="flex flex-1 items-center justify-center gap-1.5 rounded-md border border-line-strong px-2 py-1.5 text-xs font-medium text-muted transition-colors hover:border-accent hover:text-accent-ink"
+							class="{btnDestructive} flex-1 px-2 py-1.5"
 						>
 							<Trash2 size={13} /> Delete
 						</button>
 					</footer>
+				{/if}
 				{/if}
 			{:else}
 				<!-- ── No selection: canvas + background ─────────────────────────────── -->
@@ -1281,6 +1469,7 @@
 
 				<InspectorSection title="Dimensions">
 					<Select
+						dense
 						bind:value={
 							() => presetValue(),
 							(v) => {
