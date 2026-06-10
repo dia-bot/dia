@@ -22,14 +22,23 @@ import {
 	type ClipMode,
 	type BoolOp,
 	type Effect,
-	type EffectType
+	type EffectType,
+	type StrokeAlign,
+	type StrokeStyle,
+	type StrokeCap,
+	type StrokeJoin,
+	type StrokeSide,
+	type WidthProfile,
+	type ArrowCap,
+	type BrushDirection
 } from './schema';
+import { brushDef, DEFAULT_BRUSH, type BrushKind } from './brushes';
 
 export const EDITOR_CTX = Symbol('dia-layout-editor');
 
 // Active canvas tool. 'select' is the arrow; rect..avatar are drag-to-create
 // shapes; 'pen' places bezier nodes and 'pencil' draws freehand.
-export type Tool = 'select' | 'scale' | 'rect' | 'ellipse' | 'text' | 'image' | 'avatar' | 'pen' | 'pencil' | 'shape' | 'bend';
+export type Tool = 'select' | 'scale' | 'rect' | 'ellipse' | 'text' | 'image' | 'pen' | 'pencil' | 'shape' | 'bend';
 
 export type AlignEdge = 'left' | 'hcenter' | 'right' | 'top' | 'vcenter' | 'bottom';
 
@@ -307,12 +316,12 @@ export class EditorStore {
 		this.fitPath(l);
 	}
 	// scaleLayer is the Scale tool (Figma's K): like resize, but it ALSO scales the
-	// layer's intrinsic properties (font size, stroke width, corner radius, ring) by
+	// layer's intrinsic properties (font size, stroke width, corner radius) by
 	// the uniform factor f, so the whole object grows proportionally. props holds the
 	// values captured at gesture start.
 	scaleLayer(
 		id: string,
-		props: { fontSize?: number; stroke?: number; radius?: number; ring?: number },
+		props: { fontSize?: number; stroke?: number; radius?: number },
 		startNodes: PathNode[] | undefined,
 		sx: number,
 		sy: number,
@@ -337,7 +346,6 @@ export class EditorStore {
 		if (props.fontSize != null) l.font_size = Math.max(1, Math.round(props.fontSize * f));
 		if (props.stroke != null) l.stroke_width = Math.max(0, Math.round(props.stroke * f * 10) / 10);
 		if (props.radius != null) l.radius = Math.max(0, Math.round(props.radius * f));
-		if (props.ring != null) l.ring_width = Math.max(0, Math.round(props.ring * f));
 	}
 
 	// scalePath maps a path's nodes (captured at gesture start) from the start bbox
@@ -400,6 +408,13 @@ export class EditorStore {
 		copy.x = Math.round(src.x + dx);
 		copy.y = Math.round(src.y + dy);
 		delete copy.group;
+		// An ungrouped copy must never stay a dangling stencil (clip with no group) — the
+		// preview's maskFor ignores it so it'd vanish, but the Go renderer would paint it.
+		if (copy.clip) {
+			copy.clip = false;
+			delete copy.clip_mode;
+			copy.clip_invert = false;
+		}
 		if (copy.nodes) {
 			for (const n of copy.nodes) {
 				n.x += dx;
@@ -984,6 +999,238 @@ export class EditorStore {
 		return l?.type === 'path' ? !!l.fill : false;
 	}
 
+	// ── stroke (border, Figma-style: a "+" adds it, then position/weight/colour) ──
+	get hasStroke(): boolean {
+		return this.selectedLayers.some((l) => (l.stroke_width ?? 0) > 0);
+	}
+	// addStroke gives the selection a 1px stroke (Figma seeds 1px), defaulting colour
+	// and the Position to 'inside' (Figma's default for shapes).
+	addStroke() {
+		this.setAll((l) => {
+			if ((l.stroke_width ?? 0) <= 0) l.stroke_width = 1;
+			if (!l.stroke_color) l.stroke_color = '#FFFFFF';
+			if (!l.stroke_align) l.stroke_align = 'inside';
+		});
+	}
+	removeStroke() {
+		this.setAll((l) => (l.stroke_width = 0));
+	}
+	get strokeAlign(): StrokeAlign {
+		return this.common((l) => (l.stroke_align ?? 'center') as StrokeAlign) ?? 'center';
+	}
+	setStrokeAlign(a: StrokeAlign) {
+		this.setAll((l) => (l.stroke_align = a));
+	}
+	get strokeStyle(): StrokeStyle | '' {
+		// '' = Mixed (a solid+dashed selection) so the segmented control highlights neither.
+		return this.common((l) => (l.stroke_style ?? 'solid') as StrokeStyle) ?? '';
+	}
+	get strokeDashed(): boolean {
+		return this.selectedLayers.some((l) => l.stroke_style === 'dashed');
+	}
+	// setStrokeStyle switches solid⇄dashed; turning dashes on seeds a sensible dash/gap
+	// from the weight (Figma defaults to roughly twice the weight) when none is set.
+	setStrokeStyle(s: StrokeStyle) {
+		this.setAll((l) => {
+			l.stroke_style = s;
+			if (s === 'dashed' && !(l.dash && l.dash > 0)) {
+				const w = Math.max(1, Math.round(l.stroke_width ?? 1));
+				l.dash = w * 2;
+				l.gap = w * 2;
+			}
+		});
+	}
+	get dash(): number {
+		return this.common((l) => l.dash ?? 0) ?? 0;
+	}
+	setDash(n: number) {
+		this.setAll((l) => (l.dash = Math.max(0, n)));
+	}
+	get gap(): number {
+		return this.common((l) => l.gap ?? 0) ?? 0;
+	}
+	setGap(n: number) {
+		this.setAll((l) => (l.gap = Math.max(0, n)));
+	}
+	get strokeCap(): StrokeCap {
+		return this.common((l) => (l.stroke_cap ?? 'round') as StrokeCap) ?? 'round';
+	}
+	setStrokeCap(c: StrokeCap) {
+		this.setAll((l) => (l.stroke_cap = c));
+	}
+	get strokeJoin(): StrokeJoin {
+		return this.common((l) => (l.stroke_join ?? 'round') as StrokeJoin) ?? 'round';
+	}
+	setStrokeJoin(j: StrokeJoin) {
+		this.setAll((l) => (l.stroke_join = j));
+	}
+	// Per-side strokes (rect): unset/empty OR all four = a full outline. isStrokeSide
+	// reports whether a side is on for the selection (a side counts as ON when sides is
+	// unset). allStrokeSides is true when no side is excluded.
+	isStrokeSide(side: StrokeSide): boolean {
+		return (
+			this.common((l) => {
+				const s = l.stroke_sides;
+				return !s || s.length === 0 || s.includes(side);
+			}) ?? true
+		);
+	}
+	get allStrokeSides(): boolean {
+		return (
+			this.common((l) => {
+				const s = l.stroke_sides;
+				return !s || s.length === 0 || s.length === 4;
+			}) ?? true
+		);
+	}
+	toggleStrokeSide(side: StrokeSide) {
+		const order: StrokeSide[] = ['top', 'right', 'bottom', 'left'];
+		this.setAll((l) => {
+			const cur = new Set(l.stroke_sides && l.stroke_sides.length ? l.stroke_sides : order);
+			if (cur.has(side)) cur.delete(side);
+			else cur.add(side);
+			const next = order.filter((s) => cur.has(s));
+			// never leave a stroke with zero sides — fall back to the full outline
+			l.stroke_sides = next.length === 0 || next.length === 4 ? undefined : next;
+		});
+	}
+	setAllStrokeSides() {
+		this.setAll((l) => (l.stroke_sides = undefined));
+	}
+
+	// ── advanced stroke (Figma's Stroke-settings popover) ──────────────────────
+	// Width profile — tapers a path's weight along its length (paths only).
+	get widthProfile(): WidthProfile | '' {
+		// '' = Mixed (a multi-select with differing profiles) so the select shows "Mixed".
+		return this.common((l) => (l.width_profile ?? 'uniform') as WidthProfile) ?? '';
+	}
+	setWidthProfile(p: WidthProfile) {
+		this.setAll((l) => (l.width_profile = p === 'uniform' ? undefined : p));
+	}
+	// Arrowheads at the path's first / last node (Figma's Start point / End point).
+	get startCap(): ArrowCap | '' {
+		return this.common((l) => (l.start_cap ?? 'none') as ArrowCap) ?? '';
+	}
+	setStartCap(c: ArrowCap) {
+		this.setAll((l) => (l.start_cap = c === 'none' ? undefined : c));
+	}
+	get endCap(): ArrowCap | '' {
+		return this.common((l) => (l.end_cap ?? 'none') as ArrowCap) ?? '';
+	}
+	setEndCap(c: ArrowCap) {
+		this.setAll((l) => (l.end_cap = c === 'none' ? undefined : c));
+	}
+	// Miter cutoff angle (degrees). Figma seeds 28.96°; only meaningful for a miter join.
+	get miterAngle(): number {
+		return this.common((l) => l.miter_angle ?? 28.96) ?? 28.96;
+	}
+	setMiterAngle(n: number) {
+		this.setAll((l) => (l.miter_angle = Math.min(180, Math.max(0, n))));
+	}
+	// Brush — a named brush from the catalog (brushes.ts). brushName is the selected id; its kind
+	// drives which params show. Scatter params default to the brush's preset; switching re-seeds.
+	get brushName(): string {
+		return this.common((l) => l.brush_name ?? DEFAULT_BRUSH) ?? DEFAULT_BRUSH;
+	}
+	setBrushName(id: string) {
+		this.setAll((l) => {
+			l.brush_name = id;
+			l.scatter_gap = undefined;
+			l.scatter_wiggle = undefined;
+			l.scatter_size = undefined;
+		});
+	}
+	get brushKind(): BrushKind {
+		return brushDef(this.brushName).kind;
+	}
+	get scatterGap(): number {
+		return this.common((l) => l.scatter_gap ?? brushDef(l.brush_name).gap) ?? 0.15;
+	}
+	setScatterGap(n: number) {
+		this.setAll((l) => (l.scatter_gap = Math.min(8, Math.max(0.05, Math.round(n * 100) / 100))));
+	}
+	get scatterWiggle(): number {
+		return this.common((l) => l.scatter_wiggle ?? Math.round(brushDef(l.brush_name).jitter * 100)) ?? 0;
+	}
+	setScatterWiggle(n: number) {
+		this.setAll((l) => (l.scatter_wiggle = Math.min(100, Math.max(0, Math.round(n)))));
+	}
+	get scatterSize(): number {
+		return this.common((l) => l.scatter_size ?? Math.round(brushDef(l.brush_name).size * 100)) ?? 0;
+	}
+	setScatterSize(n: number) {
+		this.setAll((l) => (l.scatter_size = Math.min(100, Math.max(0, Math.round(n)))));
+	}
+	get brushDirection(): BrushDirection {
+		return this.common((l) => (l.brush_direction ?? 'forward') as BrushDirection) ?? 'forward';
+	}
+	setBrushDirection(d: BrushDirection) {
+		this.setAll((l) => (l.brush_direction = d === 'forward' ? undefined : d));
+	}
+	// Dynamic (hand-drawn wobble) — frequency/wiggle/smoothen, each a 0-based percent.
+	get dynamicFrequency(): number {
+		return this.common((l) => l.dynamic_frequency ?? 0) ?? 0;
+	}
+	setDynamicFrequency(n: number) {
+		this.setAll((l) => (l.dynamic_frequency = Math.min(100, Math.max(0, Math.round(n))) || undefined));
+	}
+	get dynamicWiggle(): number {
+		return this.common((l) => l.dynamic_wiggle ?? 0) ?? 0;
+	}
+	setDynamicWiggle(n: number) {
+		this.setAll((l) => (l.dynamic_wiggle = Math.min(200, Math.max(0, Math.round(n))) || undefined));
+	}
+	get dynamicSmoothen(): number {
+		return this.common((l) => l.dynamic_smoothen ?? 0) ?? 0;
+	}
+	setDynamicSmoothen(n: number) {
+		this.setAll((l) => (l.dynamic_smoothen = Math.min(100, Math.max(0, Math.round(n))) || undefined));
+	}
+	// strokeMode reflects which of Figma's mutually-exclusive stroke TYPES the selection uses:
+	// 'dynamic' (hand-drawn wobble), 'brush' (textured), else 'basic'. Drives the Stroke-settings
+	// tabs, which act as the type switcher.
+	get strokeMode(): 'basic' | 'dynamic' | 'brush' {
+		if (this.common((l) => (l.dynamic_wiggle ?? 0) > 0) === true) return 'dynamic';
+		if (this.common((l) => !!l.brush_name) === true) return 'brush';
+		return 'basic';
+	}
+	// setStrokeMode switches stroke TYPE like Figma's Basic/Dynamic/Brush tabs: it CLEARS the
+	// other types and seeds sensible defaults for the chosen one — so picking Dynamic shows a
+	// visible hand-drawn stroke immediately (Figma applies non-zero defaults the same way).
+	// Dynamic and Brush are center-only, so they reset the stroke Position to centre.
+	setStrokeMode(mode: 'basic' | 'dynamic' | 'brush') {
+		this.setAll((l) => {
+			if (mode === 'dynamic') {
+				l.brush_name = undefined;
+				l.brush_direction = undefined;
+				l.scatter_gap = undefined;
+				l.scatter_wiggle = undefined;
+				l.scatter_size = undefined;
+				if (!(l.dynamic_wiggle && l.dynamic_wiggle > 0)) {
+					l.dynamic_frequency = 50;
+					l.dynamic_wiggle = 100;
+					l.dynamic_smoothen = 80;
+				}
+				l.stroke_align = undefined; // center-only
+			} else if (mode === 'brush') {
+				l.dynamic_frequency = undefined;
+				l.dynamic_wiggle = undefined;
+				l.dynamic_smoothen = undefined;
+				if (!l.brush_name) l.brush_name = DEFAULT_BRUSH;
+				l.stroke_align = undefined; // center-only
+			} else {
+				l.dynamic_frequency = undefined;
+				l.dynamic_wiggle = undefined;
+				l.dynamic_smoothen = undefined;
+				l.brush_name = undefined;
+				l.brush_direction = undefined;
+				l.scatter_gap = undefined;
+				l.scatter_wiggle = undefined;
+				l.scatter_size = undefined;
+			}
+		});
+	}
+
 	// ── masking ("use as mask") ──────────────────────────────────────────────────
 	// isMask: the current selection is (or belongs to) a mask group — drives the
 	// inspector's mask section + the Use-as-mask / Release-mask branch.
@@ -1044,7 +1291,9 @@ export class EditorStore {
 		if (layer.clip || !layer.group) return null;
 		const arr = this.layout.layers;
 		const [lo] = this.#groupSpan(layer.group);
-		if (lo < 0 || !arr[lo].clip) return null;
+		// A hidden stencil clips nothing (matches the Go renderer, which draws the masked
+		// run normally when the stencil is hidden) — so the preview shouldn't clip either.
+		if (lo < 0 || !arr[lo].clip || arr[lo].hidden) return null;
 		return arr.findIndex((l) => l.id === layer.id) > lo ? arr[lo] : null;
 	}
 
@@ -1360,7 +1609,6 @@ export class EditorStore {
 		if (l.stroke_width) l.stroke_width = Math.max(0, Math.round(l.stroke_width * f * 10) / 10);
 		if (l.radius) l.radius = Math.max(0, Math.round(l.radius * f));
 		if (Array.isArray(l.corners)) l.corners = l.corners.map((c) => Math.max(0, Math.round(c * f))) as [number, number, number, number];
-		if (l.ring_width) l.ring_width = Math.max(0, Math.round(l.ring_width * f));
 		if (l.letter_spacing) l.letter_spacing = Math.round(l.letter_spacing * f);
 	}
 	// resizeW/resizeH set a new width/height across the selection (each layer from its

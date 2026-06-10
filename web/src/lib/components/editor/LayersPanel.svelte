@@ -51,7 +51,6 @@
 	const icons: Record<LayerType, typeof Type> = {
 		text: Type,
 		image: Image,
-		avatar: UserCircle,
 		rect: Square,
 		ellipse: Circle,
 		path: PenTool

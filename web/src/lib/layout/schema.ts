@@ -5,7 +5,7 @@
 //
 // Keep this in sync with internal/layout/schema.go (same JSON shape).
 
-export type LayerType = 'text' | 'image' | 'avatar' | 'rect' | 'ellipse' | 'path';
+export type LayerType = 'text' | 'image' | 'rect' | 'ellipse' | 'path';
 export type Align = 'left' | 'center' | 'right';
 // Vertical alignment of text within its layer box (Figma's text vertical-align).
 export type VAlign = 'top' | 'middle' | 'bottom';
@@ -34,8 +34,25 @@ export interface PathNode {
 	m?: HandleMode; // handle relationship (default 'corner')
 }
 export type Fit = 'cover' | 'contain';
-export type Shape = 'circle' | 'rounded';
-export type Mask = '' | 'circle' | 'ellipse'; // image clip; '' = rounded-rect via radius
+// Where a stroke sits relative to the shape's edge (Figma's stroke Position): 'center'
+// straddles the edge, 'inside'/'outside' shift it fully in/out. Unset = 'center'.
+export type StrokeAlign = 'inside' | 'center' | 'outside';
+// Figma's advanced stroke controls. style 'dashed' draws dash/gap-length dashes; cap is
+// the end shape of open paths + dashes ('butt' = Figma's "None"); join is how corners meet.
+export type StrokeStyle = 'solid' | 'dashed';
+export type StrokeCap = 'butt' | 'round' | 'square';
+export type StrokeJoin = 'miter' | 'bevel' | 'round';
+export type StrokeSide = 'top' | 'right' | 'bottom' | 'left';
+// Figma's Stroke-settings "Basic" extras. Width profile tapers a path's weight along
+// its length (uniform = constant); a profile only affects open/closed vector paths.
+export type WidthProfile = 'uniform' | 'taper_start' | 'taper_end' | 'taper' | 'lens';
+// Arrowhead / decoration drawn at a path endpoint (Figma's Start point / End point).
+// 'none' = a plain cap; the rest paint a marker at the path's first/last node.
+export type ArrowCap = 'none' | 'line' | 'arrow' | 'triangle' | 'circle' | 'diamond';
+// Figma's "Brush" tab — a named brush from the catalog (see brushes.ts). Each brush is a
+// Stretch (one shape stretched along the line) or Scatter (a mark repeated along it) kind.
+// Brushes are center-only and replace the plain stroke rendering.
+export type BrushDirection = 'forward' | 'backward';
 // How a mask layer clips the layers above it (Figma's three mask types):
 //   'alpha'     — the stencil's opacity sets the reveal (soft edges from a PNG/gradient)
 //   'vector'    — any covered pixel is fully revealed (hard-edged shape crop; the default for cards)
@@ -143,19 +160,35 @@ export interface Layer {
 	valign?: VAlign; // vertical alignment within the layer box (default 'top')
 	text_case?: TextCase; // case transform (default 'none')
 	text_decoration?: TextDecoration; // underline / strikethrough (default 'none')
-	// image / avatar
+	// image
 	src?: string; // url or {user.avatar}
 	fit?: Fit;
-	shape?: Shape;
-	mask?: Mask; // image: clip to circle/ellipse (else rounded-rect via radius)
-	ring_color?: string;
-	ring_width?: number;
 	// rect / ellipse / common
 	fill?: string; // hex (rect/ellipse/path fill)
 	radius?: number; // corner radius (rect / image / rounded avatar)
 	corners?: [number, number, number, number]; // independent corner radii [tl,tr,br,bl]; overrides `radius` when set (rect/image)
-	stroke_color?: string; // outline colour (rect / ellipse / path)
+	stroke_color?: string; // outline colour (rect / ellipse / path / image / text)
 	stroke_width?: number; // outline width in canvas px
+	stroke_align?: StrokeAlign; // stroke Position (inside/center/outside); default 'center'
+	stroke_style?: StrokeStyle; // 'dashed' draws dash/gap dashes (default 'solid')
+	dash?: number; // dash length, canvas px (dashed)
+	gap?: number; // gap length, canvas px (dashed)
+	stroke_cap?: StrokeCap; // end/dash cap, butt='None' (default 'round')
+	stroke_join?: StrokeJoin; // corner join (default 'round')
+	stroke_sides?: StrokeSide[]; // rect per-side strokes; unset OR all 4 = full outline
+	// advanced stroke (Figma's Stroke-settings popover; mostly path-only) ────────────
+	width_profile?: WidthProfile; // taper a path's weight along its length (default 'uniform')
+	start_cap?: ArrowCap; // arrowhead at the path's first node (open paths; default 'none')
+	end_cap?: ArrowCap; // arrowhead at the path's last node (open paths; default 'none')
+	miter_angle?: number; // miter join cutoff in degrees (default ~28.96, Figma's default)
+	brush_name?: string; // selected brush id from the catalog (brushes.ts); unset = no brush
+	brush_direction?: BrushDirection; // stretch nib direction (default 'forward')
+	scatter_gap?: number; // scatter: stamp spacing as a multiple of stroke weight (unset = brush preset)
+	scatter_wiggle?: number; // scatter: perpendicular position jitter %, 0..100
+	scatter_size?: number; // scatter: mark size jitter %, 0..100
+	dynamic_frequency?: number; // hand-drawn wobble density, 0..100 (paths; default 0 = off)
+	dynamic_wiggle?: number; // hand-drawn wobble amplitude %, 0..200 (paths; default 0)
+	dynamic_smoothen?: number; // smooth the wobble, 0..100 (paths; default 0)
 	// path (pen / pencil)
 	nodes?: PathNode[]; // absolute canvas-px anchors + handles
 	closed?: boolean; // close + fill the path
@@ -226,9 +259,6 @@ export function newLayer(type: LayerType): Layer {
 	if (type === 'image') {
 		return { ...base, name: 'Image', src: '', fit: 'cover', radius: 12, w: 200, h: 200 };
 	}
-	if (type === 'avatar') {
-		return { ...base, name: 'Avatar', src: '{{.User.Avatar}}', shape: 'circle', ring_color: '#FFFFFF', ring_width: 6, radius: 24, w: 180, h: 180 };
-	}
 	if (type === 'ellipse') {
 		return { ...base, name: 'Ellipse', fill: '#FFFFFF', radius: 0, opacity: 1, w: 240, h: 240 };
 	}
@@ -258,18 +288,21 @@ export const EFFECT_LABELS: Record<EffectType, string> = {
 	background_blur: 'Background blur'
 };
 
-// newAvatarImage returns an image layer pre-configured as a circular member
-// avatar — the "avatar" is just an image bound to the {{.User.Avatar}} template,
-// so it's editable like any image (swap the URL for {{.Guild.Icon}}, etc.).
+// newAvatarImage returns an image layer pre-configured as a circular member avatar.
+// It is JUST an image bound to {{.User.Avatar}}: rounded into a circle with a fully-rounded
+// corner radius (clamped to min(w,h)/2 by both renderers) and bordered with an outside
+// stroke. There are no special avatar/mask/ring fields — shape it with the corner radius
+// and border it with the stroke, exactly like any other image.
 export function newAvatarImage(): Layer {
 	return {
 		...newLayer('image'),
 		name: 'Avatar',
 		src: '{{.User.Avatar}}',
 		fit: 'cover',
-		mask: 'circle',
-		ring_color: '#FFFFFF',
-		ring_width: 6,
+		radius: 9999, // fully rounded → circle (clamped to min/2 by both renderers)
+		stroke_color: '#FFFFFF',
+		stroke_width: 6,
+		stroke_align: 'outside', // a border around the avatar, not eating into the image
 		w: 180,
 		h: 180
 	};

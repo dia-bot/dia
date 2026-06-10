@@ -35,13 +35,9 @@ type Layer struct {
 	TextCase       string  `json:"text_case,omitempty"`       // none|upper|lower|title
 	TextDecoration string  `json:"text_decoration,omitempty"` // none|underline|strike
 
-	// image / avatar
-	Src       string  `json:"src,omitempty"`
-	Fit       string  `json:"fit,omitempty"`
-	Shape     string  `json:"shape,omitempty"`
-	Mask      string  `json:"mask,omitempty"` // image clip: "circle" | "ellipse" (else rounded-rect via radius)
-	RingColor string  `json:"ring_color,omitempty"`
-	RingWidth float64 `json:"ring_width,omitempty"`
+	// image
+	Src string `json:"src,omitempty"`
+	Fit string `json:"fit,omitempty"`
 
 	// rect / ellipse / common
 	Fill        string    `json:"fill,omitempty"`
@@ -49,6 +45,28 @@ type Layer struct {
 	Corners     []float64 `json:"corners,omitempty"` // independent corner radii [tl,tr,br,bl]; overrides Radius when len==4
 	StrokeColor string    `json:"stroke_color,omitempty"`
 	StrokeWidth float64   `json:"stroke_width,omitempty"`
+	StrokeAlign string    `json:"stroke_align,omitempty"` // inside|center|outside (Figma stroke Position); default center
+	StrokeStyle string    `json:"stroke_style,omitempty"` // solid|dashed (default solid)
+	Dash        float64   `json:"dash,omitempty"`         // dash length, px (dashed)
+	Gap         float64   `json:"gap,omitempty"`          // gap length, px (dashed)
+	StrokeCap   string    `json:"stroke_cap,omitempty"`   // butt|round|square (default round)
+	StrokeJoin  string    `json:"stroke_join,omitempty"`  // miter|bevel|round (default round)
+	StrokeSides []string  `json:"stroke_sides,omitempty"` // rect per-side strokes; empty OR all 4 = full outline
+
+	// advanced stroke (Figma's Stroke-settings popover; mostly path-only). Kept in sync
+	// with web/src/lib/layout/schema.ts.
+	WidthProfile     string  `json:"width_profile,omitempty"`     // uniform|taper_start|taper_end|taper|lens (default uniform)
+	StartCap         string  `json:"start_cap,omitempty"`         // none|line|arrow|triangle|circle|diamond — arrowhead at first node
+	EndCap           string  `json:"end_cap,omitempty"`           // none|line|arrow|triangle|circle|diamond — arrowhead at last node
+	MiterAngle       float64 `json:"miter_angle,omitempty"`       // miter join cutoff, degrees (default ~28.96)
+	BrushName        string  `json:"brush_name,omitempty"`        // brush id from the catalog (brushes.go); center-only
+	BrushDirection   string  `json:"brush_direction,omitempty"`   // forward|backward — stretch nib direction
+	ScatterGap       float64 `json:"scatter_gap,omitempty"`       // scatter: stamp spacing × stroke weight (unset = brush preset)
+	ScatterWiggle    float64 `json:"scatter_wiggle,omitempty"`    // scatter: perpendicular position jitter % (0..100)
+	ScatterSize      float64 `json:"scatter_size,omitempty"`      // scatter: mark size jitter % (0..100)
+	DynamicFrequency float64 `json:"dynamic_frequency,omitempty"` // hand-drawn wobble density 0..100 (0 = off)
+	DynamicWiggle    float64 `json:"dynamic_wiggle,omitempty"`    // wobble amplitude % 0..200
+	DynamicSmoothen  float64 `json:"dynamic_smoothen,omitempty"`  // wobble smoothing 0..100
 
 	// path (pen / pencil)
 	Nodes  []PathNode `json:"nodes,omitempty"`

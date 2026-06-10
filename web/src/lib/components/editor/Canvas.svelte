@@ -8,8 +8,9 @@
 	import { getContext } from 'svelte';
 	import { EditorStore, EDITOR_CTX } from '$lib/layout/editor.svelte';
 	import { resolveSrc, newLayer, cornerNode, pathD, type Layer, type PathNode, type ShapeKind, type Effect } from '$lib/layout/schema';
+	import { brushStrokeMarkup, dynamicWobble } from '$lib/layout/brushes';
 	import { fontCss } from '$lib/layout/fonts';
-	import { ImageIcon, User } from 'lucide-svelte';
+	import { ImageIcon } from 'lucide-svelte';
 
 	const editor = getContext<EditorStore>(EDITOR_CTX);
 	const layout = $derived(editor.layout);
@@ -159,15 +160,16 @@
 		});
 		return { size, ls, placed };
 	}
-	// drawStencilText paints a text stencil's glyphs (white) onto ctx in canvas coords.
-	// `erase` uses destination-out (inverted mask: punch the glyphs out of a white box).
-	function drawStencilText(ctx: CanvasRenderingContext2D, m: Layer, erase: boolean) {
+	// drawStencilText paints a text stencil's glyphs onto ctx in canvas coords, in `fill`
+	// (white for alpha/vector; the stencil's real colour for luminance, so a dark stencil
+	// hides). `erase` uses destination-out (inverted mask: punch the glyphs out of a box).
+	function drawStencilText(ctx: CanvasRenderingContext2D, m: Layer, erase: boolean, fill = '#fff') {
 		const size = m.font_size ?? 16;
 		const weight = m.font_weight ?? 400;
 		const ls = m.letter_spacing ?? 0;
 		ctx.font = `${weight} ${size}px ${fontCss(m.font_family)}`;
 		ctx.textBaseline = 'alphabetic';
-		ctx.fillStyle = '#fff';
+		ctx.fillStyle = fill;
 		ctx.globalCompositeOperation = erase ? 'destination-out' : 'source-over';
 		const thick = Math.max(1, size * 0.06);
 		const { placed } = stencilPlace(m, (t) => lineW(ctx, t, ls));
@@ -246,6 +248,8 @@
 		const sig = [
 			stage ? 1 : 0,
 			m.clip_invert ? 1 : 0,
+			m.clip_mode ?? '',
+			m.color ?? '',
 			fontTick,
 			dtext(m),
 			m.text_case ?? '',
@@ -279,6 +283,13 @@
 		if (!ctx) return '';
 		ctx.clearRect(0, 0, cw, ch);
 		const invert = !!m.clip_invert;
+		// Luminance mode reads the glyphs' BRIGHTNESS, so paint them in the stencil's real
+		// colour (a dark stencil reveals faintly/not at all) and emit mask-mode:luminance —
+		// matching Go's applyMask. alpha/vector use white glyphs + alpha. (Invert paints a
+		// white box then erases the glyphs, so its colour is irrelevant.)
+		const lum = m.clip_mode === 'luminance';
+		const glyphFill = !invert && lum ? m.color || '#fff' : '#fff';
+		const mode = lum ? 'luminance' : 'alpha';
 		if (invert) {
 			ctx.fillStyle = '#fff'; // white box; the glyphs get punched out below
 			ctx.fillRect(0, 0, cw, ch);
@@ -302,7 +313,7 @@
 			ctx.rotate((m.rotation * Math.PI) / 180);
 			ctx.translate(-cx, -cy);
 		}
-		drawStencilText(ctx, m, invert);
+		drawStencilText(ctx, m, invert, glyphFill);
 		ctx.restore();
 		let url: string;
 		try {
@@ -311,7 +322,7 @@
 			return '';
 		}
 		const u = `url("${url}")`;
-		const css = `-webkit-mask:${u} center/100% 100% no-repeat; mask:${u} center/100% 100% no-repeat; -webkit-mask-mode:alpha; mask-mode:alpha;`;
+		const css = `-webkit-mask:${u} center/100% 100% no-repeat; mask:${u} center/100% 100% no-repeat; -webkit-mask-mode:${mode}; mask-mode:${mode};`;
 		if (textMaskCache.size > 64) textMaskCache.clear(); // bound: ids churn across edits
 		textMaskCache.set(l.id, { sig, css });
 		return css;
@@ -353,34 +364,32 @@
 		return `<path d='${d}' fill='${fill}'/>`;
 	}
 
+	// strokeGrow is how far a stencil's silhouette extends past its shape edge: the full
+	// ring width PLUS half the stroke (Go paints both into the stencil coverage, and the
+	// stroke is centered on the edge so half sits outside), so the mask reveal reaches the
+	// same outer edge as the Go renderer.
+	function strokeGrow(m: Layer): number {
+		// How far the stroke extends past the shape edge (mirrors Go's strokeInset): inside
+		// adds nothing, center adds half, outside adds the full width. Plus the legacy ring
+		// (always fully outside).
+		const sw = Math.max(0, m.stroke_width ?? 0);
+		const align = m.stroke_align ?? 'center';
+		return align === 'inside' ? 0 : align === 'outside' ? sw : sw / 2;
+	}
+	// ringRoundRect builds a rounded-rect stencil, GROWN by strokeGrow (radii too), so a
+	// ringed/stroked avatar/image masks to its OUTER edge like the Go renderer.
+	function ringRoundRect(m: Layer, fill: string, radii: [number, number, number, number]): string {
+		const grow = strokeGrow(m);
+		if (grow <= 0) return roundRectEl(m, fill, radii);
+		const em = { ...m, x: m.x - grow, y: m.y - grow, w: m.w + 2 * grow, h: m.h + 2 * grow } as Layer;
+		const grown = radii.map((c) => (c > 0 ? c + grow : 0)) as [number, number, number, number];
+		return roundRectEl(em, fill, grown);
+	}
+
 	function shapeEl(m: Layer, fill: string): string {
 		// (A text stencil never reaches here — maskCss rasterises it via textMaskCss,
 		// because browsers don't render SVG <text> in the CSS masking pipeline.)
-		// An avatar stencil is a circle (default) or a rounded square (shape: rounded),
-		// matching how the avatar itself draws — never a plain bounding box.
-		if (m.type === 'avatar') {
-			if (m.shape !== 'rounded') {
-				const r = Math.min(m.w, m.h) / 2;
-				return `<circle cx='${m.x + m.w / 2}' cy='${m.y + m.h / 2}' r='${r}' fill='${fill}'/>`;
-			}
-			// rounded avatar → per-corner rounded rect; when neither corners[] nor radius
-			// is set, Go rounds by radius*0.3 = (min(w,h)/2)*0.3 (its gentle default).
-			const hasCorners = Array.isArray(m.corners) && m.corners.length === 4;
-			const def = (Math.min(m.w, m.h) / 2) * 0.3;
-			const radii: [number, number, number, number] = hasCorners
-				? stencilRadii(m)
-				: m.radius && m.radius > 0
-					? [m.radius, m.radius, m.radius, m.radius]
-					: [def, def, def, def];
-			return roundRectEl(m, fill, radii);
-		}
-		if (m.type === 'image' && m.mask === 'circle') {
-			const r = Math.min(m.w, m.h) / 2;
-			return `<circle cx='${m.x + m.w / 2}' cy='${m.y + m.h / 2}' r='${r}' fill='${fill}'/>`;
-		}
-		if (m.type === 'image' && m.mask === 'ellipse') {
-			return `<ellipse cx='${m.x + m.w / 2}' cy='${m.y + m.h / 2}' rx='${m.w / 2}' ry='${m.h / 2}' fill='${fill}'/>`;
-		}
+		// A stroked stencil masks to its OUTER edge (ringRoundRect grows the image box below).
 		// rect / ellipse / path stencils → one path with rotation + corner radius baked
 		// in (shapeD), matching the Go renderer's drawSilhouette / clip shape.
 		if (m.type === 'rect' || m.type === 'ellipse' || m.type === 'path') {
@@ -388,8 +397,8 @@
 			return d ? `<path d='${d}' fill='${fill}'/>` : '';
 		}
 		// image stencil with no explicit mask → its (rounded) bounding box, with the
-		// stencil's corners + rotation baked in (parity with the rect/path stencils).
-		return roundRectEl(m, fill, stencilRadii(m));
+		// stencil's corners + rotation (and ring) baked in (parity with the rect/path stencils).
+		return ringRoundRect(m, fill, stencilRadii(m));
 	}
 	// maskCss builds the per-layer CSS mask. `stage` picks the coordinate frame of the
 	// masked ELEMENT: a `.layer` div is positioned at the layer's box (viewBox = that
@@ -402,7 +411,12 @@
 		if (!m) return '';
 		// A text stencil is rasterised (browsers don't mask with SVG <text>).
 		if (m.type === 'text') return textMaskCss(l, m, stage);
-		const shape = shapeEl(m, '#fff');
+		// Luminance mode reads the mask's BRIGHTNESS, so a (non-inverted) shape stencil must
+		// carry its real fill colour — a dark fill hides, white reveals — to match Go's
+		// applyMask. alpha/vector ignore colour (always white). Images have no solid fill,
+		// so they fall back to white (their per-pixel brightness can't be a solid shape).
+		const lumFill = !m.clip_invert && m.clip_mode === 'luminance' ? m.fill || '#fff' : '#fff';
+		const shape = shapeEl(m, lumFill);
 		if (!shape) return '';
 		const vb = stage ? `0 0 ${layout.width} ${layout.height}` : `${l.x} ${l.y} ${l.w} ${l.h}`;
 		const cov = stage
@@ -481,7 +495,303 @@
 		const parts = [...(hasFx && !l.clip ? fxInset(l) : []), base].filter(Boolean);
 		return parts.length ? `box-shadow:${parts.join(', ')};` : '';
 	}
+	// strokeShadow renders a stroke as a box-shadow honouring its Position (Figma stroke
+	// align): inside = inset, outside = outset, center = half each. Follows border-radius.
+	// `sw` is the already-scaled width. Returns '' for no stroke.
+	function strokeShadow(l: Layer, sw: number): string {
+		if (sw <= 0) return '';
+		const c = l.stroke_color ?? '#fff';
+		const align = l.stroke_align ?? 'center';
+		if (align === 'inside') return `inset 0 0 0 ${sw}px ${c}`;
+		if (align === 'outside') return `0 0 0 ${sw}px ${c}`;
+		const h = sw / 2;
+		return `0 0 0 ${h}px ${c}, inset 0 0 0 ${h}px ${c}`;
+	}
+	// strokeDash returns the stroke-dasharray (the `sw`-scaled dash/gap lengths) for a
+	// dashed stroke, else '' (solid). An all-zero pattern reads as solid.
+	function strokeDash(l: Layer, k = 1): string {
+		if (l.stroke_style !== 'dashed') return '';
+		const d = Math.max(0, l.dash ?? 0) * k;
+		const g = Math.max(0, l.gap ?? 0) * k;
+		return d > 0 || g > 0 ? `${d} ${g}` : '';
+	}
+	// dashStrokeSvg renders a DASHED stroke for a box shape (rect/ellipse/image) as an
+	// inline SVG overlay — CSS box-shadow can't dash. The viewBox is in canvas units so
+	// stroke-width/dash are canvas px and scale with the stage; the shape is inset/outset
+	// by the stroke Position. Solid strokes keep the box-shadow path. '' when not dashed.
+	function dashStrokeSvg(l: Layer): string {
+		if (l.clip || l.stroke_style !== 'dashed') return '';
+		const sw = l.stroke_width ?? 0;
+		if (sw <= 0) return '';
+		const dash = strokeDash(l);
+		if (!dash) return '';
+		const c = l.stroke_color ?? '#fff';
+		const cap = l.stroke_cap ?? 'round';
+		// gg (the card renderer) has no miter join, so mirror its bevel for WYSIWYG.
+		const join = l.stroke_join === 'miter' ? 'bevel' : (l.stroke_join ?? 'round');
+		const align = l.stroke_align ?? 'center';
+		// inside: never inset past the box centre (mirrors Go's strokeInset clamp).
+		const off =
+			align === 'inside'
+				? Math.min(sw / 2, Math.min(l.w, l.h) / 2)
+				: align === 'outside'
+					? -sw / 2
+					: 0;
+		let shape: string;
+		if (l.type === 'ellipse') {
+			shape = `<ellipse cx='${l.w / 2}' cy='${l.h / 2}' rx='${Math.max(0, l.w / 2 - off)}' ry='${Math.max(0, l.h / 2 - off)}'/>`;
+		} else {
+			// rounded rect with INDEPENDENT corners (matches radiusCss / the Go renderer);
+			// outside keeps a sharp (0) corner sharp. A 0-radius arc collapses to a corner.
+			const cs = Array.isArray(l.corners) && l.corners.length === 4 ? l.corners : null;
+			const base = cs ?? [l.radius ?? 0, l.radius ?? 0, l.radius ?? 0, l.radius ?? 0];
+			const adj = (cc: number) => (off < 0 && cc <= 0 ? 0 : Math.max(0, cc - off));
+			const [tl, tr, br, bl] = base.map(adj);
+			const x = off;
+			const y = off;
+			const w = Math.max(0, l.w - 2 * off);
+			const h = Math.max(0, l.h - 2 * off);
+			const lim = Math.min(w, h) / 2;
+			const k = (v: number) => Math.max(0, Math.min(v, lim));
+			const [a, b, e, g] = [k(tl), k(tr), k(br), k(bl)];
+			const d =
+				`M ${x + a} ${y} L ${x + w - b} ${y} A ${b} ${b} 0 0 1 ${x + w} ${y + b}` +
+				` L ${x + w} ${y + h - e} A ${e} ${e} 0 0 1 ${x + w - e} ${y + h}` +
+				` L ${x + g} ${y + h} A ${g} ${g} 0 0 1 ${x} ${y + h - g}` +
+				` L ${x} ${y + a} A ${a} ${a} 0 0 1 ${x + a} ${y} Z`;
+			shape = `<path d='${d}'/>`;
+		}
+		return `<svg class='dash-stroke' style='position:absolute;inset:0;width:100%;height:100%;overflow:visible;pointer-events:none' viewBox='0 0 ${l.w} ${l.h}' preserveAspectRatio='none' fill='none' stroke='${c}' stroke-width='${sw}' stroke-dasharray='${dash}' stroke-linecap='${cap}' stroke-linejoin='${join}'>${shape}</svg>`;
+	}
+	// sidesRestricted: a rect strokes only SOME sides (Figma's individual strokes).
+	function sidesRestricted(l: Layer): boolean {
+		const s = l.stroke_sides;
+		return !!s && s.length > 0 && s.length < 4;
+	}
+	// strokeSidesSvg draws only the enabled rect sides as straight lines (an SVG overlay,
+	// canvas-unit viewBox), each offset inward/outward by the stroke Position. Corner
+	// radius is dropped for per-side strokes (matching Figma). '' when not applicable.
+	function strokeSidesSvg(l: Layer): string {
+		const sw = l.stroke_width ?? 0;
+		if (sw <= 0 || l.clip) return '';
+		const set = new Set(l.stroke_sides ?? []);
+		const c = l.stroke_color ?? '#fff';
+		const cap = l.stroke_cap ?? 'round';
+		const join = l.stroke_join === 'miter' ? 'bevel' : (l.stroke_join ?? 'round');
+		const dash = strokeDash(l);
+		const align = l.stroke_align ?? 'center';
+		const off = align === 'inside' ? sw / 2 : align === 'outside' ? -sw / 2 : 0;
+		const w = l.w;
+		const h = l.h;
+		const lines: string[] = [];
+		if (set.has('top')) lines.push(`<line x1='0' y1='${off}' x2='${w}' y2='${off}'/>`);
+		if (set.has('bottom')) lines.push(`<line x1='0' y1='${h - off}' x2='${w}' y2='${h - off}'/>`);
+		if (set.has('left')) lines.push(`<line x1='${off}' y1='0' x2='${off}' y2='${h}'/>`);
+		if (set.has('right')) lines.push(`<line x1='${w - off}' y1='0' x2='${w - off}' y2='${h}'/>`);
+		if (!lines.length) return '';
+		return `<svg class='dash-stroke' style='position:absolute;inset:0;width:100%;height:100%;overflow:visible;pointer-events:none' viewBox='0 0 ${w} ${h}' preserveAspectRatio='none' fill='none' stroke='${c}' stroke-width='${sw}' stroke-linecap='${cap}' stroke-linejoin='${join}'${dash ? ` stroke-dasharray='${dash}'` : ''}>${lines.join('')}</svg>`;
+	}
 
+	// ── advanced path stroke preview (Figma's Dynamic wobble + arrowheads) ──────
+	// The Go PNG renderer stays authoritative; these mirror the VISIBLE bits for WYSIWYG
+	// (a width profile previews as a uniform stroke — only the PNG tapers it).
+	type Pt = { x: number; y: number };
+	function cubicPt(p0: Pt, p1: Pt, p2: Pt, p3: Pt, t: number): Pt {
+		const u = 1 - t,
+			a = u * u * u,
+			b = 3 * u * u * t,
+			c = 3 * u * t * t,
+			d = t * t * t;
+		return { x: a * p0.x + b * p1.x + c * p2.x + d * p3.x, y: a * p0.y + b * p1.y + c * p2.y + d * p3.y };
+	}
+	function samplePts(ns: PathNode[], closed: boolean, steps: number): Pt[] {
+		const out: Pt[] = [{ x: ns[0].x, y: ns[0].y }];
+		const seg = (a: PathNode, b: PathNode) => {
+			const p0 = { x: a.x, y: a.y },
+				p1 = { x: a.h2x, y: a.h2y },
+				p2 = { x: b.h1x, y: b.h1y },
+				p3 = { x: b.x, y: b.y };
+			for (let i = 1; i <= steps; i++) out.push(cubicPt(p0, p1, p2, p3, i / steps));
+		};
+		for (let i = 1; i < ns.length; i++) seg(ns[i - 1], ns[i]);
+		if (closed && ns.length >= 3) seg(ns[ns.length - 1], ns[0]);
+		return out;
+	}
+	// wobblePts mirrors the Go renderer's wobblePath — Figma's "Dynamic" stroke. The
+	// noise-based deformation lives in $lib/layout/brushes (dynamicWobble), shared with
+	// the brush engine so the editor and the PNG renderer stay in sync.
+	function wobblePts(pts: Pt[], l: Layer, closed: boolean): Pt[] {
+		return dynamicWobble(pts, l.dynamic_frequency ?? 0, l.dynamic_wiggle ?? 0, l.dynamic_smoothen ?? 0, closed);
+	}
+	// smoothPathD builds a SMOOTH cubic path through pts (Catmull-Rom -> bezier) so a wobbled
+	// outline reads as rounded bumps, not straight zig-zag segments.
+	function smoothPathD(pts: Pt[], closed: boolean): string {
+		const n = pts.length;
+		if (n < 2) return '';
+		const at = (i: number) => pts[closed ? ((i % n) + n) % n : Math.max(0, Math.min(n - 1, i))];
+		const f = (v: number) => v.toFixed(2);
+		let d = `M ${f(pts[0].x)} ${f(pts[0].y)}`;
+		const segs = closed ? n : n - 1;
+		for (let i = 0; i < segs; i++) {
+			const p0 = at(i - 1),
+				p1 = at(i),
+				p2 = at(i + 1),
+				p3 = at(i + 2);
+			const c1x = p1.x + (p2.x - p0.x) / 6,
+				c1y = p1.y + (p2.y - p0.y) / 6;
+			const c2x = p2.x - (p3.x - p1.x) / 6,
+				c2y = p2.y - (p3.y - p1.y) / 6;
+			d += ` C ${f(c1x)} ${f(c1y)} ${f(c2x)} ${f(c2y)} ${f(p2.x)} ${f(p2.y)}`;
+		}
+		if (closed) d += ' Z';
+		return d;
+	}
+	// strokePathD returns the visible path 'd' — wobbled when Dynamic is set, but kept as the
+	// crisp bezier while the path is being drawn/edited so the node handles stay aligned.
+	function strokePathD(l: Layer, plain: boolean): string {
+		const ns = l.nodes ?? [];
+		if (ns.length < 2) return '';
+		if (plain || (l.dynamic_wiggle ?? 0) <= 0) return pathD(l.nodes, l.closed);
+		const pts = wobblePts(samplePts(ns, !!l.closed, 24), l, !!l.closed);
+		return smoothPathD(pts, !!l.closed);
+	}
+	// arrowMarker builds a <marker> for a path-end decoration (open paths). `orient` flips
+	// for the start (auto-start-reverse) so the head points OUTWARD at both ends. Sized in
+	// strokeWidth units so it scales with the stroke like the Go renderer's arrowheads.
+	function arrowMarker(id: string, kind: string | undefined, orient: string, c: string): string {
+		if (!kind || kind === 'none') return '';
+		let body = '';
+		let refX = 0;
+		switch (kind) {
+			case 'triangle':
+				body = `<path d='M0,0.4 L4,2 L0,3.6 Z' fill='${c}'/>`;
+				break;
+			case 'arrow':
+				body = `<path d='M0,0.4 L4,2 L0,3.6' fill='none' stroke='${c}' stroke-width='0.9' stroke-linecap='round' stroke-linejoin='round'/>`;
+				break;
+			case 'line':
+				body = `<path d='M0.5,0 L0.5,4' stroke='${c}' stroke-width='0.9' stroke-linecap='round'/>`;
+				refX = 0.5;
+				break;
+			case 'circle':
+				body = `<circle cx='2' cy='2' r='1.7' fill='${c}'/>`;
+				refX = 2;
+				break;
+			case 'diamond':
+				body = `<path d='M0,2 L2,0.3 L4,2 L2,3.7 Z' fill='${c}'/>`;
+				refX = 2;
+				break;
+			default:
+				return '';
+		}
+		return `<marker id='${id}' markerUnits='strokeWidth' markerWidth='4' markerHeight='4' viewBox='0 0 4 4' refX='${refX}' refY='2' orient='${orient}'>${body}</marker>`;
+	}
+
+	// boxOutlinePts / ellipseOutlinePts sample a rect (rounded) or ellipse outline into a
+	// polyline in LAYER-LOCAL canvas units (0..w, 0..h), inset for the stroke Position — the
+	// input to the dynamic wobble so a rect/ellipse/image BORDER can be hand-drawn too.
+	function boxOutlinePts(l: Layer): Pt[] {
+		const sw = l.stroke_width ?? 0;
+		const align = l.stroke_align ?? 'center';
+		const off = align === 'inside' ? sw / 2 : align === 'outside' ? -sw / 2 : 0;
+		const x = off,
+			y = off,
+			w = l.w - 2 * off,
+			h = l.h - 2 * off;
+		const cs = Array.isArray(l.corners) && l.corners.length === 4 ? l.corners : null;
+		const base = cs ?? [l.radius ?? 0, l.radius ?? 0, l.radius ?? 0, l.radius ?? 0];
+		const lim = Math.min(w, h) / 2;
+		const adj = (cc: number) => Math.max(0, Math.min(off < 0 && cc <= 0 ? 0 : cc - off, lim));
+		const [tl, tr, br, bl] = base.map(adj);
+		const pts: Pt[] = [];
+		const gap = 7;
+		const line = (x0: number, y0: number, x1: number, y1: number) => {
+			const n = Math.max(1, Math.round(Math.hypot(x1 - x0, y1 - y0) / gap));
+			for (let i = 0; i < n; i++) pts.push({ x: x0 + ((x1 - x0) * i) / n, y: y0 + ((y1 - y0) * i) / n });
+		};
+		const arc = (cx: number, cy: number, r: number, a0: number, a1: number) => {
+			if (r <= 0) return;
+			const n = Math.max(2, Math.round((r * Math.abs(a1 - a0)) / gap));
+			for (let i = 0; i < n; i++) {
+				const a = a0 + ((a1 - a0) * i) / n;
+				pts.push({ x: cx + r * Math.cos(a), y: cy + r * Math.sin(a) });
+			}
+		};
+		line(x + tl, y, x + w - tr, y);
+		arc(x + w - tr, y + tr, tr, -Math.PI / 2, 0);
+		line(x + w, y + tr, x + w, y + h - br);
+		arc(x + w - br, y + h - br, br, 0, Math.PI / 2);
+		line(x + w - br, y + h, x + bl, y + h);
+		arc(x + bl, y + h - bl, bl, Math.PI / 2, Math.PI);
+		line(x, y + h - bl, x, y + tl);
+		arc(x + tl, y + tl, tl, Math.PI, Math.PI * 1.5);
+		return pts;
+	}
+	function ellipseOutlinePts(l: Layer): Pt[] {
+		const sw = l.stroke_width ?? 0;
+		const align = l.stroke_align ?? 'center';
+		const off = align === 'inside' ? sw / 2 : align === 'outside' ? -sw / 2 : 0;
+		const rx = Math.max(0, l.w / 2 - off),
+			ry = Math.max(0, l.h / 2 - off);
+		const n = Math.max(16, Math.round((Math.max(rx, ry) * 2 * Math.PI) / 7));
+		const pts: Pt[] = [];
+		for (let i = 0; i < n; i++) {
+			const a = (2 * Math.PI * i) / n;
+			pts.push({ x: l.w / 2 + rx * Math.cos(a), y: l.h / 2 + ry * Math.sin(a) });
+		}
+		return pts;
+	}
+	// wobbleStrokeSvg renders a rect/ellipse/image border as a hand-drawn (wobbled) outline —
+	// the Dynamic effect on a CLOSED shape. '' when off. Mirrors the Go renderer.
+	// wobbleSvg renders a CLOSED shape's dynamic (wobbled) outline. withFill = true fills + strokes
+	// it as ONE shape (rect/ellipse: the whole shape wobbles, no clean fill edge underneath);
+	// false strokes only (image: the picture stays put, just its border wobbles).
+	function wobbleSvg(l: Layer, withFill: boolean): string {
+		if (l.clip || (l.dynamic_wiggle ?? 0) <= 0) return '';
+		const pts = wobblePts(l.type === 'ellipse' ? ellipseOutlinePts(l) : boxOutlinePts(l), l, true);
+		if (pts.length < 3) return '';
+		const d = smoothPathD(pts, true);
+		const sw = l.stroke_width ?? 0;
+		const c = l.stroke_color ?? '#fff';
+		const cap = l.stroke_cap ?? 'round';
+		const join = l.stroke_join === 'miter' ? 'bevel' : (l.stroke_join ?? 'round');
+		const dash = strokeDash(l);
+		const fill = withFill ? (l.fill ?? '#000') : 'none';
+		const strokeAttrs =
+			sw > 0
+				? ` stroke='${c}' stroke-width='${sw}' stroke-linecap='${cap}' stroke-linejoin='${join}'${dash ? ` stroke-dasharray='${dash}'` : ''}`
+				: '';
+		return `<svg class='dash-stroke' style='position:absolute;inset:0;width:100%;height:100%;overflow:visible;pointer-events:none' viewBox='0 0 ${l.w} ${l.h}' preserveAspectRatio='none' fill='${fill}'${strokeAttrs}><path d='${d}'/></svg>`;
+	}
+	// ── brush strokes (Figma's named Stretch / Scatter brushes) ────────────────
+	// The whole engine lives in $lib/layout/brushes (mirrored 1:1 with the Go renderer);
+	// here we only collect the layer's brush options and the outline to stroke.
+	function brushOpts(l: Layer) {
+		return {
+			brush: l.brush_name,
+			width: l.stroke_width ?? 0,
+			color: l.stroke_color ?? '#fff',
+			direction: l.brush_direction,
+			gap: l.scatter_gap,
+			wiggle: l.scatter_wiggle,
+			size: l.scatter_size
+		};
+	}
+	// brushShapeSvg renders a rect/ellipse/image BORDER as the selected brush (overlay).
+	function brushShapeSvg(l: Layer): string {
+		if (l.clip || !l.brush_name || (l.stroke_width ?? 0) <= 0) return '';
+		const pts = l.type === 'ellipse' ? ellipseOutlinePts(l) : boxOutlinePts(l);
+		if (pts.length < 3) return '';
+		const inner = brushStrokeMarkup(pts, brushOpts(l), true);
+		return `<svg class='dash-stroke' style='position:absolute;inset:0;width:100%;height:100%;overflow:visible;pointer-events:none' viewBox='0 0 ${l.w} ${l.h}' preserveAspectRatio='none'>${inner}</svg>`;
+	}
+	// brushPathMarkup renders a vector path's stroke as the selected brush (into the path-layer).
+	function brushPathMarkup(l: Layer): string {
+		if (!l.brush_name || l.clip || (l.stroke_width ?? 0) <= 0) return '';
+		const ns = l.nodes ?? [];
+		if (ns.length < 2) return '';
+		return brushStrokeMarkup(samplePts(ns, !!l.closed, 24), brushOpts(l), !!l.closed);
+	}
 	// ── corner radius + typography (mirror the Go renderer) ─────────────────────
 	// radiusCss: independent per-corner radii (tl tr br bl) when set, else uniform.
 	function radiusCss(l: Layer): string {
@@ -510,11 +820,17 @@
 				: l.text_decoration === 'strike'
 					? 'line-through'
 					: 'none';
+		// Text stroke = an outline of the glyphs (`-webkit-text-stroke`). paint-order:stroke
+		// paints it BEHIND the fill so it reads as an outside outline (mirrors the Go pass).
+		const sw = (l.stroke_width ?? 0) * scale;
+		const stroke =
+			sw > 0 ? ` -webkit-text-stroke:${sw}px ${l.stroke_color ?? '#fff'}; paint-order:stroke;` : '';
 		return (
 			`white-space:pre-wrap; overflow-wrap:break-word; text-align:${l.align ?? 'left'};` +
 			` font-family:${fontCss(l.font_family)}; font-size:${(l.font_size ?? 16) * scale}px;` +
 			` font-weight:${l.font_weight ?? 400}; color:${l.color ?? '#fff'}; line-height:${lh};` +
-			` letter-spacing:${ls}px; text-transform:${tc}; text-decoration:${td};`
+			` letter-spacing:${ls}px; text-transform:${tc}; text-decoration:${td};` +
+			stroke
 		);
 	}
 	// vertical alignment of the text block within its box.
@@ -603,7 +919,7 @@
 		const sil = (m: Layer, f: string) => silRaw(m, f);
 		// An image/avatar source keeps its pixels: clip the real image to the boolean
 		// coverage (mirrors the Go renderer). A non-image source fills with its colour.
-		const imgSrc = src.type === 'image' || src.type === 'avatar' ? dsrc(src) : '';
+		const imgSrc = src.type === 'image' ? dsrc(src) : '';
 		if (imgSrc) {
 			const href = imgSrc.replace(/&/g, '&amp;').replace(/'/g, '&#39;');
 			const par = (src.fit ?? 'cover') === 'contain' ? 'xMidYMid meet' : 'xMidYMid slice';
@@ -786,8 +1102,7 @@
 			startProps: {
 				fontSize: l.font_size,
 				stroke: l.stroke_width,
-				radius: l.radius,
-				ring: l.ring_width
+				radius: l.radius
 			},
 			multi:
 				handle === null && editor.selectedIds.length > 1
@@ -2123,7 +2438,11 @@
 		{:else if l.type === 'path'}
 			{@const cx = l.x + l.w / 2}
 			{@const cy = l.y + l.h / 2}
-			{@const d = pathD(l.nodes, l.closed) + (l.id === penId && cursor && (l.nodes?.length ?? 0) ? ` L ${cursor.x} ${cursor.y}` : '')}
+			{@const plain = l.id === penId}
+			{@const d = strokePathD(l, plain) + (l.id === penId && cursor && (l.nodes?.length ?? 0) ? ` L ${cursor.x} ${cursor.y}` : '')}
+			{@const sm = !l.clip && !l.closed ? arrowMarker(`as_${l.id}`, l.start_cap, 'auto-start-reverse', l.stroke_color ?? '#fff') : ''}
+			{@const em = !l.clip && !l.closed ? arrowMarker(`ae_${l.id}`, l.end_cap, 'auto', l.stroke_color ?? '#fff') : ''}
+			{@const brushed = !!l.brush_name && !l.clip && (l.stroke_width ?? 0) > 0 && !plain}
 			<svg
 				class="path-layer"
 				viewBox="0 0 {layout.width} {layout.height}"
@@ -2131,14 +2450,18 @@
 				style="opacity:{l.opacity ?? 1}; {!hasMasks || l.id === editor.editId ? '' : maskCss(l, true)} {hasFx && !l.clip ? fxFilter(l) : ''}"
 			>
 				<g transform="rotate({l.rotation ?? 0} {cx} {cy})">
+					{#if sm || em}<defs>{@html sm}{@html em}</defs>{/if}
 					{#if d}
 						<path
 							{d}
 							fill={l.clip ? 'transparent' : l.closed && l.fill && (l.nodes?.length ?? 0) >= 3 ? l.fill : 'none'}
-							stroke={l.clip ? 'none' : (l.stroke_color ?? '#fff')}
-							stroke-width={l.clip ? 0 : (l.stroke_width ?? 4)}
-							stroke-linecap="round"
-							stroke-linejoin="round"
+							stroke={l.clip || brushed ? 'none' : (l.stroke_color ?? '#fff')}
+							stroke-width={l.clip || brushed ? 0 : (l.stroke_width ?? 4)}
+							stroke-linecap={l.stroke_cap ?? 'round'}
+							stroke-linejoin={(l.stroke_join === 'miter' ? 'bevel' : l.stroke_join) ?? 'round'}
+							stroke-dasharray={strokeDash(l) || undefined}
+							marker-start={sm ? `url(#as_${l.id})` : undefined}
+							marker-end={em ? `url(#ae_${l.id})` : undefined}
 							class="path-stroke"
 							class:editing={l.id === editor.editId || editor.tool === 'bend'}
 							role="button"
@@ -2151,6 +2474,7 @@
 							ondblclick={(e) => (l.id === editor.editId ? addNodeOnSegment(e, l) : enterEdit(l))}
 						/>
 					{/if}
+					{#if brushed}{@html brushPathMarkup(l)}{/if}
 					{#if l.id === penId}
 						{#each l.nodes ?? [] as n, ni (ni)}
 							<circle cx={n.x} cy={n.y} r={4 / (scale || 1)} class="path-node" />
@@ -2292,56 +2616,65 @@
 						</div>
 					</div>
 				{/if}
-			{:else if l.type === 'image' || l.type === 'avatar'}
+			{:else if l.type === 'image'}
 				{@const src = dsrc(l)}
-				<!-- circle = avatar (non-rounded) OR image masked to a circle; both render
-				     as a centered SQUARE so a non-square box is a centered circle, exactly
-				     like the Go renderer. ellipseMask fills the box with a 50% radius. -->
-				{@const circle = (l.type === 'avatar' && l.shape !== 'rounded') || (l.type === 'image' && l.mask === 'circle')}
-				{@const ellipseMask = l.type === 'image' && l.mask === 'ellipse'}
-				{@const ring = (l.ring_width ?? 0) * scale}
-				{@const rad = circle || ellipseMask ? '50%' : radiusCss(l)}
-				{@const ringBase = ring > 0 && !l.clip ? `0 0 0 ${ring}px ${l.ring_color ?? '#fff'}` : ''}
-				{@const ringCss = boxShadow(l, ringBase)}
-				{@const sz = circle ? `width:${Math.min(l.w, l.h) * scale}px;height:${Math.min(l.w, l.h) * scale}px;` : 'width:100%;height:100%;'}
-				<div class="grid h-full w-full place-items-center" class:stencil-ghost={l.clip && isSel}>
+				{@const rad = radiusCss(l)}
+				<!-- Border = the Figma-style stroke (inset, follows the corner radius). Shown
+				     normally, and also on a SELECTED stencil so a masked image reads as itself. -->
+				{@const sw = (l.stroke_width ?? 0) * scale}
+				{@const wob = (l.dynamic_wiggle ?? 0) > 0 && (l.stroke_width ?? 0) > 0 && !l.clip}
+					{@const brush = !!l.brush_name && (l.stroke_width ?? 0) > 0 && !l.clip}
+					{@const strokeBase = sw > 0 && l.stroke_style !== 'dashed' && !wob && !brush && (!l.clip || isSel) ? strokeShadow(l, sw) : ''}
+				{@const ringCss = boxShadow(l, strokeBase)}
+				<!-- A stencil's own pixels aren't part of the card (only its SHAPE clips the
+				     content): fade it to a faint ghost while selected and hide it otherwise. -->
+				<div
+					class="grid h-full w-full place-items-center"
+					class:stencil-ghost={l.clip && isSel}
+					class:opacity-40={l.clip && isSel}
+					class:opacity-0={l.clip && !isSel}
+				>
 					{#if src}
 						<img
 							src={src}
 							alt={l.name}
 							draggable="false"
-							class="block select-none"
-							class:opacity-40={l.clip && isSel}
-							class:opacity-0={l.clip && !isSel}
-							style="{sz} object-fit:{l.fit ?? 'cover'}; border-radius:{rad}; {ringCss}"
+							class="block h-full w-full select-none"
+							style="object-fit:{l.fit ?? 'cover'}; border-radius:{rad}; {ringCss}"
 						/>
 					{:else}
 						<!-- Empty / bound source → neutral placeholder tile. -->
-						<div class="grid place-items-center bg-line-strong/60 text-faint" style="{sz} border-radius:{rad}; {ringCss}">
-							{#if l.type === 'avatar'}
-								<User size={Math.max(14, Math.min(l.w, l.h) * scale * 0.4)} strokeWidth={1.5} />
-							{:else}
-								<ImageIcon size={Math.max(14, Math.min(l.w, l.h) * scale * 0.34)} strokeWidth={1.5} />
-							{/if}
+						<div class="grid h-full w-full place-items-center bg-line-strong/60 text-faint" style="border-radius:{rad}; {ringCss}">
+							<ImageIcon size={Math.max(14, Math.min(l.w, l.h) * scale * 0.34)} strokeWidth={1.5} />
 						</div>
 					{/if}
 				</div>
+				{#if wob}{@html wobbleSvg(l, false)}{:else if brush}{@html brushShapeSvg(l)}{:else if l.stroke_style === 'dashed' && (l.stroke_width ?? 0) > 0 && !l.clip}{@html dashStrokeSvg(l)}{/if}
 			{:else if l.type === 'rect'}
 				{@const sw = (l.stroke_width ?? 0) * scale}
-				{@const strokeBase = sw > 0 && !l.clip ? `inset 0 0 0 ${sw}px ${l.stroke_color ?? '#fff'}` : ''}
+				{@const wob = (l.dynamic_wiggle ?? 0) > 0 && (l.stroke_width ?? 0) > 0 && !l.clip}
+				{@const brush = !!l.brush_name && (l.stroke_width ?? 0) > 0 && !l.clip}
+				{@const perSide = sw > 0 && !l.clip && sidesRestricted(l) && !wob && !brush}
+				{@const dashed = l.stroke_style === 'dashed' && sw > 0 && !perSide && !wob && !brush}
+				{@const strokeBase = sw > 0 && !l.clip && !dashed && !perSide && !wob && !brush ? strokeShadow(l, sw) : ''}
 				<div
 					class="h-full w-full"
 					class:stencil-ghost={l.clip && isSel}
-					style="background:{l.clip ? 'transparent' : (l.fill ?? '#000')}; border-radius:{radiusCss(l)}; {boxShadow(l, strokeBase)}"
+					style="background:{wob || l.clip ? 'transparent' : (l.fill ?? '#000')}; border-radius:{radiusCss(l)}; {wob ? '' : boxShadow(l, strokeBase)}"
 				></div>
+				{#if wob}{@html wobbleSvg(l, true)}{:else if brush}{@html brushShapeSvg(l)}{:else if perSide}{@html strokeSidesSvg(l)}{:else if dashed && !l.clip}{@html dashStrokeSvg(l)}{/if}
 			{:else if l.type === 'ellipse'}
 				{@const sw = (l.stroke_width ?? 0) * scale}
-				{@const strokeBase = sw > 0 && !l.clip ? `inset 0 0 0 ${sw}px ${l.stroke_color ?? '#fff'}` : ''}
+				{@const wob = (l.dynamic_wiggle ?? 0) > 0 && (l.stroke_width ?? 0) > 0 && !l.clip}
+				{@const brush = !!l.brush_name && (l.stroke_width ?? 0) > 0 && !l.clip}
+				{@const dashed = l.stroke_style === 'dashed' && sw > 0 && !wob && !brush}
+				{@const strokeBase = sw > 0 && !l.clip && !dashed && !wob && !brush ? strokeShadow(l, sw) : ''}
 				<div
 					class="h-full w-full"
 					class:stencil-ghost={l.clip && isSel}
-					style="background:{l.clip ? 'transparent' : (l.fill ?? '#000')}; border-radius:50%; {boxShadow(l, strokeBase)}"
+					style="background:{wob || l.clip ? 'transparent' : (l.fill ?? '#000')}; border-radius:50%; {wob ? '' : boxShadow(l, strokeBase)}"
 				></div>
+				{#if wob}{@html wobbleSvg(l, true)}{:else if brush}{@html brushShapeSvg(l)}{:else if dashed && !l.clip}{@html dashStrokeSvg(l)}{/if}
 			{/if}
 
 			{#if isSel}
@@ -2479,6 +2812,16 @@
 	}
 	.layer.selected {
 		cursor: move;
+	}
+	/* Dashed-stroke overlay for box shapes (rect/ellipse/image) — box-shadow can't dash.
+	   Fills the layer box; the stroke is painted by the inline SVG, never takes pointers. */
+	.dash-stroke {
+		position: absolute;
+		inset: 0;
+		width: 100%;
+		height: 100%;
+		overflow: visible;
+		pointer-events: none;
 	}
 	.selected {
 		outline: 1px solid var(--vec);

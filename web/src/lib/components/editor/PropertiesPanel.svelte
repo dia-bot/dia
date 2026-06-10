@@ -15,12 +15,16 @@
 	import { getContext } from 'svelte';
 	import { DropdownMenu, Tooltip, Popover } from 'bits-ui';
 	import { EditorStore, EDITOR_CTX, type AlignEdge } from '$lib/layout/editor.svelte';
+	import { inspectorAnchor } from '$lib/layout/inspectorAnchor';
 	import { SIZE_PRESETS, clampCanvas, EFFECT_LABELS } from '$lib/layout/schema';
 	import { CARD_FONTS } from '$lib/layout/fonts';
 	import type {
 		BackgroundType,
-		Mask,
 		HandleMode,
+		StrokeAlign,
+		StrokeStyle,
+		StrokeCap,
+		StrokeJoin,
 		ClipMode,
 		BoolOp,
 		EffectType,
@@ -34,6 +38,11 @@
 	import Toggle from '$lib/components/Toggle.svelte';
 	import ImageInput from '$lib/components/editor/ImageInput.svelte';
 	import InspectorSection from '$lib/components/editor/InspectorSection.svelte';
+	import StrokeStyleSelect from '$lib/components/editor/StrokeStyleSelect.svelte';
+	import BrushSelect from '$lib/components/editor/BrushSelect.svelte';
+	import StrokeSidesSelect from '$lib/components/editor/StrokeSidesSelect.svelte';
+	import StrokeProfileSelect from '$lib/components/editor/StrokeProfileSelect.svelte';
+	import ArrowCapSelect from '$lib/components/editor/ArrowCapSelect.svelte';
 	import { uploadFont, deleteFont } from '$lib/api';
 	import { scrub } from '$lib/actions/scrub';
 	import {
@@ -53,15 +62,18 @@
 		Upload,
 		Loader2,
 		Scissors,
-		PenTool,
+		SquarePen,
 		Eye,
 		EyeOff,
 		Plus,
+		Minus,
+		ChevronUp,
+		ChevronDown,
 		X,
 		Check,
 		Spline,
+		Waypoints,
 		Boxes,
-		CornerUpLeft,
 		SquareDashedBottom,
 		Contrast,
 		Ellipsis,
@@ -84,7 +96,11 @@
 		Blend,
 		Crop,
 		SunMedium,
-		Eclipse
+		Eclipse,
+		Activity,
+		Waves,
+		ArrowLeft,
+		ArrowRight
 	} from 'lucide-svelte';
 	import { slide, fade } from 'svelte/transition';
 	import { cubicOut } from 'svelte/easing';
@@ -154,12 +170,24 @@
 	// or the rest treatment per-use; sizes (h-7 w-7 / h-8 w-8) are appended inline.
 	const btnIcon = btnBase;
 
+	// stepVal nudges a numeric field by ±step (the custom up/down stepper that replaces
+	// the browser's native number spinner), clamped to min/max and de-floated.
+	function stepVal(
+		value: number | undefined,
+		opts: { min?: number; max?: number; step?: number },
+		dir: 1 | -1
+	): number {
+		const step = opts.step ?? 1;
+		let n = (value ?? 0) + dir * step;
+		if (opts.min != null) n = Math.max(opts.min, n);
+		if (opts.max != null) n = Math.min(opts.max, n);
+		return Math.round(n * 1e6) / 1e6;
+	}
+
 	// Whether the selection can carry a corner radius (rect / image, or a rounded
 	// avatar). Multi-aware via selectionType + a common shape check for avatars.
 	const showCorners = $derived(
-		editor.selectionType === 'rect' ||
-			editor.selectionType === 'image' ||
-			(editor.selectionType === 'avatar' && editor.common((l) => l.shape) === 'rounded')
+		editor.selectionType === 'rect' || editor.selectionType === 'image'
 	);
 
 	// setCanvasSize clamps to the shared resolution budget so the canvas can be any
@@ -175,6 +203,11 @@
 
 	// Typed scale factor for the Resize tool's Apply (e.g. 1.0, 1.2, 0.75).
 	let scaleInput = $state(1);
+
+	// Which Stroke-settings tab is active — DERIVED from the selection's stroke TYPE, so the
+	// Basic/Dynamic/Brush tabs work as Figma's mutually-exclusive type switcher (clicking one
+	// applies it via editor.setStrokeMode, which seeds defaults).
+	const strokeTab = $derived(editor.strokeMode);
 
 	// Opacity reads/writes as a whole-number percent (0..100) → the field, not a slider.
 	const opacityPct = $derived.by(() => {
@@ -258,6 +291,29 @@
 			class="w-full min-w-0 bg-transparent px-2 text-xs tabular-nums text-ink outline-none placeholder:text-faint"
 		/>
 		{#if opts.suffix}<span class="grid shrink-0 select-none place-items-center pr-2 text-[10px] text-faint">{opts.suffix}</span>{/if}
+		<!-- Custom up/down stepper (replaces the native number spinner; reveals on hover). -->
+		<span
+			class="flex shrink-0 flex-col self-stretch border-l border-line/70 opacity-0 transition-opacity duration-100 group-hover:opacity-100 group-focus-within:opacity-100"
+		>
+			<button
+				type="button"
+				tabindex="-1"
+				aria-label="Increment"
+				onclick={() => set(stepVal(value, opts, 1))}
+				class="grid w-[18px] flex-1 place-items-center text-faint transition-colors hover:bg-white/10 hover:text-ink"
+			>
+				<ChevronUp size={9} strokeWidth={3} />
+			</button>
+			<button
+				type="button"
+				tabindex="-1"
+				aria-label="Decrement"
+				onclick={() => set(stepVal(value, opts, -1))}
+				class="grid w-[18px] flex-1 place-items-center border-t border-line/50 text-faint transition-colors hover:bg-white/10 hover:text-ink"
+			>
+				<ChevronDown size={9} strokeWidth={3} />
+			</button>
+		</span>
 	</label>
 {/snippet}
 
@@ -266,10 +322,22 @@
 	<span class="w-16 shrink-0 text-xs text-muted">{caption}</span>
 {/snippet}
 
+<!-- A roomier label column for the Stroke-settings popover (Figma's two-column rows:
+     a wider label gutter so "Frequency" / "Profile" / "Direction" never truncate). -->
+{#snippet prow(caption: string)}
+	<span class="w-24 shrink-0 text-xs text-muted">{caption}</span>
+{/snippet}
+
 <!-- ColorPicker bound through get/set so optional (string | undefined) fields stay
-     type-safe and always feed the picker a defined hex. -->
-{#snippet color(value: string | undefined, set: (hex: string) => void)}
-	<ColorPicker bind:value={() => value ?? '#FFFFFF', (v) => set(v)} class="w-full justify-start" />
+     type-safe and always feed the picker a defined hex. `anchor` opens it to the LEFT of
+     the inspector (Figma-style); pass false for a picker already nested in a popover. -->
+{#snippet color(value: string | undefined, set: (hex: string) => void, anchor: boolean = true)}
+	<ColorPicker
+		dense
+		inspector={anchor}
+		bind:value={() => value ?? '#FFFFFF', (v) => set(v)}
+		class="w-full justify-start"
+	/>
 {/snippet}
 
 <!-- Generic segmented control. items: [value, label][]. current === '' (Mixed)
@@ -316,6 +384,307 @@
 			</button>
 		{/each}
 	</div>
+{/snippet}
+
+<!-- strokeGlyph: a tiny SVG that DEPICTS a stroke option (style/cap/join) using the very
+     property it sets, so each button reads at a glance — like Figma's icon controls. -->
+{#snippet strokeGlyph(kind: string, val: string)}
+	<svg width="16" height="16" viewBox="0 0 18 18" fill="none" stroke="currentColor" aria-hidden="true">
+		{#if kind === 'style'}
+			<line x1="2.5" y1="9" x2="15.5" y2="9" stroke-width="2" stroke-linecap="round" stroke-dasharray={val === 'dashed' ? '3.5 3' : 'none'} />
+		{:else if kind === 'cap'}
+			<!-- heavy stroke ending at the faint end-guide; the shape PAST the guide reads at a
+			     glance: flush = Butt, rounded bulge = Round, square block = Square. -->
+			<line x1="11" y1="3.5" x2="11" y2="14.5" stroke-width="1.3" stroke-opacity="0.4" />
+			<path d="M3 9 H 11" stroke-width="6.5" stroke-linecap={val as 'butt' | 'round' | 'square'} />
+			{:else}
+				<!-- heavy right-angle whose OUTER corner shows the join: sharp point = Miter,
+				     flat chamfer = Bevel, rounded = Round (exaggerated by the heavy weight). -->
+				<path d="M6 15 V 6 H 15" stroke-width="5.5" stroke-linecap="butt" stroke-linejoin={val as 'miter' | 'bevel' | 'round'} />
+			{/if}
+	</svg>
+{/snippet}
+<!-- iconSeg: a COMPACT row of small icon buttons (Figma's cap/join controls) — fixed-width
+     squares, not stretched, so the switcher stays small. label → tooltip. -->
+{#snippet iconSeg(current: string, kind: string, items: [string, string][], set: (v: string) => void)}
+	<div class="flex shrink-0 gap-0.5 rounded-md border border-line bg-ink-2 p-0.5">
+		{#each items as [val, title] (val)}
+			<button
+				type="button"
+				{title}
+				aria-label={title}
+				onclick={() => set(val)}
+				class="grid h-6 w-6 place-items-center rounded transition-colors {current === val
+					? 'bg-surface text-ink shadow-sm ring-1 ring-line-strong'
+					: 'text-faint hover:text-ink'}"
+			>
+				{@render strokeGlyph(kind, val)}
+			</button>
+		{/each}
+	</div>
+{/snippet}
+
+<!-- Figma-style Stroke: the "+" in the header adds it, then colour · Weight · Position
+     (box shapes) · Style · Join · Cap. `showPosition` for box shapes, `showCaps` for paths,
+     `advanced` for the settings popover (off for text), `sides` for per-side rect strokes. -->
+{#snippet strokeSection(showPosition: boolean, showCaps: boolean, advanced: boolean, sides: boolean)}
+	<InspectorSection title="Stroke">
+		{#snippet action()}
+			{#if editor.hasStroke}
+				<div class="flex items-center gap-0.5">
+					{#if advanced}
+					<Popover.Root>
+						<Popover.Trigger
+							title="Advanced stroke settings"
+							aria-label="Advanced stroke settings"
+							class="{btnGhost} grid h-5 w-5 place-items-center data-[state=open]:bg-ink-2 data-[state=open]:text-ink"
+						>
+							<SlidersHorizontal size={13} />
+						</Popover.Trigger>
+						<Popover.Portal>
+							<Popover.Content
+								customAnchor={inspectorAnchor}
+								side="left"
+								align="start"
+								sideOffset={10}
+								collisionPadding={12}
+								class="menu-pop z-50 w-64 space-y-2 rounded-xl border border-line-strong bg-surface p-3 shadow-2xl shadow-black/60 ring-1 ring-black/40 outline-none"
+								>
+								<div class="flex items-center justify-between border-b border-line pb-2">
+									<span class="text-xs font-semibold text-ink">Stroke settings</span>
+									<Popover.Close class="{btnGhost} grid h-5 w-5 place-items-center" aria-label="Close">
+										<X size={13} />
+									</Popover.Close>
+								</div>
+
+								{@render segmented(
+									strokeTab,
+									[
+										['basic', 'Basic'],
+										['dynamic', 'Dynamic'],
+										['brush', 'Brush']
+									],
+									(v) => editor.setStrokeMode(v as 'basic' | 'dynamic' | 'brush')
+								)}
+
+								{#if strokeTab === 'basic'}
+									<div class="space-y-2">
+										<div class="flex items-center justify-between gap-3">
+											{@render prow('Style')}
+											<div class="min-w-0 flex-1">
+												<StrokeStyleSelect value={editor.strokeStyle} set={(v) => editor.setStrokeStyle(v)} />
+											</div>
+										</div>
+										{#if showCaps && !editor.strokeDashed}
+											<div class="flex items-center justify-between gap-3">
+												{@render prow('Profile')}
+												<div class="min-w-0 flex-1">
+													<StrokeProfileSelect value={editor.widthProfile} set={(v) => editor.setWidthProfile(v)} />
+												</div>
+											</div>
+										{/if}
+										{#if editor.strokeDashed}
+											<div class="flex items-center justify-between gap-3">
+												{@render prow('Dash')}
+												{@render field('px', editor.dash, (n) => editor.setDash(n), { min: 0 })}
+											</div>
+											<div class="flex items-center justify-between gap-3">
+												{@render prow('Gap')}
+												{@render field('px', editor.gap, (n) => editor.setGap(n), { min: 0 })}
+											</div>
+										{/if}
+										{#if showCaps || editor.strokeDashed}
+											<div class="flex items-center justify-between gap-3">
+												{@render prow(showCaps ? 'Cap' : 'Dash cap')}
+												{@render iconSeg(
+													editor.strokeCap,
+													'cap',
+													[
+														['butt', 'None'],
+														['round', 'Round'],
+														['square', 'Square']
+													],
+													(v) => editor.setStrokeCap(v as StrokeCap)
+												)}
+											</div>
+										{/if}
+										<div class="flex items-center justify-between gap-3">
+											{@render prow('Join')}
+											{@render iconSeg(
+												editor.strokeJoin,
+												'join',
+												[
+													['miter', 'Miter'],
+													['bevel', 'Bevel'],
+													['round', 'Round']
+												],
+												(v) => editor.setStrokeJoin(v as StrokeJoin)
+											)}
+										</div>
+										{#if editor.strokeJoin === 'miter'}
+											<div class="flex items-center justify-between gap-3">
+												{@render prow('Miter angle')}
+												{@render field('∠', editor.miterAngle, (n) => editor.setMiterAngle(n), {
+													min: 0,
+													max: 180,
+													suffix: '°'
+												})}
+											</div>
+										{/if}
+										{#if showCaps && !editor.strokeDashed}
+											<div class="flex items-center justify-between gap-3">
+												{@render prow('Start point')}
+												<div class="min-w-0 flex-1">
+													<ArrowCapSelect flip value={editor.startCap} set={(v) => editor.setStartCap(v)} />
+												</div>
+											</div>
+											<div class="flex items-center justify-between gap-3">
+												{@render prow('End point')}
+												<div class="min-w-0 flex-1">
+													<ArrowCapSelect value={editor.endCap} set={(v) => editor.setEndCap(v)} />
+												</div>
+											</div>
+										{/if}
+									</div>
+								{:else if strokeTab === 'dynamic'}
+									<div class="space-y-2">
+										<div class="flex items-center justify-between gap-3">
+											{@render prow('Frequency')}
+											{@render field(Activity, editor.dynamicFrequency, (n) => editor.setDynamicFrequency(n), {
+												min: 0,
+												max: 100,
+												suffix: '%'
+											})}
+										</div>
+										<div class="flex items-center justify-between gap-3">
+											{@render prow('Wiggle')}
+											{@render field(Waves, editor.dynamicWiggle, (n) => editor.setDynamicWiggle(n), {
+												min: 0,
+												max: 200,
+												suffix: '%'
+											})}
+										</div>
+										<div class="flex items-center justify-between gap-3">
+											{@render prow('Smoothen')}
+											{@render field(Spline, editor.dynamicSmoothen, (n) => editor.setDynamicSmoothen(n), {
+												min: 0,
+												max: 100,
+												suffix: '%'
+											})}
+										</div>
+										<p class="pt-0.5 text-[11px] text-faint">A hand-drawn wobble along the vector path.</p>
+									</div>
+								{:else}
+			<div class="space-y-2">
+				<div class="flex items-center justify-between gap-3">
+					{@render prow('Brush')}
+					<div class="min-w-0 flex-1">
+						<BrushSelect value={editor.brushName} set={(v) => editor.setBrushName(v)} />
+					</div>
+				</div>
+				{#if editor.brushKind === 'scatter'}
+					<div class="flex items-center justify-between gap-3">
+						{@render prow('Gap')}
+						{@render field('×', editor.scatterGap, (n) => editor.setScatterGap(n), { min: 0.05, max: 8, step: 0.05 })}
+					</div>
+					<div class="flex items-center justify-between gap-3">
+						{@render prow('Wiggle')}
+						{@render field(Waves, editor.scatterWiggle, (n) => editor.setScatterWiggle(n), { min: 0, max: 100, suffix: '%' })}
+					</div>
+					<div class="flex items-center justify-between gap-3">
+						{@render prow('Size jitter')}
+						{@render field(Scaling, editor.scatterSize, (n) => editor.setScatterSize(n), { min: 0, max: 100, suffix: '%' })}
+					</div>
+					<p class="pt-0.5 text-[11px] text-faint">A mark stippled along the stroke.</p>
+				{:else}
+					<div class="flex items-center justify-between gap-3">
+						{@render prow('Direction')}
+						<div class="flex gap-0.5 rounded-md border border-line bg-ink-2 p-0.5">
+							<button type="button" title="Backward" aria-label="Backward" onclick={() => editor.setBrushDirection('backward')} class="grid h-6 w-9 place-items-center rounded transition-colors {editor.brushDirection === 'backward' ? 'bg-surface text-ink shadow-sm ring-1 ring-line-strong' : 'text-faint hover:text-ink'}"><ArrowLeft size={14} /></button>
+							<button type="button" title="Forward" aria-label="Forward" onclick={() => editor.setBrushDirection('forward')} class="grid h-6 w-9 place-items-center rounded transition-colors {editor.brushDirection === 'forward' ? 'bg-surface text-ink shadow-sm ring-1 ring-line-strong' : 'text-faint hover:text-ink'}"><ArrowRight size={14} /></button>
+						</div>
+					</div>
+					<p class="pt-0.5 text-[11px] text-faint">A calligraphic stroke stretched along the path.</p>
+				{/if}
+			</div>
+								{/if}
+							</Popover.Content>
+						</Popover.Portal>
+					</Popover.Root>
+					{/if}
+					<button
+						type="button"
+						title="Remove stroke"
+						aria-label="Remove stroke"
+						onclick={() => editor.removeStroke()}
+						class="{btnGhost} h-5 w-5"
+					>
+						<Minus size={14} />
+					</button>
+				</div>
+			{:else}
+				<button
+					type="button"
+					title="Add stroke"
+					aria-label="Add stroke"
+					onclick={() => editor.addStroke()}
+					class="{btnGhost} h-5 w-5"
+				>
+					<Plus size={14} />
+				</button>
+			{/if}
+		{/snippet}
+		{#if editor.hasStroke}
+			<div class="space-y-2.5">
+				<div class="flex items-center justify-between gap-3">
+					{@render row('Stroke')}
+					{@render color(
+						editor.common((l) => l.stroke_color),
+						(v) => editor.setAll((l) => (l.stroke_color = v))
+					)}
+				</div>
+				<div class="flex items-center justify-between gap-3">
+					{@render row('Weight')}
+					<div class="flex items-center gap-1.5">
+						{@render field(
+							'px',
+							editor.common((l) => l.stroke_width ?? 0),
+							(n) => editor.setAll((l) => (l.stroke_width = Math.max(0, n))),
+							{ min: 0 }
+						)}
+						{#if sides}
+							<StrokeSidesSelect
+								isSide={(s) => editor.isStrokeSide(s)}
+								toggle={(s) => editor.toggleStrokeSide(s)}
+								reset={() => editor.setAllStrokeSides()}
+							/>
+						{/if}
+					</div>
+				</div>
+				{#if showPosition}
+					<div class="flex items-center justify-between gap-3">
+						{@render row('Position')}
+						<div class="w-full">
+							<Select
+								dense
+								bind:value={
+									() => editor.strokeAlign,
+									(v) => editor.setStrokeAlign(v as StrokeAlign)
+								}
+								options={[
+									{ value: 'inside', label: 'Inside' },
+									{ value: 'center', label: 'Center' },
+									{ value: 'outside', label: 'Outside' }
+								]}
+							/>
+						</div>
+					</div>
+				{/if}
+			</div>
+		{:else}
+			<p class="text-[11px] text-faint">No border. Add one with +.</p>
+		{/if}
+	</InspectorSection>
 {/snippet}
 
 <!-- A tooltipped object-ops toolbar icon button. Uses bits-ui's `child` pattern so
@@ -523,7 +892,7 @@
 
 <!-- Panel ──────────────────────────────────────────────────────────────────── -->
 
-<aside class="flex h-full w-full flex-col overflow-y-auto bg-surface text-sm">
+<aside data-inspector class="flex h-full w-full flex-col overflow-y-auto bg-surface text-sm">
 	{#key panelKey}
 		<div class="flex min-h-full flex-col" in:fade={{ duration: 120, easing: cubicOut }}>
 			{#if editor.selectedLayers.length >= 1}
@@ -561,7 +930,7 @@
 								editor.editId === one.id,
 								false,
 								() => (editor.editId === one.id ? editor.exitEdit() : editor.editSelected()),
-								PenTool
+								SquarePen
 							)}
 						{/if}
 
@@ -577,7 +946,7 @@
 							false,
 							!editor.canFlatten,
 							() => editor.flatten(),
-							Spline
+							Waypoints
 						)}
 						{@render tipBtn(
 							`Select all ${editor.selectionType ?? 'matching'} layers`,
@@ -602,7 +971,7 @@
 								<DropdownMenu.Content
 									align="end"
 									sideOffset={6}
-									class="menu-pop z-50 min-w-[210px] rounded-xl border border-line-strong bg-surface p-1.5 shadow-2xl outline-none"
+									class="menu-pop z-50 min-w-[210px] rounded-xl border border-line-strong bg-surface p-1.5 shadow-2xl shadow-black/60 ring-1 ring-black/40 outline-none"
 								>
 									{#if editor.canEditObject && one}
 										<DropdownMenu.Item
@@ -610,7 +979,7 @@
 											onSelect={() =>
 												editor.editId === one.id ? editor.exitEdit() : editor.editSelected()}
 										>
-											<PenTool size={14} class="text-faint" />
+											<SquarePen size={14} class="text-faint" />
 											{editor.editId === one.id ? 'Done editing' : 'Edit object'}
 										</DropdownMenu.Item>
 										<DropdownMenu.Separator class="my-1 h-px bg-line" />
@@ -695,7 +1064,7 @@
 										disabled={!editor.canFlatten}
 										onSelect={() => editor.flatten()}
 									>
-										<Spline size={14} class="text-faint" /> Flatten to vector
+										<Waypoints size={14} class="text-faint" /> Flatten to vector
 									</DropdownMenu.Item>
 									<DropdownMenu.Item class={menuItem} onSelect={() => editor.selectMatching()}>
 										<Boxes size={14} class="text-faint" /> Select all
@@ -766,7 +1135,7 @@
 									? 'border-faint bg-ink-2 text-ink'
 									: 'border-line-strong text-muted hover:border-faint hover:text-ink'}"
 							>
-								<CornerUpLeft size={14} />
+								<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="2.6" y="2.6" width="10.8" height="10.8" rx="3.6" stroke-opacity="0.3" /><path d="M2.6 9.2 V 6.2 A 3.6 3.6 0 0 1 6.2 2.6 H 9.2" stroke-linecap="round" /></svg>
 							</button>
 						</div>
 						{#if editor.cornersActive}
@@ -983,6 +1352,7 @@
 							</div>
 						</div>
 					</InspectorSection>
+					{@render strokeSection(false, false, true, false)}
 				{:else if editor.selectionType === 'image'}
 					<InspectorSection title="Image">
 						<div class="space-y-3">
@@ -1018,89 +1388,13 @@
 									/>
 								</div>
 							</div>
-							<div class="flex items-center justify-between gap-3">
-								{@render row('Mask')}
-								<div class="w-full">
-									<Select
-										dense
-										bind:value={
-											() => editor.common((l) => l.mask ?? '') ?? '',
-											(v) => editor.setAll((l) => (l.mask = v as Mask))
-										}
-										placeholder="Mixed"
-										options={[
-											{ value: '', label: 'None (rounded)' },
-											{ value: 'circle', label: 'Circle' },
-											{ value: 'ellipse', label: 'Ellipse' }
-										]}
-									/>
-								</div>
-							</div>
-							<div class="flex items-center justify-between gap-3">
-								{@render row('Ring')}
-								{@render color(editor.common((l) => l.ring_color), (v) =>
-									editor.setAll((l) => (l.ring_color = v))
-								)}
-							</div>
-							<div class="flex items-center justify-between gap-3">
-								{@render row('Ring W')}
-								{@render field(
-									'px',
-									editor.common((l) => l.ring_width ?? 0),
-									(n) => editor.setAll((l) => (l.ring_width = Math.max(0, n))),
-									{ min: 0 }
-								)}
-							</div>
 						</div>
 					</InspectorSection>
-				{:else if editor.selectionType === 'avatar'}
-					<InspectorSection title="Avatar">
-						<div class="space-y-3">
-							<div class="block">
-								<span class="mb-1 block text-xs text-muted">Source</span>
-								<ImageInput
-									value={editor.common((l) => l.src ?? '') ?? ''}
-									onChange={(v) => editor.setAll((l) => (l.src = v))}
-									guildId={editor.guildId}
-									placeholder={editor.common((l) => l.src ?? '') === undefined
-										? 'Mixed'
-										: '{{.User.Avatar}} or upload'}
-								/>
-							</div>
-							<div class="flex items-center justify-between gap-3">
-								{@render row('Shape')}
-								<div class="w-full">
-									<Select
-										dense
-										bind:value={
-											() => editor.common((l) => l.shape ?? 'circle') ?? '',
-											(v) => editor.setAll((l) => (l.shape = v as 'circle' | 'rounded'))
-										}
-										placeholder="Mixed"
-										options={[
-											{ value: 'circle', label: 'Circle' },
-											{ value: 'rounded', label: 'Rounded' }
-										]}
-									/>
-								</div>
-							</div>
-							<div class="flex items-center justify-between gap-3">
-								{@render row('Ring')}
-								{@render color(editor.common((l) => l.ring_color), (v) =>
-									editor.setAll((l) => (l.ring_color = v))
-								)}
-							</div>
-							<div class="flex items-center justify-between gap-3">
-								{@render row('Ring width')}
-								{@render field(
-									'px',
-									editor.common((l) => l.ring_width ?? 0),
-									(n) => editor.setAll((l) => (l.ring_width = Math.max(0, n))),
-									{ min: 0 }
-								)}
-							</div>
-						</div>
-					</InspectorSection>
+					<!-- Stroke (border) — Figma-style: an image is ROUNDED via the corner
+					     radius (Appearance section) and BORDERED via this stroke. The legacy
+					     circle/ellipse "Mask" and the "Ring" are gone (redundant): for a circle,
+					     set the corner radius to max. -->
+					{@render strokeSection(true, false, true, false)}
 				{:else if editor.selectionType === 'rect' || editor.selectionType === 'ellipse'}
 					<InspectorSection title="Fill">
 						<div class="flex items-center justify-between gap-3">
@@ -1110,25 +1404,7 @@
 							)}
 						</div>
 					</InspectorSection>
-					<InspectorSection title="Stroke">
-						<div class="space-y-3">
-							<div class="flex items-center justify-between gap-3">
-								{@render row('Stroke')}
-								{@render color(editor.common((l) => l.stroke_color), (v) =>
-									editor.setAll((l) => (l.stroke_color = v))
-								)}
-							</div>
-							<div class="flex items-center justify-between gap-3">
-								{@render row('Stroke W')}
-								{@render field(
-									'px',
-									editor.common((l) => l.stroke_width ?? 0),
-									(n) => editor.setAll((l) => (l.stroke_width = Math.max(0, n))),
-									{ min: 0 }
-								)}
-							</div>
-						</div>
-					</InspectorSection>
+					{@render strokeSection(true, false, true, editor.selectionType === 'rect')}
 				{:else if editor.selectionType === 'path'}
 					<!-- Path controls are single-selection only. -->
 					{#if editor.selectedIds.length === 1 && one}
@@ -1163,21 +1439,10 @@
 							</InspectorSection>
 						{/if}
 
-						<InspectorSection title="Stroke">
+						{@render strokeSection(false, true, true, false)}
+
+						<InspectorSection title="Path">
 							<div class="space-y-3">
-								<div class="flex items-center justify-between gap-3">
-									{@render row('Stroke')}
-									{@render color(one.stroke_color, (v) => (one.stroke_color = v))}
-								</div>
-								<div class="flex items-center justify-between gap-3">
-									{@render row('Width')}
-									{@render field(
-										'px',
-										one.stroke_width ?? 0,
-										(n) => (one.stroke_width = Math.max(0, n)),
-										{ min: 0 }
-									)}
-								</div>
 								<div class="flex items-center justify-between gap-3">
 									<span class="text-xs text-muted">Closed</span>
 									<Toggle bind:checked={() => one.closed ?? false, (v) => editor.setClosed(v)} />
@@ -1211,26 +1476,8 @@
 							</div>
 						</InspectorSection>
 					{:else}
-						<!-- Multiple vector layers: only Fill/Stroke that setAll cleanly. -->
-						<InspectorSection title="Stroke">
-							<div class="space-y-3">
-								<div class="flex items-center justify-between gap-3">
-									{@render row('Stroke')}
-									{@render color(editor.common((l) => l.stroke_color), (v) =>
-										editor.setAll((l) => (l.stroke_color = v))
-									)}
-								</div>
-								<div class="flex items-center justify-between gap-3">
-									{@render row('Width')}
-									{@render field(
-										'px',
-										editor.common((l) => l.stroke_width ?? 0),
-										(n) => editor.setAll((l) => (l.stroke_width = Math.max(0, n))),
-										{ min: 0 }
-									)}
-								</div>
-							</div>
-						</InspectorSection>
+						<!-- Multiple vector layers: stroke (shared) + the fill that setAll cleanly. -->
+						{@render strokeSection(false, true, true, false)}
 						<InspectorSection title="Fill">
 							<div class="flex items-center justify-between gap-3">
 								{@render row('Fill')}
@@ -1294,56 +1541,59 @@
 											</Popover.Trigger>
 											<Popover.Portal>
 												<Popover.Content
-													align="end"
-													sideOffset={6}
-													class="z-50 w-60 rounded-xl border border-line-strong bg-surface p-3 shadow-2xl outline-none"
-												>
-													{#if e.type === 'drop_shadow' || e.type === 'inner_shadow'}
-														<div class="space-y-2">
-															<div class="grid grid-cols-2 gap-2">
-																{@render field('X', e.x ?? 0, (n) => editor.updateEffect(i, { x: n }))}
-																{@render field('Y', e.y ?? 0, (n) => editor.updateEffect(i, { y: n }))}
-															</div>
-															<div class="grid grid-cols-2 gap-2">
-																{@render field(
-																	'Blur',
-																	e.radius ?? 0,
-																	(n) => editor.updateEffect(i, { radius: Math.max(0, n) }),
-																	{ min: 0 }
-																)}
-																{@render field('Sprd', e.spread ?? 0, (n) =>
-																	editor.updateEffect(i, { spread: n })
-																)}
-															</div>
-															<div class="flex items-center justify-between gap-3">
-																{@render row('Color')}
-																{@render color(e.color, (v) => editor.updateEffect(i, { color: v }))}
-															</div>
-															{@render field(
-																Contrast,
-																Math.round((e.opacity ?? 0.25) * 100),
-																(n) =>
-																	editor.updateEffect(i, {
-																		opacity: Math.min(1, Math.max(0, n / 100))
-																	}),
-																{ min: 0, max: 100, suffix: '%' }
-															)}
-														</div>
-													{:else}
-														<div class="space-y-2">
-															{@render field(
-																'Blur',
-																e.radius ?? 0,
-																(n) => editor.updateEffect(i, { radius: Math.max(0, n) }),
-																{ min: 0, suffix: 'px' }
-															)}
-															{#if e.type === 'background_blur'}
-																<p class="text-[11px] text-faint">
-																	Blurs what's behind — needs a semi-transparent fill.
-																</p>
-															{/if}
-														</div>
-													{/if}
+													customAnchor={inspectorAnchor}
+													side="left"
+													align="start"
+													sideOffset={10}
+													collisionPadding={12}
+													class="menu-pop z-50 w-60 rounded-xl border border-line-strong bg-surface p-3 shadow-2xl shadow-black/60 ring-1 ring-black/40 outline-none"
+													>
+																									{#if e.type === 'drop_shadow' || e.type === 'inner_shadow'}
+																										<div class="space-y-2">
+																											<div class="grid grid-cols-2 gap-2">
+																												{@render field('X', e.x ?? 0, (n) => editor.updateEffect(i, { x: n }))}
+																												{@render field('Y', e.y ?? 0, (n) => editor.updateEffect(i, { y: n }))}
+																											</div>
+																											<div class="grid grid-cols-2 gap-2">
+																												{@render field(
+																													'Blur',
+																													e.radius ?? 0,
+																													(n) => editor.updateEffect(i, { radius: Math.max(0, n) }),
+																													{ min: 0 }
+																												)}
+																												{@render field('Sprd', e.spread ?? 0, (n) =>
+																													editor.updateEffect(i, { spread: n })
+																												)}
+																											</div>
+																											<div class="flex items-center justify-between gap-3">
+																												{@render row('Color')}
+																												{@render color(e.color, (v) => editor.updateEffect(i, { color: v }), false)}
+																											</div>
+																											{@render field(
+																												Contrast,
+																												Math.round((e.opacity ?? 0.25) * 100),
+																												(n) =>
+																													editor.updateEffect(i, {
+																														opacity: Math.min(1, Math.max(0, n / 100))
+																													}),
+																												{ min: 0, max: 100, suffix: '%' }
+																											)}
+																										</div>
+																									{:else}
+																										<div class="space-y-2">
+																											{@render field(
+																												'Blur',
+																												e.radius ?? 0,
+																												(n) => editor.updateEffect(i, { radius: Math.max(0, n) }),
+																												{ min: 0, suffix: 'px' }
+																											)}
+																											{#if e.type === 'background_blur'}
+																												<p class="text-[11px] text-faint">
+																													Blurs what's behind — needs a semi-transparent fill.
+																												</p>
+																											{/if}
+																										</div>
+																									{/if}
 												</Popover.Content>
 											</Popover.Portal>
 										</Popover.Root>

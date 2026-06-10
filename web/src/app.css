@@ -20,6 +20,7 @@
 	/* ── Clean dark, near-monochrome canvas ── */
 	--color-bg: #0a0a0c; /* near-black page canvas, faint cool tint */
 	--color-surface: #141417; /* elevated panel / card */
+	--color-elevated: #1e1e24; /* popovers/menus — a step LIGHTER than surface so they read as floating above a surface panel */
 	--color-ink: #fafafa; /* primary text — near-white (not pure) */
 	--color-ink-2: #060608; /* repurposed: a DARKER inset, deeper than bg */
 	--color-muted: #a4a4ae; /* secondary text — neutral grey (AA on bg/surface) */
@@ -193,6 +194,18 @@ body {
 		outline: none;
 		border-color: var(--color-accent);
 		box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 16%, transparent);
+	}
+	/* Kill the native number-input spin buttons everywhere — number fields use our own
+	   custom up/down stepper (the editor `field` snippet and the dashboard NumberField). */
+	input[type='number']::-webkit-inner-spin-button,
+	input[type='number']::-webkit-outer-spin-button {
+		-webkit-appearance: none;
+		appearance: none;
+		margin: 0;
+	}
+	input[type='number'] {
+		-moz-appearance: textfield;
+		appearance: textfield;
 	}
 	textarea.input {
 		height: auto;

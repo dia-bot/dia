@@ -184,30 +184,66 @@ func (r *Renderer) RenderLayout(ctx context.Context, in layout.Layout, vars map[
 		underline := l.TextDecoration == "underline"
 		strike := l.TextDecoration == "strike"
 		thick := math.Max(1, size*0.06)
-		for i, line := range lines {
-			lineTop := top + float64(i)*adv
-			lw := lineWidth(c, line, tracking)
-			x0 := l.X
-			switch l.Align {
-			case "center":
-				x0 = l.X + (l.W-lw)/2
-			case "right":
-				x0 = l.X + l.W - lw
-			}
-			// ay=1 anchors each line by its top (baseline = lineTop+lh), exactly as
-			// gg's DrawStringWrapped does, so the plain case matches the old output.
-			if tracking == 0 {
-				c.DrawStringAnchored(line, x0, lineTop, 0, 1)
-			} else {
-				cx := x0
-				for _, ru := range line {
-					g := string(ru)
-					c.DrawStringAnchored(g, cx, lineTop, 0, 1)
-					aw, _ := c.MeasureString(g)
-					cx += aw + tracking
+		// drawGlyphs paints every line's glyphs at a pixel offset (ox,oy) in the CURRENT
+		// colour. Factored so the text STROKE can paint the same glyphs in a ring of
+		// offsets behind the fill (gg can't stroke a font face directly).
+		drawGlyphs := func(ox, oy float64) {
+			for i, line := range lines {
+				lineTop := top + float64(i)*adv + oy
+				lw := lineWidth(c, line, tracking)
+				x0 := l.X + ox
+				switch l.Align {
+				case "center":
+					x0 = l.X + (l.W-lw)/2 + ox
+				case "right":
+					x0 = l.X + l.W - lw + ox
+				}
+				// ay=1 anchors each line by its top (baseline = lineTop+lh), exactly as
+				// gg's DrawStringWrapped does, so the plain case matches the old output.
+				if tracking == 0 {
+					c.DrawStringAnchored(line, x0, lineTop, 0, 1)
+				} else {
+					cx := x0
+					for _, ru := range line {
+						g := string(ru)
+						c.DrawStringAnchored(g, cx, lineTop, 0, 1)
+						aw, _ := c.MeasureString(g)
+						cx += aw + tracking
+					}
 				}
 			}
-			if (underline || strike) && lw > 0 {
+		}
+		// Stroke (outline): paint the glyphs in a ring of offsets (radius = weight/2) in
+		// the stroke colour BEHIND the fill — an outside outline, mirroring the web's
+		// `paint-order:stroke`. 16 steps is smooth for typical weights; the stroke shares
+		// the fill's alpha.
+		if l.StrokeWidth > 0 {
+			_, _, _, fa := col.RGBA()
+			c.SetColor(withAlpha(parseHex(l.StrokeColor, color.White), float64(fa)/0xffff))
+			rr := l.StrokeWidth / 2
+			const steps = 16
+			for k := 0; k < steps; k++ {
+				a := 2 * math.Pi * float64(k) / float64(steps)
+				drawGlyphs(rr*math.Cos(a), rr*math.Sin(a))
+			}
+			c.SetColor(col)
+		}
+		drawGlyphs(0, 0)
+		// Decorations (underline / strike) paint once, over the fill.
+		if underline || strike {
+			for i, line := range lines {
+				lw := lineWidth(c, line, tracking)
+				if lw <= 0 {
+					continue
+				}
+				lineTop := top + float64(i)*adv
+				x0 := l.X
+				switch l.Align {
+				case "center":
+					x0 = l.X + (l.W-lw)/2
+				case "right":
+					x0 = l.X + l.W - lw
+				}
 				baseline := lineTop + lh
 				dy := baseline + thick // underline just below the baseline
 				if strike {
@@ -256,8 +292,40 @@ func (r *Renderer) RenderLayout(ctx context.Context, in layout.Layout, vars map[
 			if l.StrokeWidth > 0 {
 				dc.SetColor(withAlpha(parseHex(l.StrokeColor, color.White), opacity))
 				dc.SetLineWidth(l.StrokeWidth)
-				drawRoundRect(dc, l.X, l.Y, l.W, l.H, tl, tr, br, bl)
-				dc.Stroke()
+				applyStroke(dc, l)
+				if l.BrushName != "" {
+					strokeBrush(dc, roundRectPoints(l.X, l.Y, l.W, l.H, tl, tr, br, bl), l, opacity, true)
+				} else if restrictedSides(l.StrokeSides) {
+					// Per-side strokes (Figma's individual strokes): draw only the enabled
+					// edges as lines, each offset inward/outward by the Position. Corner
+					// radius is dropped, matching the web overlay.
+					off := strokeInset(l.StrokeAlign, l.StrokeWidth)
+					for _, s := range l.StrokeSides {
+						switch s {
+						case "top":
+							dc.DrawLine(l.X, l.Y+off, l.X+l.W, l.Y+off)
+						case "bottom":
+							dc.DrawLine(l.X, l.Y+l.H-off, l.X+l.W, l.Y+l.H-off)
+						case "left":
+							dc.DrawLine(l.X+off, l.Y, l.X+off, l.Y+l.H)
+						case "right":
+							dc.DrawLine(l.X+l.W-off, l.Y, l.X+l.W-off, l.Y+l.H)
+						}
+						dc.Stroke()
+					}
+				} else {
+					d := strokeInset(l.StrokeAlign, l.StrokeWidth)
+					if d > 0 { // inside: never inset past the centre (negative box)
+						d = math.Min(d, math.Min(l.W, l.H)/2)
+					}
+					sr := strokeRadius(d)
+					if l.DynamicWiggle > 0 {
+						strokeWobbledOutline(dc, l, roundRectPoints(l.X+d, l.Y+d, l.W-2*d, l.H-2*d, sr(tl), sr(tr), sr(br), sr(bl)), opacity)
+					} else {
+						drawRoundRect(dc, l.X+d, l.Y+d, l.W-2*d, l.H-2*d, sr(tl), sr(tr), sr(br), sr(bl))
+						dc.Stroke()
+					}
+				}
 			}
 
 		case "ellipse":
@@ -265,43 +333,35 @@ func (r *Renderer) RenderLayout(ctx context.Context, in layout.Layout, vars map[
 			dc.DrawEllipse(l.X+l.W/2, l.Y+l.H/2, l.W/2, l.H/2)
 			dc.Fill()
 			if l.StrokeWidth > 0 {
-				dc.SetColor(withAlpha(parseHex(l.StrokeColor, color.White), opacity))
-				dc.SetLineWidth(l.StrokeWidth)
-				dc.DrawEllipse(l.X+l.W/2, l.Y+l.H/2, l.W/2, l.H/2)
-				dc.Stroke()
+				d := strokeInset(l.StrokeAlign, l.StrokeWidth)
+				if l.BrushName != "" {
+					strokeBrush(dc, ellipsePoints(l.X+l.W/2, l.Y+l.H/2, l.W/2, l.H/2), l, opacity, true)
+				} else if l.DynamicWiggle > 0 {
+					strokeWobbledOutline(dc, l, ellipsePoints(l.X+l.W/2, l.Y+l.H/2, math.Max(0, l.W/2-d), math.Max(0, l.H/2-d)), opacity)
+				} else {
+					dc.SetColor(withAlpha(parseHex(l.StrokeColor, color.White), opacity))
+					dc.SetLineWidth(l.StrokeWidth)
+					applyStroke(dc, l)
+					dc.DrawEllipse(l.X+l.W/2, l.Y+l.H/2, math.Max(0, l.W/2-d), math.Max(0, l.H/2-d))
+					dc.Stroke()
+				}
 			}
 
 		case "path":
 			if len(l.Nodes) >= 2 {
-				dc.SetLineCapRound()
-				dc.SetLineJoinRound()
-				dc.MoveTo(l.Nodes[0].X, l.Nodes[0].Y)
-				for k := 1; k < len(l.Nodes); k++ {
-					a, c := l.Nodes[k-1], l.Nodes[k]
-					dc.CubicTo(a.H2X, a.H2Y, c.H1X, c.H1Y, c.X, c.Y)
-				}
-				if l.Closed && len(l.Nodes) >= 3 {
-					a, c := l.Nodes[len(l.Nodes)-1], l.Nodes[0]
-					dc.CubicTo(a.H2X, a.H2Y, c.H1X, c.H1Y, c.X, c.Y)
-					dc.ClosePath()
-				}
-				hasStroke := l.StrokeWidth > 0
+				// Fill (closed paths) uses the smooth bezier outline.
 				if l.Closed && len(l.Nodes) >= 3 && l.Fill != "" {
+					buildPathBezier(dc, l)
 					dc.SetColor(withAlpha(parseHex(l.Fill, color.White), opacity))
-					if hasStroke {
-						dc.FillPreserve()
-					} else {
-						dc.Fill()
-					}
+					dc.Fill()
+					dc.ClearPath()
 				}
-				if hasStroke {
-					dc.SetColor(withAlpha(parseHex(l.StrokeColor, color.White), opacity))
-					dc.SetLineWidth(l.StrokeWidth)
-					dc.Stroke()
+				// Stroke — Figma's advanced stroke (width profile / dynamic wobble /
+				// arrowheads) when any is set, else the plain smooth bezier stroke.
+				if l.StrokeWidth > 0 {
+					strokePathLayer(dc, l, opacity)
 				}
-				dc.ClearPath()
 			}
-
 		case "text":
 			paintText(dc, l, text, withAlpha(parseHex(l.Color, color.White), opacity))
 
@@ -313,17 +373,7 @@ func (r *Renderer) RenderLayout(ctx context.Context, in layout.Layout, vars map[
 			if img == nil {
 				break
 			}
-			// A circle mask fills a centered SQUARE (side=min(W,H)) to match the DOM
-			// exactly; every other mask fills the box.
-			drawW, drawH := l.W, l.H
-			if l.Mask == "circle" {
-				side := l.W
-				if l.H < side {
-					side = l.H
-				}
-				drawW, drawH = side, side
-			}
-			iw, ih := int(drawW), int(drawH)
+			iw, ih := int(l.W), int(l.H)
 			if iw <= 0 || ih <= 0 {
 				break
 			}
@@ -341,84 +391,35 @@ func (r *Renderer) RenderLayout(ctx context.Context, in layout.Layout, vars map[
 				})
 			}
 			cx, cy := l.X+l.W/2, l.Y+l.H/2
-			// Ring: a coloured border behind the image (matches the DOM box-shadow),
-			// so a circular image is a full member avatar.
-			if l.RingWidth > 0 {
-				dc.SetColor(withAlpha(parseHex(l.RingColor, color.White), opacity))
-				switch l.Mask {
-				case "circle":
-					dc.DrawCircle(cx, cy, drawW/2+l.RingWidth)
-				case "ellipse":
-					dc.DrawEllipse(cx, cy, l.W/2+l.RingWidth, l.H/2+l.RingWidth)
-				default:
-					rtl, rtr, rbr, rbl := cornerRadii(l)
-					rc := func(c float64) float64 {
-						if c > 0 {
-							return c + l.RingWidth
-						}
-						return 0
-					}
-					drawRoundRect(dc, l.X-l.RingWidth, l.Y-l.RingWidth, l.W+2*l.RingWidth, l.H+2*l.RingWidth, rc(rtl), rc(rtr), rc(rbr), rc(rbl))
-				}
-				dc.Fill()
-			}
+			// Clip the image to its rounded-rect shape (a circle = fully-rounded corners).
 			dc.Push()
-			switch l.Mask {
-			case "circle":
-				dc.DrawCircle(cx, cy, drawW/2)
-			case "ellipse":
-				dc.DrawEllipse(cx, cy, l.W/2, l.H/2)
-			default:
-				ctl, ctr, cbr, cbl := cornerRadii(l)
-				drawRoundRect(dc, l.X, l.Y, l.W, l.H, ctl, ctr, cbr, cbl)
-			}
+			ctl, ctr, cbr, cbl := cornerRadii(l)
+			drawRoundRect(dc, l.X, l.Y, l.W, l.H, ctl, ctr, cbr, cbl)
 			dc.Clip()
-			// Center the fitted image at the box centre.
 			ox := int(cx) - fitted.Bounds().Dx()/2
 			oy := int(cy) - fitted.Bounds().Dy()/2
 			dc.DrawImage(fitted, ox, oy)
 			dc.ResetClip()
 			dc.Pop()
-
-		case "avatar":
-			cx := l.X + l.W/2
-			cy := l.Y + l.H/2
-			radius := l.W
-			if l.H < l.W {
-				radius = l.H
-			}
-			radius /= 2
-			if radius <= 0 {
-				break
-			}
-			ring := parseHex(l.RingColor, color.White)
-			img := r.fetchAvatar(ctx, src, int(radius*2), ring)
-			if l.Shape == "rounded" {
-				tl, tr, br, bl := cornerRadii(l)
-				// No explicit radius at all → a gently rounded default.
-				if len(l.Corners) != 4 && l.Radius <= 0 {
-					d := radius * 0.3
-					tl, tr, br, bl = d, d, d, d
+			// Stroke (border) — outline the image's rounded-rect, honouring stroke Position.
+			if l.StrokeWidth > 0 {
+				dc.SetColor(withAlpha(parseHex(l.StrokeColor, color.White), opacity))
+				dc.SetLineWidth(l.StrokeWidth)
+				applyStroke(dc, l)
+				d := strokeInset(l.StrokeAlign, l.StrokeWidth)
+				if d > 0 {
+					d = math.Min(d, math.Min(l.W, l.H)/2)
 				}
-				if l.RingWidth > 0 {
-					dc.SetColor(ring)
-					rc := func(c float64) float64 {
-						if c > 0 {
-							return c + l.RingWidth
-						}
-						return 0
-					}
-					drawRoundRect(dc, l.X-l.RingWidth, l.Y-l.RingWidth, l.W+2*l.RingWidth, l.H+2*l.RingWidth, rc(tl), rc(tr), rc(br), rc(bl))
-					dc.Fill()
+				stl, str2, sbr, sbl := cornerRadii(l)
+				sr := strokeRadius(d)
+				if l.BrushName != "" {
+					strokeBrush(dc, roundRectPoints(l.X, l.Y, l.W, l.H, stl, str2, sbr, sbl), l, opacity, true)
+				} else if l.DynamicWiggle > 0 {
+					strokeWobbledOutline(dc, l, roundRectPoints(l.X+d, l.Y+d, l.W-2*d, l.H-2*d, sr(stl), sr(str2), sr(sbr), sr(sbl)), opacity)
+				} else {
+					drawRoundRect(dc, l.X+d, l.Y+d, l.W-2*d, l.H-2*d, sr(stl), sr(str2), sr(sbr), sr(sbl))
+					dc.Stroke()
 				}
-				dc.Push()
-				drawRoundRect(dc, l.X, l.Y, l.W, l.H, tl, tr, br, bl)
-				dc.Clip()
-				dc.DrawImageAnchored(img, int(cx), int(cy), 0.5, 0.5)
-				dc.ResetClip()
-				dc.Pop()
-			} else {
-				r.drawAvatar(dc, img, cx, cy, radius, ring, l.RingWidth)
 			}
 		}
 		if rotate {
@@ -865,6 +866,450 @@ func combineBoolean(covers []image.Image, op string, fill color.Color, opacity f
 		}
 	}
 	return out
+}
+
+// strokeInset returns how far to inset (>0) or outset (<0) a stroke path so gg's
+// CENTERED Stroke lands Inside / Center / Outside the shape edge — Figma's stroke
+// Position. The shape box/radii shrink by this amount (a negative value grows them).
+func strokeInset(align string, sw float64) float64 {
+	switch align {
+	case "inside":
+		return sw / 2
+	case "outside":
+		return -sw / 2
+	default: // center / unset
+		return 0
+	}
+}
+
+// strokeRadius adjusts a corner radius for a stroke inset/outset d: a positive d (inside)
+// shrinks it; a negative d (outside) grows a ROUNDED corner but keeps a SHARP (0) corner
+// sharp — matching Figma and the web preview (a square corner stays square under an
+// outside stroke). Mirrors the ring's grow-only-when-positive pattern.
+func strokeRadius(d float64) func(float64) float64 {
+	return func(c float64) float64 {
+		if d < 0 && c <= 0 {
+			return 0
+		}
+		return math.Max(0, c-d)
+	}
+}
+
+// restrictedSides reports whether a rect strokes only SOME of its sides (Figma's
+// individual strokes): a non-empty list with fewer than all four = a partial outline.
+func restrictedSides(sides []string) bool {
+	return len(sides) > 0 && len(sides) < 4
+}
+
+// applyStroke sets the dash pattern, line cap, and line join on dc before Stroke(),
+// from a layer's stroke style. gg has no miter join, so 'miter' approximates as bevel
+// (the closest non-round join). Always sets all three so state never leaks between
+// layers; SetDash() with no args clears the dashes (solid).
+func applyStroke(dc *gg.Context, l layout.Layer) {
+	switch l.StrokeCap {
+	case "butt":
+		dc.SetLineCapButt()
+	case "square":
+		dc.SetLineCapSquare()
+	default: // round
+		dc.SetLineCapRound()
+	}
+	switch l.StrokeJoin {
+	case "bevel", "miter": // gg has no miter; bevel is the closest sharp join
+		dc.SetLineJoinBevel()
+	default: // round
+		dc.SetLineJoinRound()
+	}
+	if l.StrokeStyle == "dashed" {
+		d, g := math.Max(0, l.Dash), math.Max(0, l.Gap)
+		if d > 0 || g > 0 {
+			dc.SetDash(d, g)
+			return
+		}
+	}
+	dc.SetDash() // solid
+}
+
+// pathPt is a sampled point on a flattened path (canvas px).
+type pathPt struct{ x, y float64 }
+
+// buildPathBezier adds a path layer's smooth cubic outline to dc's current path (the
+// caller Fills/Strokes/Clears it). This is the exact path the renderer drew before the
+// advanced-stroke features, so plain strokes stay byte-identical.
+func buildPathBezier(dc *gg.Context, l layout.Layer) {
+	dc.MoveTo(l.Nodes[0].X, l.Nodes[0].Y)
+	for k := 1; k < len(l.Nodes); k++ {
+		a, c := l.Nodes[k-1], l.Nodes[k]
+		dc.CubicTo(a.H2X, a.H2Y, c.H1X, c.H1Y, c.X, c.Y)
+	}
+	if l.Closed && len(l.Nodes) >= 3 {
+		a, c := l.Nodes[len(l.Nodes)-1], l.Nodes[0]
+		dc.CubicTo(a.H2X, a.H2Y, c.H1X, c.H1Y, c.X, c.Y)
+		dc.ClosePath()
+	}
+}
+
+// arrowKind normalises an arrowhead value, collapsing "none"/unset to "".
+func arrowKind(s string) string {
+	if s == "" || s == "none" {
+		return ""
+	}
+	return s
+}
+
+// pathHasAdvancedStroke reports whether a path needs the sampled-polyline renderer (a
+// non-uniform width profile, a hand-drawn wobble, or an arrowhead). Plain strokes keep
+// the smooth bezier path so existing cards render unchanged. Brush + miter angle do not
+// trigger it: brushes render as a plain stroke (texture brushes aren't rasterised) and
+// gg has no miter join.
+func pathHasAdvancedStroke(l layout.Layer) bool {
+	if l.DynamicWiggle > 0 {
+		return true
+	}
+	if l.WidthProfile != "" && l.WidthProfile != "uniform" {
+		return true
+	}
+	return arrowKind(l.StartCap) != "" || arrowKind(l.EndCap) != ""
+}
+
+// cubicAt evaluates a cubic bezier at t.
+func cubicAt(p0, p1, p2, p3 pathPt, t float64) pathPt {
+	u := 1 - t
+	a, b, c, d := u*u*u, 3*u*u*t, 3*u*t*t, t*t*t
+	return pathPt{a*p0.x + b*p1.x + c*p2.x + d*p3.x, a*p0.y + b*p1.y + c*p2.y + d*p3.y}
+}
+
+// samplePathPoints flattens a path layer into a polyline (steps points per segment).
+func samplePathPoints(l layout.Layer, steps int) []pathPt {
+	n := l.Nodes
+	out := []pathPt{{n[0].X, n[0].Y}}
+	seg := func(a, c layout.PathNode) {
+		p0, p1, p2, p3 := pathPt{a.X, a.Y}, pathPt{a.H2X, a.H2Y}, pathPt{c.H1X, c.H1Y}, pathPt{c.X, c.Y}
+		for i := 1; i <= steps; i++ {
+			out = append(out, cubicAt(p0, p1, p2, p3, float64(i)/float64(steps)))
+		}
+	}
+	for k := 1; k < len(n); k++ {
+		seg(n[k-1], n[k])
+	}
+	if l.Closed && len(n) >= 3 {
+		seg(n[len(n)-1], n[0])
+	}
+	return out
+}
+
+// wobblePath displaces each sampled point along its normal by smooth deterministic
+// value noise — Figma's "Dynamic" hand-drawn look (mirrored in brushes.ts
+// dynamicWobble). Like Figma's: Frequency maps to the number of noise cycles along
+// the path (their API range is 0.01..20), Wiggle is the bump amplitude (UI % that
+// may exceed 100), and Smoothen blends out a high-frequency octave so bumps go
+// from jagged to rounded. The bumps are organic (irregular sizes and spacing), not
+// a regular sine. Open paths keep their endpoints anchored over a short ramp so
+// caps/arrowheads still line up; closed outlines use periodic noise — no seam.
+func wobblePath(pts []pathPt, l layout.Layer, closed bool) []pathPt {
+	wiggle := l.DynamicWiggle
+	n := len(pts)
+	if wiggle <= 0 || n < 3 {
+		return pts
+	}
+	A := (wiggle / 100) * 38 // px at 100% (calibrated against Figma's help screenshot)
+	cycles := math.Max(0.01, (l.DynamicFrequency/100)*20)
+	if closed {
+		cycles = math.Max(1, math.Round(cycles)) // integer cycles so the loop closes seamlessly
+	}
+	smooth := math.Min(1, math.Max(0, l.DynamicSmoothen/100))
+	rough := 1 - smooth
+	s := make([]float64, n)
+	plen := 0.0
+	for i := 1; i < n; i++ {
+		plen += math.Hypot(pts[i].x-pts[i-1].x, pts[i].y-pts[i-1].y)
+		s[i] = plen
+	}
+	if closed {
+		plen += math.Hypot(pts[0].x-pts[n-1].x, pts[0].y-pts[n-1].y)
+	}
+	if plen <= 0 {
+		return pts
+	}
+	// keep lobes rounded (no cusps/self-intersection) on small shapes
+	A = math.Min(A, (plen/cycles)*0.55)
+	ramp := math.Min(plen*0.1, plen/cycles*0.5)
+	out := make([]pathPt, n)
+	for i, p := range pts {
+		pa := pts[(i-1+n)%n]
+		pb := pts[(i+1)%n]
+		tx, ty := pb.x-pa.x, pb.y-pa.y
+		tl := math.Hypot(tx, ty)
+		if tl == 0 {
+			out[i] = p
+			continue
+		}
+		nx, ny := -ty/tl, tx/tl
+		u := s[i] / plen * cycles
+		// a bump per cycle (Figma: "frequency = the number of bumps") with noise-
+		// jittered phase and per-region magnitude, so every bump is pronounced but
+		// their sizes and spacing stay organic — not a uniform sine, not flat noise
+		ph := 0.65 * (pnoise(57, u, cycles, closed) - 0.5)
+		m := 0.3 + 0.75*pnoise(58, u*1.3, cycles*1.3, closed)
+		w := math.Sin(2*math.Pi*(u+ph)) * m
+		if rough > 0 {
+			w += rough * 0.35 * (pnoise(59, u*3.3, cycles*3.3, closed)*2 - 1)
+		}
+		if w > 1 {
+			w = 1
+		} else if w < -1 {
+			w = -1
+		}
+		env := 1.0
+		if !closed && ramp > 0 {
+			env = math.Min(1, math.Min(s[i]/ramp, (plen-s[i])/ramp))
+		}
+		off := A * w * env
+		out[i] = pathPt{p.x + nx*off, p.y + ny*off}
+	}
+	return out
+}
+
+// strokeSmoothPath adds a SMOOTH cubic curve through pts (Catmull-Rom -> bezier) to dc's
+// current path, so a wobbled path/outline reads as rounded bumps, not straight segments.
+func strokeSmoothPath(dc *gg.Context, pts []pathPt, closed bool) {
+	n := len(pts)
+	if n < 2 {
+		return
+	}
+	at := func(i int) pathPt {
+		if closed {
+			return pts[((i%n)+n)%n]
+		}
+		if i < 0 {
+			i = 0
+		}
+		if i > n-1 {
+			i = n - 1
+		}
+		return pts[i]
+	}
+	dc.MoveTo(pts[0].x, pts[0].y)
+	segs := n - 1
+	if closed {
+		segs = n
+	}
+	for i := 0; i < segs; i++ {
+		p0, p1, p2, p3 := at(i-1), at(i), at(i+1), at(i+2)
+		c1x, c1y := p1.x+(p2.x-p0.x)/6, p1.y+(p2.y-p0.y)/6
+		c2x, c2y := p2.x-(p3.x-p1.x)/6, p2.y-(p3.y-p1.y)/6
+		dc.CubicTo(c1x, c1y, c2x, c2y, p2.x, p2.y)
+	}
+	if closed {
+		dc.ClosePath()
+	}
+}
+
+// widthFactor is the stroke-weight multiplier at s in [0,1] for a width profile.
+func widthFactor(profile string, s float64) float64 {
+	switch profile {
+	case "taper_start":
+		return 0.06 + 0.94*s
+	case "taper_end":
+		return 0.06 + 0.94*(1-s)
+	case "taper":
+		return 0.06 + 0.94*math.Sin(math.Pi*s)
+	case "lens":
+		return 0.10 + 0.90*math.Pow(math.Sin(math.Pi*s), 0.5)
+	default:
+		return 1
+	}
+}
+
+// strokeVariableWidth paints a polyline as a variable-width ribbon by stroking each short
+// segment at its interpolated weight (round caps/joins blend the segments). gg has no
+// native variable-width stroke, so this is the approximation.
+func strokeVariableWidth(dc *gg.Context, pts []pathPt, base float64, profile string) {
+	dc.SetLineCapRound()
+	dc.SetLineJoinRound()
+	dc.SetDash()
+	last := len(pts) - 1
+	for i := 0; i < last; i++ {
+		s := (float64(i) + 0.5) / float64(last)
+		w := base * widthFactor(profile, s)
+		if w < 0.1 {
+			w = 0.1
+		}
+		dc.SetLineWidth(w)
+		dc.MoveTo(pts[i].x, pts[i].y)
+		dc.LineTo(pts[i+1].x, pts[i+1].y)
+		dc.Stroke()
+		dc.ClearPath()
+	}
+}
+
+// unit returns the unit vector of (x,y), or (1,0) for a zero-length input.
+func unit(x, y float64) pathPt {
+	l := math.Hypot(x, y)
+	if l == 0 {
+		return pathPt{1, 0}
+	}
+	return pathPt{x / l, y / l}
+}
+
+// drawArrowCap paints an arrowhead/decoration at a path endpoint. `tip` is the endpoint
+// and `outDir` the OUTWARD unit direction (pointing away from the path body).
+func drawArrowCap(dc *gg.Context, tip, outDir pathPt, kind string, sw float64) {
+	if kind == "" {
+		return
+	}
+	s := sw*2.2 + 3                              // marker scale, px
+	px, py := -outDir.y, outDir.x                // perpendicular to the path
+	ax, ay := tip.x+outDir.x*s, tip.y+outDir.y*s // apex, extended OUTWARD past the endpoint
+	switch kind {
+	case "line":
+		// a bar across the endpoint
+		dc.SetLineWidth(sw)
+		dc.SetLineCapRound()
+		dc.SetDash()
+		dc.MoveTo(tip.x+px*s*0.7, tip.y+py*s*0.7)
+		dc.LineTo(tip.x-px*s*0.7, tip.y-py*s*0.7)
+		dc.Stroke()
+		dc.ClearPath()
+	case "arrow":
+		// open chevron: base corners at the endpoint, point extended outward
+		dc.SetLineWidth(sw)
+		dc.SetLineCapRound()
+		dc.SetLineJoinRound()
+		dc.SetDash()
+		dc.MoveTo(tip.x+px*s*0.7, tip.y+py*s*0.7)
+		dc.LineTo(ax, ay)
+		dc.LineTo(tip.x-px*s*0.7, tip.y-py*s*0.7)
+		dc.Stroke()
+		dc.ClearPath()
+	case "triangle":
+		// filled head: base at the endpoint, apex extended outward
+		dc.MoveTo(ax, ay)
+		dc.LineTo(tip.x+px*s*0.6, tip.y+py*s*0.6)
+		dc.LineTo(tip.x-px*s*0.6, tip.y-py*s*0.6)
+		dc.ClosePath()
+		dc.Fill()
+		dc.ClearPath()
+	case "circle":
+		// dot centred on the endpoint
+		dc.DrawCircle(tip.x, tip.y, s*0.5)
+		dc.Fill()
+		dc.ClearPath()
+	case "diamond":
+		// rhombus centred on the endpoint
+		h := s * 0.6
+		dc.MoveTo(tip.x+outDir.x*h, tip.y+outDir.y*h)
+		dc.LineTo(tip.x+px*h, tip.y+py*h)
+		dc.LineTo(tip.x-outDir.x*h, tip.y-outDir.y*h)
+		dc.LineTo(tip.x-px*h, tip.y-py*h)
+		dc.ClosePath()
+		dc.Fill()
+		dc.ClearPath()
+	}
+}
+
+// strokePathLayer renders a path's stroke. Plain strokes use the smooth bezier path
+// (identical to the pre-feature output); width profile / dynamic wobble / arrowheads use
+// a sampled polyline. Brushes render as a plain stroke for now; miter angle is unused.
+func strokePathLayer(dc *gg.Context, l layout.Layer, opacity float64) {
+	col := withAlpha(parseHex(l.StrokeColor, color.White), opacity)
+	dc.SetColor(col)
+	if l.BrushName != "" {
+		strokeBrush(dc, samplePathPoints(l, 24), l, opacity, l.Closed)
+		return
+	}
+	if !pathHasAdvancedStroke(l) {
+		applyStroke(dc, l)
+		dc.SetLineWidth(l.StrokeWidth)
+		buildPathBezier(dc, l)
+		dc.Stroke()
+		dc.ClearPath()
+		return
+	}
+	pts := samplePathPoints(l, 24)
+	if len(pts) < 2 {
+		return
+	}
+	pts = wobblePath(pts, l, l.Closed)
+	if profile := l.WidthProfile; profile != "" && profile != "uniform" {
+		strokeVariableWidth(dc, pts, l.StrokeWidth, profile)
+	} else {
+		applyStroke(dc, l)
+		dc.SetLineWidth(l.StrokeWidth)
+		strokeSmoothPath(dc, pts, l.Closed)
+		dc.Stroke()
+		dc.ClearPath()
+	}
+	if !l.Closed && len(pts) >= 2 {
+		dc.SetColor(col)
+		s0, s1 := pts[0], pts[1]
+		e0, e1 := pts[len(pts)-1], pts[len(pts)-2]
+		drawArrowCap(dc, s0, unit(s0.x-s1.x, s0.y-s1.y), arrowKind(l.StartCap), l.StrokeWidth)
+		drawArrowCap(dc, e0, unit(e0.x-e1.x, e0.y-e1.y), arrowKind(l.EndCap), l.StrokeWidth)
+	}
+}
+
+// roundRectPoints samples a rounded-rect outline into a closed polyline (the input to the
+// dynamic wobble on a box shape's border). Radii are clamped; a zero-radius corner is sharp.
+func roundRectPoints(x, y, w, h, tl, tr, br, bl float64) []pathPt {
+	mx := math.Min(w, h) / 2
+	cl := func(v float64) float64 { return math.Max(0, math.Min(v, mx)) }
+	tl, tr, br, bl = cl(tl), cl(tr), cl(br), cl(bl)
+	const sp = 7.0
+	var pts []pathPt
+	line := func(x0, y0, x1, y1 float64) {
+		n := int(math.Hypot(x1-x0, y1-y0)/sp) + 1
+		for i := 0; i < n; i++ {
+			t := float64(i) / float64(n)
+			pts = append(pts, pathPt{x0 + (x1-x0)*t, y0 + (y1-y0)*t})
+		}
+	}
+	arc := func(cx, cy, r, a0, a1 float64) {
+		if r <= 0 {
+			return
+		}
+		n := int(r*math.Abs(a1-a0)/sp) + 2
+		for i := 0; i < n; i++ {
+			a := a0 + (a1-a0)*float64(i)/float64(n)
+			pts = append(pts, pathPt{cx + r*math.Cos(a), cy + r*math.Sin(a)})
+		}
+	}
+	line(x+tl, y, x+w-tr, y)
+	arc(x+w-tr, y+tr, tr, -math.Pi/2, 0)
+	line(x+w, y+tr, x+w, y+h-br)
+	arc(x+w-br, y+h-br, br, 0, math.Pi/2)
+	line(x+w-br, y+h, x+bl, y+h)
+	arc(x+bl, y+h-bl, bl, math.Pi/2, math.Pi)
+	line(x, y+h-bl, x, y+tl)
+	arc(x+tl, y+tl, tl, math.Pi, math.Pi*1.5)
+	return pts
+}
+
+// ellipsePoints samples an ellipse outline into a closed polyline.
+func ellipsePoints(cx, cy, rx, ry float64) []pathPt {
+	n := int(math.Max(rx, ry)*2*math.Pi/7) + 8
+	pts := make([]pathPt, n)
+	for i := 0; i < n; i++ {
+		a := 2 * math.Pi * float64(i) / float64(n)
+		pts[i] = pathPt{cx + rx*math.Cos(a), cy + ry*math.Sin(a)}
+	}
+	return pts
+}
+
+// strokeWobbledOutline applies the dynamic wobble to a CLOSED shape outline (a rect/ellipse/
+// image border) and strokes it — the hand-drawn look on a box shape. The caller passes the
+// outline already inset for the stroke Position; cap/join/dash come from the layer.
+func strokeWobbledOutline(dc *gg.Context, l layout.Layer, pts []pathPt, opacity float64) {
+	if len(pts) < 3 {
+		return
+	}
+	pts = wobblePath(pts, l, true)
+	dc.SetColor(withAlpha(parseHex(l.StrokeColor, color.White), opacity))
+	dc.SetLineWidth(l.StrokeWidth)
+	applyStroke(dc, l)
+	strokeSmoothPath(dc, pts, true)
+	dc.Stroke()
+	dc.ClearPath()
 }
 
 // cornerRadii returns the four corner radii (tl, tr, br, bl) for a layer: its

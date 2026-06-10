@@ -6,6 +6,7 @@
 	import type { Layout } from '$lib/layout/schema';
 	import { rankStarterLayout } from '$lib/layout/templates';
 	import Field from '$lib/components/Field.svelte';
+	import NumberField from '$lib/components/ui/NumberField.svelte';
 	import Toggle from '$lib/components/Toggle.svelte';
 	import Select from '$lib/components/Select.svelte';
 	import MultiSelect from '$lib/components/MultiSelect.svelte';
@@ -288,16 +289,16 @@
 			<h2 class="mb-4 text-base font-semibold">XP settings</h2>
 			<div class="grid gap-4 sm:grid-cols-2">
 				<Field label="Min XP per message">
-					<input class="input" type="number" min="0" bind:value={cfg.xp_min} />
+					<NumberField min={0} bind:value={cfg.xp_min} />
 				</Field>
 				<Field label="Max XP per message">
-					<input class="input" type="number" min="0" bind:value={cfg.xp_max} />
+					<NumberField min={0} bind:value={cfg.xp_max} />
 				</Field>
 				<Field label="Cooldown (seconds)" hint="How long before a message earns XP again.">
-					<input class="input" type="number" min="0" bind:value={cfg.cooldown_seconds} />
+					<NumberField min={0} bind:value={cfg.cooldown_seconds} />
 				</Field>
 				<Field label="XP multiplier">
-					<input class="input" type="number" min="0" step="0.1" bind:value={cfg.multiplier} />
+					<NumberField min={0} step={0.1} bind:value={cfg.multiplier} />
 				</Field>
 			</div>
 
@@ -448,7 +449,7 @@
 				<div class="grid items-end gap-3 sm:grid-cols-[7rem_1fr_auto]">
 					<div>
 						<span class="label">Level</span>
-						<input class="input" type="number" min="1" bind:value={newLevel} />
+						<NumberField min={1} bind:value={newLevel} />
 					</div>
 					<div>
 						<span class="label">Role</span>
