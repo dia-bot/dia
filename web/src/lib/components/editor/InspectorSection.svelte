@@ -21,18 +21,22 @@
 </script>
 
 <section class="border-t border-line first:border-t-0">
-	<div class="flex items-center gap-1.5 px-4 pb-2 pt-3.5">
+	<div class="flex items-center gap-1.5 px-4 pb-2 pt-3">
+		<!-- Figma's UI3 section header: a quiet semibold sentence-case title; the
+		     collapse chevron only reveals on hover so the header stays clean. -->
 		<button
 			type="button"
 			onclick={() => (open = !open)}
 			aria-expanded={open}
-			class="-ml-1 flex flex-1 items-center gap-1 rounded px-1 py-0.5 text-[10px] font-semibold uppercase tracking-[0.09em] text-faint transition-colors hover:text-muted"
+			class="group -ml-1 flex flex-1 items-center gap-1 rounded px-1 py-0.5 text-[11px] font-semibold text-ink transition-colors hover:text-ink"
 		>
+			{title}
 			<ChevronRight
 				size={11}
-				class="text-faint/70 transition-transform duration-150 {open ? 'rotate-90' : ''}"
+				class="text-faint opacity-0 transition-all duration-150 group-hover:opacity-100 {open
+					? 'rotate-90'
+					: ''}"
 			/>
-			{title}
 		</button>
 		{#if action}
 			{@render action()}

@@ -7,9 +7,10 @@
 	// blur) by the live scale = renderedWidth / layout.width.
 	import { getContext } from 'svelte';
 	import { EditorStore, EDITOR_CTX } from '$lib/layout/editor.svelte';
-	import { resolveSrc, newLayer, cornerNode, pathD, type Layer, type PathNode, type ShapeKind, type Effect } from '$lib/layout/schema';
+	import { resolveSrc, newLayer, cornerNode, pathD, paintsOf, paintPrimary, strokePaintsOf, strokePrimary, textPaintsOf, bgPaintsOf, stackPrimary, type Layer, type PathNode, type ShapeKind, type Effect, type Paint } from '$lib/layout/schema';
 	import { brushStrokeMarkup, dynamicWobble } from '$lib/layout/brushes';
 	import { fontCss } from '$lib/layout/fonts';
+	import { uploadImage } from '$lib/api';
 	import { ImageIcon } from 'lucide-svelte';
 
 	const editor = getContext<EditorStore>(EDITOR_CTX);
@@ -57,14 +58,14 @@
 	let clientWidth = $state(0);
 	const scale = $derived(clientWidth > 0 ? clientWidth / layout.width : 0);
 
-	// Background paint string for the stage element.
-	const bgCss = $derived.by(() => {
-		const b = layout.background;
-		if (b.type === 'solid') return b.color || '#000000';
-		if (b.type === 'gradient')
-			return `linear-gradient(${b.angle ?? 0}deg, ${b.from ?? '#000'}, ${b.to ?? '#000'})`;
-		return '#0b0b0e'; // image is painted by a dedicated layer below
-	});
+	// Background paint stack for the stage — the SAME model as a layer's fill
+	// (bgPaintsOf maps legacy solid/gradient/image documents to one paint). The
+	// stage itself shows the renderer's brand-ink base; the stack composites in a
+	// dedicated layer below everything, with the optional whole-background blur.
+	const bgVisible = $derived(
+		bgPaintsOf(layout.background).filter((p) => !p.hidden && (p.opacity ?? 1) > 0)
+	);
+	const bgCss = $derived(cssBackgroundsOf(bgVisible));
 
 	// Percentage geometry for a layer box — scale-independent.
 	function box(l: Layer) {
@@ -415,7 +416,7 @@
 		// carry its real fill colour — a dark fill hides, white reveals — to match Go's
 		// applyMask. alpha/vector ignore colour (always white). Images have no solid fill,
 		// so they fall back to white (their per-pixel brightness can't be a solid shape).
-		const lumFill = !m.clip_invert && m.clip_mode === 'luminance' ? m.fill || '#fff' : '#fff';
+		const lumFill = !m.clip_invert && m.clip_mode === 'luminance' ? paintPrimary(m) || '#fff' : '#fff';
 		const shape = shapeEl(m, lumFill);
 		if (!shape) return '';
 		const vb = stage ? `0 0 ${layout.width} ${layout.height}` : `${l.x} ${l.y} ${l.w} ${l.h}`;
@@ -438,6 +439,215 @@
 		return `-webkit-mask:${url} center/100% 100% no-repeat; mask:${url} center/100% 100% no-repeat; -webkit-mask-mode:${mode}; mask-mode:${mode};`;
 	}
 
+	// ── fill paints preview (Figma's paint stack) ───────────────────────────────
+	// Box layers composite their paints as CSS multi-backgrounds; vector paths get
+	// SVG paint servers (defs + one <path> per paint). Diamond gradients (and
+	// angular on paths) preview as radial — the PNG renderer is authoritative.
+	function visiblePaints(l: Layer): Paint[] {
+		return paintsOf(l).filter((p) => !p.hidden && (p.opacity ?? 1) > 0);
+	}
+	function cssStops(p: Paint): string {
+		const op = p.opacity ?? 1;
+		return (p.stops ?? [])
+			.map((st) => `${rgba(st.color, (st.alpha ?? 1) * op)} ${(st.pos * 100).toFixed(1)}%`)
+			.join(', ');
+	}
+	// cssPaintLayer: one CSS background layer (top paint listed FIRST in CSS).
+	function cssPaintLayer(p: Paint): { img: string; size: string; rep: string } | null {
+		const op = p.opacity ?? 1;
+		switch (p.type) {
+			case 'solid': {
+				if (!p.color) return null;
+				const c = rgba(p.color, op);
+				return { img: `linear-gradient(${c}, ${c})`, size: '100% 100%', rep: 'no-repeat' };
+			}
+			case 'linear':
+				return { img: `linear-gradient(${p.angle ?? 180}deg, ${cssStops(p)})`, size: '100% 100%', rep: 'no-repeat' };
+			case 'radial':
+			case 'diamond': // diamond previews as radial; the PNG renders it exactly
+				return { img: `radial-gradient(closest-side, ${cssStops(p)})`, size: '100% 100%', rep: 'no-repeat' };
+			case 'angular':
+				return { img: `conic-gradient(from ${p.angle ?? 0}deg at 50% 50%, ${cssStops(p)})`, size: '100% 100%', rep: 'no-repeat' };
+			case 'image': {
+				const src = resolveSrc(p.src);
+				if (!src) return null;
+				// per-paint opacity on a CSS background image isn't expressible — preview at
+				// full opacity; the PNG honours it.
+				if (p.fit === 'tile') return { img: `url("${src}")`, size: `${256 * scale}px auto`, rep: 'repeat' };
+				return { img: `url("${src}")`, size: p.fit === 'contain' ? 'contain' : 'cover', rep: 'no-repeat' };
+			}
+		}
+		return null;
+	}
+	// cssBackgroundsOf: the full CSS background declaration for a paint stack
+	// ('' = nothing visible). Shared by box layers, gradient text and the canvas
+	// background.
+	function cssBackgroundsOf(ps: Paint[]): string {
+		const layers = ps.map(cssPaintLayer).filter(Boolean) as { img: string; size: string; rep: string }[];
+		if (!layers.length) return '';
+		layers.reverse(); // CSS lists the TOP background layer first
+		return `background-image:${layers.map((x) => x.img).join(', ')}; background-size:${layers.map((x) => x.size).join(', ')}; background-repeat:${layers.map((x) => x.rep).join(', ')}; background-position:center;`;
+	}
+	// cssBackgrounds: a box layer's fill stack as CSS backgrounds ('' = no fill).
+	function cssBackgrounds(l: Layer): string {
+		return cssBackgroundsOf(visiblePaints(l));
+	}
+
+	// ── stroke paints preview (Figma's stroke stack) ────────────────────────────
+	// A single visible SOLID stroke paint keeps the cheap previews (box-shadow,
+	// plain SVG stroke attrs). Anything richer — a gradient/image paint, or
+	// multiple paints on one stroke — renders through SVG paint servers instead.
+	function visibleStrokePaints(l: Layer): Paint[] {
+		return strokePaintsOf(l).filter((p) => !p.hidden && (p.opacity ?? 1) > 0);
+	}
+	// flatStroke: the single CSS colour of a flat stroke stack; '' = nothing
+	// visible; null = the stack needs the SVG paint-server overlay.
+	function flatStroke(l: Layer): string | null {
+		const ps = visibleStrokePaints(l);
+		if (!ps.length) return '';
+		if (ps.length > 1 || ps[0].type !== 'solid') return null;
+		const op = ps[0].opacity ?? 1;
+		const c = ps[0].color ?? '#fff';
+		return op >= 1 ? c : rgba(c, op);
+	}
+	// strokeCss: ONE representative stroke colour for single-colour consumers
+	// (text outlines, brush tints, arrowhead markers) — mirrors the Go renderer's
+	// strokePrimary approximation.
+	function strokeCss(l: Layer): string {
+		return strokePrimary(l) || '#fff';
+	}
+	// svgStrokePaint: paint-server defs + the stroke value for ONE paint on an
+	// SVG shape. Gradients use the shape's object bounding box; `bbox` (in the
+	// SVG's own coordinates) anchors image patterns. Angular/diamond preview as
+	// radial (no SVG conic) — the PNG renderer is exact.
+	function svgStrokePaint(
+		id: string,
+		p: Paint,
+		bbox: { x: number; y: number; w: number; h: number }
+	): { defs: string; stroke: string; opacity: number } | null {
+		const op = p.opacity ?? 1;
+		switch (p.type) {
+			case 'solid':
+				return p.color ? { defs: '', stroke: rgba(p.color, op), opacity: 1 } : null;
+			case 'linear': {
+				const a = ((p.angle ?? 180) * Math.PI) / 180;
+				const dx = Math.sin(a) / 2;
+				const dy = -Math.cos(a) / 2;
+				return {
+					defs: `<linearGradient id='${id}' x1='${0.5 - dx}' y1='${0.5 - dy}' x2='${0.5 + dx}' y2='${0.5 + dy}'>${svgStops(p)}</linearGradient>`,
+					stroke: `url(#${id})`,
+					opacity: 1
+				};
+			}
+			case 'radial':
+			case 'angular':
+			case 'diamond':
+				return {
+					defs: `<radialGradient id='${id}' cx='0.5' cy='0.5' r='0.5'>${svgStops(p)}</radialGradient>`,
+					stroke: `url(#${id})`,
+					opacity: 1
+				};
+			case 'image': {
+				const src = resolveSrc(p.src);
+				if (!src) return null;
+				const tile = p.fit === 'tile';
+				const pw = tile ? 256 : bbox.w;
+				const ph = tile ? 256 : bbox.h;
+				const par = p.fit === 'contain' ? 'xMidYMid meet' : 'xMidYMid slice';
+				return {
+					defs: `<pattern id='${id}' x='${bbox.x}' y='${bbox.y}' width='${pw}' height='${ph}' patternUnits='userSpaceOnUse'><image href='${src}' width='${pw}' height='${ph}' preserveAspectRatio='${par}'/></pattern>`,
+					stroke: `url(#${id})`,
+					opacity: op
+				};
+			}
+		}
+		return null;
+	}
+	// strokePaintLayers: the per-paint <g stroke=…> bodies + defs for an SVG
+	// shape string — the shared core of the box/sides/wobble stroke overlays.
+	function strokePaintLayers(l: Layer, idBase: string, shape: string, bbox: { x: number; y: number; w: number; h: number }): { defs: string; body: string } {
+		let defs = '';
+		let body = '';
+		visibleStrokePaints(l).forEach((p, i) => {
+			const sp = svgStrokePaint(`${idBase}_${i}`, p, bbox);
+			if (!sp) return;
+			defs += sp.defs;
+			body += `<g stroke='${sp.stroke}'${sp.opacity < 1 ? ` opacity='${sp.opacity}'` : ''}>${shape}</g>`;
+		});
+		return { defs, body };
+	}
+	// pathFillMarkup: SVG defs + stacked fill paths for a vector path's paint stack.
+	// Drawn bottom→top before the stroke path; the stroke path keeps the pointer hits.
+	function pathFillMarkup(l: Layer, d: string): string {
+		const ps = visiblePaints(l);
+		if (!ps.length || (l.nodes?.length ?? 0) < 3) return '';
+		let defs = '';
+		let paths = '';
+		ps.forEach((p, i) => {
+			const id = `pf_${l.id}_${i}`;
+			const op = p.opacity ?? 1;
+			let fill = '';
+			if (p.type === 'solid') {
+				if (!p.color) return;
+				fill = rgba(p.color, op);
+			} else if (p.type === 'linear') {
+				const a = ((p.angle ?? 180) * Math.PI) / 180;
+				const dx = Math.sin(a) / 2;
+				const dy = -Math.cos(a) / 2;
+				defs += `<linearGradient id='${id}' x1='${0.5 - dx}' y1='${0.5 - dy}' x2='${0.5 + dx}' y2='${0.5 + dy}'>${svgStops(p)}</linearGradient>`;
+				fill = `url(#${id})`;
+			} else if (p.type === 'radial' || p.type === 'angular' || p.type === 'diamond') {
+				// angular/diamond preview as radial on paths (no SVG conic) — PNG is exact
+				defs += `<radialGradient id='${id}' cx='0.5' cy='0.5' r='0.5'>${svgStops(p)}</radialGradient>`;
+				fill = `url(#${id})`;
+			} else if (p.type === 'image') {
+				const src = resolveSrc(p.src);
+				if (!src) return;
+				const tile = p.fit === 'tile';
+				const pw = tile ? 256 : l.w;
+				const ph = tile ? 256 : l.h;
+				const par = p.fit === 'contain' ? 'xMidYMid meet' : 'xMidYMid slice';
+				defs += `<pattern id='${id}' x='${l.x}' y='${l.y}' width='${pw}' height='${ph}' patternUnits='userSpaceOnUse'><image href='${src}' width='${pw}' height='${ph}' preserveAspectRatio='${par}'/></pattern>`;
+				fill = `url(#${id})`;
+				paths += `<path d='${d}' fill='${fill}' opacity='${op}' pointer-events='none'/>`;
+				return;
+			}
+			if (fill) paths += `<path d='${d}' fill='${fill}' pointer-events='none'/>`;
+		});
+		if (!paths) return '';
+		return `${defs ? `<defs>${defs}</defs>` : ''}${paths}`;
+	}
+	// pathStrokeMarkup: SVG defs + stacked stroke paths for a vector path's stroke
+	// stack — used when the stack isn't one flat colour (the interactive <path>
+	// then strokes transparent and only keeps the pointer hits / markers).
+	function pathStrokeMarkup(l: Layer, d: string): string {
+		const sw = l.stroke_width ?? 0;
+		if (l.clip || sw <= 0 || l.brush_name) return '';
+		if (flatStroke(l) !== null) return '';
+		const cap = l.stroke_cap ?? 'round';
+		const join = l.stroke_join === 'miter' ? 'bevel' : (l.stroke_join ?? 'round');
+		const dash = strokeDash(l);
+		let defs = '';
+		let body = '';
+		visibleStrokePaints(l).forEach((p, i) => {
+			const sp = svgStrokePaint(`pstk_${l.id}_${i}`, p, { x: l.x, y: l.y, w: l.w, h: l.h });
+			if (!sp) return;
+			defs += sp.defs;
+			body += `<path d='${d}' fill='none' stroke='${sp.stroke}' stroke-width='${sw}' stroke-linecap='${cap}' stroke-linejoin='${join}'${dash ? ` stroke-dasharray='${dash}'` : ''}${sp.opacity < 1 ? ` opacity='${sp.opacity}'` : ''} pointer-events='none'/>`;
+		});
+		if (!body) return '';
+		return `${defs ? `<defs>${defs}</defs>` : ''}${body}`;
+	}
+	function svgStops(p: Paint): string {
+		const op = p.opacity ?? 1;
+		return (p.stops ?? [])
+			.map(
+				(st) =>
+					`<stop offset='${(st.pos * 100).toFixed(1)}%' stop-color='${st.color}' stop-opacity='${((st.alpha ?? 1) * op).toFixed(3)}'/>`
+			)
+			.join('');
+	}
+
 	// ── effect (shadow / blur) preview ──────────────────────────────────────────
 	// Mirror the Go renderer's effects with CSS. Blur radii are kept 1:1 with the
 	// renderer (× the live scale so on-screen px match the rendered px), exactly like
@@ -449,21 +659,27 @@
 	function rgba(hex: string | undefined, op: number | undefined): string {
 		let h = (hex ?? '#000000').replace('#', '');
 		if (h.length === 3) h = h.split('').map((c) => c + c).join('');
+		let a = op ?? 0.25;
+		// an #RRGGBBAA hex (the colour picker's alpha) folds into the opacity
+		if (h.length === 8) a *= (parseInt(h.slice(6, 8), 16) || 0) / 255;
 		h = h.padEnd(6, '0').slice(0, 6);
 		const r = parseInt(h.slice(0, 2), 16) || 0;
 		const g = parseInt(h.slice(2, 4), 16) || 0;
 		const b = parseInt(h.slice(4, 6), 16) || 0;
-		return `rgba(${r},${g},${b},${op ?? 0.25})`;
+		return `rgba(${r},${g},${b},${a})`;
 	}
-	// filter: layer blur + drop shadows (follows the layer's alpha — works for text,
-	// images and vector paths). Spread is folded into the blur as a coarse approximation.
-	function fxFilter(l: Layer): string {
+	// filter: layer blur + (for text/paths) drop shadows that follow the layer's alpha.
+	// Box layers take their drop shadows via fxDrops/box-shadow instead — withShadows=false
+	// — because Chrome's GPU compositor mis-renders a filter that changes under the
+	// overlapping selection chrome (rectangular shadows clipped to the layer box).
+	// Spread is folded into the blur as a coarse approximation.
+	function fxFilter(l: Layer, withShadows = true): string {
 		const parts: string[] = [];
 		for (const e of fxList(l)) {
 			if (e.type === 'layer_blur' && (e.radius ?? 0) > 0) parts.push(`blur(${(e.radius ?? 0) * scale}px)`);
 		}
 		for (const e of fxList(l)) {
-			if (e.type !== 'drop_shadow') continue;
+			if (e.type !== 'drop_shadow' || !withShadows) continue;
 			const r = Math.max(0, (e.radius ?? 0) + Math.max(0, e.spread ?? 0)) * scale;
 			parts.push(`drop-shadow(${(e.x ?? 0) * scale}px ${(e.y ?? 0) * scale}px ${r}px ${rgba(e.color, e.opacity)})`);
 		}
@@ -487,20 +703,36 @@
 					`inset ${(e.x ?? 0) * scale}px ${(e.y ?? 0) * scale}px ${(e.radius ?? 0) * scale}px ${(e.spread ?? 0) * scale}px ${rgba(e.color, e.opacity)}`
 			);
 	}
-	// boxShadow joins a layer's stroke/ring shadow with its inner-shadow effects.
+	// outer drop shadows as box-shadow entries — box layers (rect/ellipse/image) only.
+	// box-shadow follows the border-radius (a circle gets an elliptical shadow), supports
+	// real spread, and avoids CSS-filter compositing entirely (see fxFilter).
+	function fxDrops(l: Layer): string[] {
+		return fxList(l)
+			.filter((e) => e.type === 'drop_shadow')
+			.map(
+				(e) =>
+					`${(e.x ?? 0) * scale}px ${(e.y ?? 0) * scale}px ${(e.radius ?? 0) * scale}px ${(e.spread ?? 0) * scale}px ${rgba(e.color, e.opacity)}`
+			);
+	}
+	// boxShadow joins a layer's stroke/ring shadow with its inner-shadow effects, and —
+	// when `drops` (the layer renders an opaque box, so its drop shadows come through
+	// box-shadow, not filter) — the outer drop shadows LAST so the ring paints above them.
 	// Inner shadows are listed FIRST so they paint OVER the stroke/ring (CSS box-shadow
 	// paints the first entry on top), matching the Go draw order (content+stroke, then
 	// inner shadows). A stencil (l.clip) is never composited, so it carries no effects.
-	function boxShadow(l: Layer, base: string): string {
-		const parts = [...(hasFx && !l.clip ? fxInset(l) : []), base].filter(Boolean);
+	function boxShadow(l: Layer, base: string, drops = false): string {
+		const fx = hasFx && !l.clip;
+		const parts = [...(fx ? fxInset(l) : []), base, ...(fx && drops ? fxDrops(l) : [])].filter(Boolean);
 		return parts.length ? `box-shadow:${parts.join(', ')};` : '';
 	}
-	// strokeShadow renders a stroke as a box-shadow honouring its Position (Figma stroke
-	// align): inside = inset, outside = outset, center = half each. Follows border-radius.
-	// `sw` is the already-scaled width. Returns '' for no stroke.
+	// strokeShadow renders a FLAT (single solid paint) stroke as a box-shadow
+	// honouring its Position (Figma stroke align): inside = inset, outside =
+	// outset, center = half each. Follows border-radius. `sw` is the already-
+	// scaled width. '' for no stroke or a stack that boxStrokeSvg paints instead.
 	function strokeShadow(l: Layer, sw: number): string {
 		if (sw <= 0) return '';
-		const c = l.stroke_color ?? '#fff';
+		const c = flatStroke(l);
+		if (!c) return '';
 		const align = l.stroke_align ?? 'center';
 		if (align === 'inside') return `inset 0 0 0 ${sw}px ${c}`;
 		if (align === 'outside') return `0 0 0 ${sw}px ${c}`;
@@ -515,17 +747,19 @@
 		const g = Math.max(0, l.gap ?? 0) * k;
 		return d > 0 || g > 0 ? `${d} ${g}` : '';
 	}
-	// dashStrokeSvg renders a DASHED stroke for a box shape (rect/ellipse/image) as an
-	// inline SVG overlay — CSS box-shadow can't dash. The viewBox is in canvas units so
-	// stroke-width/dash are canvas px and scale with the stage; the shape is inset/outset
-	// by the stroke Position. Solid strokes keep the box-shadow path. '' when not dashed.
-	function dashStrokeSvg(l: Layer): string {
-		if (l.clip || l.stroke_style !== 'dashed') return '';
+	// boxStrokeSvg renders a box shape's (rect/ellipse/image) FULL outline stroke as an
+	// inline SVG overlay whenever CSS box-shadow can't express it: dashed strokes, and
+	// any non-flat paint stack (gradients / image paints / multiple paints on one
+	// stroke). The viewBox is in canvas units so stroke-width/dash are canvas px and
+	// scale with the stage; the shape is inset/outset by the stroke Position. '' when
+	// the cheap box-shadow path applies.
+	function boxStrokeSvg(l: Layer): string {
+		if (l.clip) return '';
 		const sw = l.stroke_width ?? 0;
 		if (sw <= 0) return '';
 		const dash = strokeDash(l);
-		if (!dash) return '';
-		const c = l.stroke_color ?? '#fff';
+		const fancy = flatStroke(l) === null;
+		if (!fancy && (l.stroke_style !== 'dashed' || !dash)) return '';
 		const cap = l.stroke_cap ?? 'round';
 		// gg (the card renderer) has no miter join, so mirror its bevel for WYSIWYG.
 		const join = l.stroke_join === 'miter' ? 'bevel' : (l.stroke_join ?? 'round');
@@ -561,7 +795,9 @@
 				` L ${x} ${y + a} A ${a} ${a} 0 0 1 ${x + a} ${y} Z`;
 			shape = `<path d='${d}'/>`;
 		}
-		return `<svg class='dash-stroke' style='position:absolute;inset:0;width:100%;height:100%;overflow:visible;pointer-events:none' viewBox='0 0 ${l.w} ${l.h}' preserveAspectRatio='none' fill='none' stroke='${c}' stroke-width='${sw}' stroke-dasharray='${dash}' stroke-linecap='${cap}' stroke-linejoin='${join}'>${shape}</svg>`;
+		const { defs, body } = strokePaintLayers(l, `bs_${l.id}`, shape, { x: 0, y: 0, w: l.w, h: l.h });
+		if (!body) return '';
+		return `<svg class='dash-stroke' style='position:absolute;inset:0;width:100%;height:100%;overflow:visible;pointer-events:none' viewBox='0 0 ${l.w} ${l.h}' preserveAspectRatio='none' fill='none' stroke-width='${sw}'${dash ? ` stroke-dasharray='${dash}'` : ''} stroke-linecap='${cap}' stroke-linejoin='${join}'>${defs ? `<defs>${defs}</defs>` : ''}${body}</svg>`;
 	}
 	// sidesRestricted: a rect strokes only SOME sides (Figma's individual strokes).
 	function sidesRestricted(l: Layer): boolean {
@@ -575,7 +811,6 @@
 		const sw = l.stroke_width ?? 0;
 		if (sw <= 0 || l.clip) return '';
 		const set = new Set(l.stroke_sides ?? []);
-		const c = l.stroke_color ?? '#fff';
 		const cap = l.stroke_cap ?? 'round';
 		const join = l.stroke_join === 'miter' ? 'bevel' : (l.stroke_join ?? 'round');
 		const dash = strokeDash(l);
@@ -589,7 +824,9 @@
 		if (set.has('left')) lines.push(`<line x1='${off}' y1='0' x2='${off}' y2='${h}'/>`);
 		if (set.has('right')) lines.push(`<line x1='${w - off}' y1='0' x2='${w - off}' y2='${h}'/>`);
 		if (!lines.length) return '';
-		return `<svg class='dash-stroke' style='position:absolute;inset:0;width:100%;height:100%;overflow:visible;pointer-events:none' viewBox='0 0 ${w} ${h}' preserveAspectRatio='none' fill='none' stroke='${c}' stroke-width='${sw}' stroke-linecap='${cap}' stroke-linejoin='${join}'${dash ? ` stroke-dasharray='${dash}'` : ''}>${lines.join('')}</svg>`;
+		const { defs, body } = strokePaintLayers(l, `ss_${l.id}`, lines.join(''), { x: 0, y: 0, w, h });
+		if (!body) return '';
+		return `<svg class='dash-stroke' style='position:absolute;inset:0;width:100%;height:100%;overflow:visible;pointer-events:none' viewBox='0 0 ${w} ${h}' preserveAspectRatio='none' fill='none' stroke-width='${sw}' stroke-linecap='${cap}' stroke-linejoin='${join}'${dash ? ` stroke-dasharray='${dash}'` : ''}>${defs ? `<defs>${defs}</defs>` : ''}${body}</svg>`;
 	}
 
 	// ── advanced path stroke preview (Figma's Dynamic wobble + arrowheads) ──────
@@ -752,16 +989,14 @@
 		if (pts.length < 3) return '';
 		const d = smoothPathD(pts, true);
 		const sw = l.stroke_width ?? 0;
-		const c = l.stroke_color ?? '#fff';
 		const cap = l.stroke_cap ?? 'round';
 		const join = l.stroke_join === 'miter' ? 'bevel' : (l.stroke_join ?? 'round');
 		const dash = strokeDash(l);
-		const fill = withFill ? (l.fill ?? '#000') : 'none';
-		const strokeAttrs =
-			sw > 0
-				? ` stroke='${c}' stroke-width='${sw}' stroke-linecap='${cap}' stroke-linejoin='${join}'${dash ? ` stroke-dasharray='${dash}'` : ''}`
-				: '';
-		return `<svg class='dash-stroke' style='position:absolute;inset:0;width:100%;height:100%;overflow:visible;pointer-events:none' viewBox='0 0 ${l.w} ${l.h}' preserveAspectRatio='none' fill='${fill}'${strokeAttrs}><path d='${d}'/></svg>`;
+		// The wobbled shape fills as ONE region (its primary colour); the stroke
+		// paints once per stroke paint, like every other stroke preview.
+		const fill = withFill ? paintPrimary(l) || 'none' : 'none';
+		const { defs, body } = sw > 0 ? strokePaintLayers(l, `ws_${l.id}`, `<path d='${d}'/>`, { x: 0, y: 0, w: l.w, h: l.h }) : { defs: '', body: '' };
+		return `<svg class='dash-stroke' style='position:absolute;inset:0;width:100%;height:100%;overflow:visible;pointer-events:none' viewBox='0 0 ${l.w} ${l.h}' preserveAspectRatio='none' fill='none' stroke-width='${sw}' stroke-linecap='${cap}' stroke-linejoin='${join}'${dash ? ` stroke-dasharray='${dash}'` : ''}>${defs ? `<defs>${defs}</defs>` : ''}<path d='${d}' fill='${fill}' stroke='none'/>${body}</svg>`;
 	}
 	// ── brush strokes (Figma's named Stretch / Scatter brushes) ────────────────
 	// The whole engine lives in $lib/layout/brushes (mirrored 1:1 with the Go renderer);
@@ -770,11 +1005,14 @@
 		return {
 			brush: l.brush_name,
 			width: l.stroke_width ?? 0,
-			color: l.stroke_color ?? '#fff',
+			// brushes tint with ONE colour — the stack's primary (mirrors the PNG)
+			color: strokeCss(l),
 			direction: l.brush_direction,
 			gap: l.scatter_gap,
 			wiggle: l.scatter_wiggle,
-			size: l.scatter_size
+			size: l.scatter_size,
+			rotation: l.scatter_rotation,
+			angular: l.scatter_angular
 		};
 	}
 	// brushShapeSvg renders a rect/ellipse/image BORDER as the selected brush (overlay).
@@ -822,16 +1060,32 @@
 					: 'none';
 		// Text stroke = an outline of the glyphs (`-webkit-text-stroke`). paint-order:stroke
 		// paints it BEHIND the fill so it reads as an outside outline (mirrors the Go pass).
+		// A stroke stack previews with its primary colour — the PNG paints the full stack.
 		const sw = (l.stroke_width ?? 0) * scale;
-		const stroke =
-			sw > 0 ? ` -webkit-text-stroke:${sw}px ${l.stroke_color ?? '#fff'}; paint-order:stroke;` : '';
+		const stroke = sw > 0 ? ` -webkit-text-stroke:${sw}px ${strokeCss(l)}; paint-order:stroke;` : '';
 		return (
 			`white-space:pre-wrap; overflow-wrap:break-word; text-align:${l.align ?? 'left'};` +
 			` font-family:${fontCss(l.font_family)}; font-size:${(l.font_size ?? 16) * scale}px;` +
-			` font-weight:${l.font_weight ?? 400}; color:${l.color ?? '#fff'}; line-height:${lh};` +
+			` font-weight:${l.font_weight ?? 400}; ${textFillCss(l)} line-height:${lh};` +
 			` letter-spacing:${ls}px; text-transform:${tc}; text-decoration:${td};` +
 			stroke
 		);
+	}
+	// textFillCss: a text layer's fill from its paint stack — a single solid stays
+	// a plain `color`; gradients / images / multi-paint stacks paint the glyphs
+	// via background-clip:text (decorations + caret keep a solid via the primary).
+	function textFillCss(l: Layer): string {
+		const raw = textPaintsOf(l);
+		if (!raw.length) return `color:${l.color ?? '#fff'};`;
+		const ps = raw.filter((p) => !p.hidden && (p.opacity ?? 1) > 0);
+		if (!ps.length) return 'color:transparent;';
+		if (ps.length === 1 && ps[0].type === 'solid') {
+			const op = ps[0].opacity ?? 1;
+			const c = ps[0].color ?? '#fff';
+			return `color:${op >= 1 ? c : rgba(c, op)};`;
+		}
+		const deco = stackPrimary(ps) || '#fff';
+		return `${cssBackgroundsOf(ps)} -webkit-background-clip:text; background-clip:text; color:transparent; text-decoration-color:${deco}; caret-color:${deco};`;
 	}
 	// vertical alignment of the text block within its box.
 	function vAlignCss(l: Layer): string {
@@ -909,7 +1163,7 @@
 		// Top member's appearance (bottom's for subtract). `||` not `??` so an unfilled
 		// path (fill==='') falls back to white like the Go renderer; a text source has no
 		// fill, so use its colour (Figma keeps the front-most member's appearance).
-		const fill = src.fill || (src.type === 'text' ? src.color : '') || '#FFFFFF';
+		const fill = paintPrimary(src) || (src.type === 'text' ? src.color : '') || '#FFFFFF';
 		const opacity = Math.min(1, src.opacity ?? 1);
 		if (opacity <= 0) return '';
 		const sid = gid.replace(/[^a-zA-Z0-9_-]/g, ''); // safe <defs> id fragment
@@ -1521,7 +1775,6 @@
 			const n0 = path.nodes[0];
 			if (path.nodes.length >= 2 && Math.hypot(p.x - n0.x, p.y - n0.y) <= 10 / (scale || 1)) {
 				path.closed = true;
-				if (!path.fill) path.fill = path.stroke_color || '#FFFFFF';
 				finishPen();
 				editor.setTool('select');
 				return;
@@ -2136,6 +2389,62 @@
 	}
 
 	// ── keyboard: tool shortcuts, then nudge / delete / duplicate on selection ──
+	// ── OS-clipboard paste (Figma-style Ctrl+V) ────────────────────────────────
+	// An image on the clipboard (screenshot, copied picture) uploads and lands as
+	// a new image layer sized to its natural dimensions; objects copied in the
+	// editor paste via the internal clipboard; plain text becomes a text layer.
+	async function onPaste(e: ClipboardEvent) {
+		const t = e.target as HTMLElement | null;
+		if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+		const dt = e.clipboardData;
+		if (!dt) return;
+		const item = Array.from(dt.items).find((it) => it.type.startsWith('image/'));
+		if (item) {
+			e.preventDefault();
+			const file = item.getAsFile();
+			if (!file) return;
+			try {
+				const url = await uploadImage(editor.guildId, file);
+				const dims = await new Promise<{ w: number; h: number }>((res) => {
+					const im = new Image();
+					im.onload = () => res({ w: im.naturalWidth || 200, h: im.naturalHeight || 200 });
+					im.onerror = () => res({ w: 200, h: 200 });
+					im.src = url;
+				});
+				const sc = Math.min(1, (layout.width * 0.6) / dims.w, (layout.height * 0.6) / dims.h);
+				const w = Math.max(8, Math.round(dims.w * sc));
+				const h = Math.max(8, Math.round(dims.h * sc));
+				const layer = editor.addLayer('image');
+				if (!layer) return;
+				layer.name = 'Pasted image';
+				layer.src = url;
+				layer.radius = 0;
+				layer.w = w;
+				layer.h = h;
+				layer.x = Math.round((layout.width - w) / 2);
+				layer.y = Math.round((layout.height - h) / 2);
+			} catch {
+				/* upload failed — nothing to paste */
+			}
+			return;
+		}
+		const text = dt.getData('text/plain');
+		e.preventDefault();
+		// objects copied in the editor win; otherwise plain text becomes a text layer
+		if (editor.canPasteInternal) {
+			editor.paste();
+			return;
+		}
+		if (text.trim()) {
+			const layer = editor.addLayer('text');
+			if (!layer) return;
+			layer.name = text.trim().slice(0, 24);
+			layer.text = text;
+			layer.x = Math.round(layout.width / 2 - layer.w / 2);
+			layer.y = Math.round(layout.height / 2 - layer.h / 2);
+		}
+	}
+
 	function onKeydown(e: KeyboardEvent) {
 		const t = e.target as HTMLElement | null;
 		if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
@@ -2167,11 +2476,7 @@
 					e.preventDefault();
 					editor.cut();
 					return;
-				case 'v':
-					e.preventDefault();
-					editor.paste();
-					return;
-				case 'a':
+					case 'a':
 					e.preventDefault();
 					editor.selectAll();
 					return;
@@ -2301,6 +2606,7 @@
 <svelte:window
 	onkeydown={onKeydown}
 	onkeyup={onKeyup}
+	onpaste={onPaste}
 	onpointerup={cancelAllGestures}
 	onpointercancel={cancelAllGestures}
 	onblur={cancelAllGestures}
@@ -2326,22 +2632,21 @@
 	bind:this={stageEl}
 	role="presentation"
 	class="stage"
-	style="aspect-ratio:{layout.width}/{layout.height}; background:{bgCss}; cursor:{editor.tool === 'select' ? 'default' : 'crosshair'};"
+	style="aspect-ratio:{layout.width}/{layout.height}; background:#2B2233; cursor:{editor.tool === 'select' ? 'default' : 'crosshair'};"
 	onpointerdown={stageDown}
 	onpointermove={stageMove}
 	onpointerup={stageUp}
 	onpointercancel={stageUp}
 >
-	<!-- Image background + its blur, painted as absolute layers under everything. -->
-	{#if layout.background.type === 'image' && resolveSrc(layout.background.image_url)}
+	<!-- Background paint stack (+ its optional whole-background blur), painted as
+	     an absolute layer under everything. The stage's own #2B2233 mirrors the Go
+	     renderer's brand-ink base, visible through transparent/empty stacks. -->
+	{#if bgCss}
 		{@const blur = (layout.background.blur ?? 0) * scale}
 		<div
 			data-stage="bg"
 			class="absolute inset-0"
-			style="background-image:url({resolveSrc(layout.background.image_url)}); background-size:cover; background-position:center; {blur >
-			0
-				? `filter:blur(${blur}px);`
-				: ''}"
+			style="{bgCss} {blur > 0 ? `filter:blur(${blur}px);` : ''}"
 		></div>
 	{/if}
 
@@ -2411,9 +2716,38 @@
 							onpointermove={onMove}
 							onpointerup={endGesture}
 							onpointercancel={endGesture}
+							ondblclick={() => {
+								if (m.type === 'text') enterEdit(m);
+							}}
 						/>
 					{/each}
 				</svg>
+				<!-- Inline text editor for a TEXT member of the boolean (members render only
+				     as the composite, so the generic branch's textarea never exists for them). -->
+				{#each members as m (m.id)}
+					{#if m.id === editor.editId && m.type === 'text'}
+						{@const mb = box(m)}
+						<div
+							class="layer"
+							style="left:{mb.left}; top:{mb.top}; width:{mb.width}; height:{mb.height}; transform:rotate({m.rotation ??
+								0}deg);"
+						>
+							<textarea
+								bind:this={textEl}
+								bind:value={m.text}
+								onpointerdown={(e) => e.stopPropagation()}
+								onkeydown={(e) => {
+									if (e.key === 'Escape') {
+										e.stopPropagation();
+										editor.exitEdit();
+									}
+								}}
+								class="h-full w-full resize-none bg-transparent p-0 outline-none"
+								style="{textCss(m)} box-shadow:0 0 0 1px var(--vec);"
+							></textarea>
+						</div>
+					{/if}
+				{/each}
 				<!-- Resize handles per selected member (members scale individually for now). -->
 				{#each members as m (m.id)}
 					{#if editor.isSelected(m.id)}
@@ -2440,23 +2774,35 @@
 			{@const cy = l.y + l.h / 2}
 			{@const plain = l.id === penId}
 			{@const d = strokePathD(l, plain) + (l.id === penId && cursor && (l.nodes?.length ?? 0) ? ` L ${cursor.x} ${cursor.y}` : '')}
-			{@const sm = !l.clip && !l.closed ? arrowMarker(`as_${l.id}`, l.start_cap, 'auto-start-reverse', l.stroke_color ?? '#fff') : ''}
-			{@const em = !l.clip && !l.closed ? arrowMarker(`ae_${l.id}`, l.end_cap, 'auto', l.stroke_color ?? '#fff') : ''}
+			{@const sm = !l.clip && !l.closed ? arrowMarker(`as_${l.id}`, l.start_cap, 'auto-start-reverse', strokeCss(l)) : ''}
+			{@const em = !l.clip && !l.closed ? arrowMarker(`ae_${l.id}`, l.end_cap, 'auto', strokeCss(l)) : ''}
 			{@const brushed = !!l.brush_name && !l.clip && (l.stroke_width ?? 0) > 0 && !plain}
+			{@const strokeMarkup = !l.clip && !brushed ? pathStrokeMarkup(l, d) : ''}
+			{@const fxp = hasFx && !l.clip ? fxFilter(l) : ''}
 			<svg
 				class="path-layer"
 				viewBox="0 0 {layout.width} {layout.height}"
 				preserveAspectRatio="none"
-				style="opacity:{l.opacity ?? 1}; {!hasMasks || l.id === editor.editId ? '' : maskCss(l, true)} {hasFx && !l.clip ? fxFilter(l) : ''}"
+				style="opacity:{l.opacity ?? 1}; {!hasMasks || l.id === editor.editId ? '' : maskCss(l, true)}"
 			>
-				<g transform="rotate({l.rotation ?? 0} {cx} {cy})">
+				<!-- The effect filter wraps only the painted content; node/handle overlays in
+				     the outer group stay crisp while editing a path that has a shadow. The
+				     {#key} recreates the group when the filter changes (see fx-wrap note). -->
+				{#key fxp}
+					<g transform="rotate({l.rotation ?? 0} {cx} {cy})" style={fxp}>
 					{#if sm || em}<defs>{@html sm}{@html em}</defs>{/if}
+					{#if d && !l.clip}{@html pathFillMarkup(l, d)}{/if}
+					{#if d && strokeMarkup}{@html strokeMarkup}{/if}
 					{#if d}
 						<path
 							{d}
-							fill={l.clip ? 'transparent' : l.closed && l.fill && (l.nodes?.length ?? 0) >= 3 ? l.fill : 'none'}
-							stroke={l.clip || brushed ? 'none' : (l.stroke_color ?? '#fff')}
-							stroke-width={l.clip || brushed ? 0 : (l.stroke_width ?? 4)}
+							fill={l.clip || (visiblePaints(l).length && (l.nodes?.length ?? 0) >= 3) ? 'transparent' : 'none'}
+							stroke={l.clip || brushed
+								? 'none'
+								: strokeMarkup
+									? 'transparent'
+									: flatStroke(l) || 'transparent'}
+							stroke-width={l.clip || brushed ? 0 : (l.stroke_width ?? 0)}
 							stroke-linecap={l.stroke_cap ?? 'round'}
 							stroke-linejoin={(l.stroke_join === 'miter' ? 'bevel' : l.stroke_join) ?? 'round'}
 							stroke-dasharray={strokeDash(l) || undefined}
@@ -2475,6 +2821,11 @@
 						/>
 					{/if}
 					{#if brushed}{@html brushPathMarkup(l)}{/if}
+					</g>
+				{/key}
+				<!-- A second, UNFILTERED group with the same transform hosts the pen/edit
+				     overlays so they never inherit the layer's shadow/blur. -->
+				<g transform="rotate({l.rotation ?? 0} {cx} {cy})">
 					{#if l.id === penId}
 						{#each l.nodes ?? [] as n, ni (ni)}
 							<circle cx={n.x} cy={n.y} r={4 / (scale || 1)} class="path-node" />
@@ -2569,6 +2920,12 @@
 				</div>
 			{/if}
 		{:else}
+		{@const wobAny = (l.dynamic_wiggle ?? 0) > 0 && (l.stroke_width ?? 0) > 0 && !l.clip}
+		{@const shadowsViaBox =
+			!l.clip &&
+			(((l.type === 'rect' || l.type === 'ellipse') && !wobAny) ||
+				(l.type === 'image' && (l.fit ?? 'cover') !== 'contain'))}
+		{@const fxs = hasFx && !l.clip ? fxFilter(l, !shadowsViaBox) + fxBackdrop(l) : ''}
 		<!-- Layer body. role/aria make it operable; pointer events drive move. -->
 		<div
 			role="button"
@@ -2578,15 +2935,22 @@
 			class="layer"
 			class:selected={isSel}
 			style="left:{b.left}; top:{b.top}; width:{b.width}; height:{b.height}; opacity:{l.opacity ??
-				1}; transform:rotate({l.rotation ?? 0}deg); {hasMasks ? maskCss(l) : ''} {hasFx && !l.clip
-				? fxFilter(l) + fxBackdrop(l)
-				: ''}"
+				1}; transform:rotate({l.rotation ?? 0}deg); {hasMasks ? maskCss(l) : ''}"
 			onpointerdown={(e) => beginBody(e, l)}
 			onpointermove={onMove}
 			onpointerup={endGesture}
 			onpointercancel={endGesture}
 			ondblclick={() => enterEdit(l)}
 		>
+			<!-- Effects live on this inner wrapper, NOT the .layer div: the layer div also
+			     carries the selection chrome, and a drop-shadow/blur filter there would
+			     shadow the chrome itself. The {#key} recreates the wrapper whenever the
+			     filter string changes: Chromium fails to invalidate a filtered element's
+			     cached raster when only its filter value changes under overlapping
+			     siblings (the selection ring), so live shadow edits looked stale until
+			     the next unrelated repaint. A fresh element always rasterises fresh. -->
+			{#key fxs}
+			<div class="fx-wrap" style={fxs}>
 			{#if l.type === 'text'}
 				{#if l.id === editor.editId}
 					<textarea
@@ -2624,12 +2988,13 @@
 				{@const sw = (l.stroke_width ?? 0) * scale}
 				{@const wob = (l.dynamic_wiggle ?? 0) > 0 && (l.stroke_width ?? 0) > 0 && !l.clip}
 					{@const brush = !!l.brush_name && (l.stroke_width ?? 0) > 0 && !l.clip}
-					{@const strokeBase = sw > 0 && l.stroke_style !== 'dashed' && !wob && !brush && (!l.clip || isSel) ? strokeShadow(l, sw) : ''}
-				{@const ringCss = boxShadow(l, strokeBase)}
+					{@const svgStroke = !wob && !brush ? boxStrokeSvg(l) : ''}
+					{@const strokeBase = sw > 0 && !svgStroke && l.stroke_style !== 'dashed' && !wob && !brush && (!l.clip || isSel) ? strokeShadow(l, sw) : ''}
+				{@const ringCss = boxShadow(l, strokeBase, shadowsViaBox)}
 				<!-- A stencil's own pixels aren't part of the card (only its SHAPE clips the
 				     content): fade it to a faint ghost while selected and hide it otherwise. -->
 				<div
-					class="grid h-full w-full place-items-center"
+					class="relative grid h-full w-full place-items-center"
 					class:stencil-ghost={l.clip && isSel}
 					class:opacity-40={l.clip && isSel}
 					class:opacity-0={l.clip && !isSel}
@@ -2640,8 +3005,16 @@
 							alt={l.name}
 							draggable="false"
 							class="block h-full w-full select-none"
-							style="object-fit:{l.fit ?? 'cover'}; border-radius:{rad}; {ringCss}"
+							style="object-fit:{l.fit ?? 'cover'}; border-radius:{rad};"
 						/>
+						{#if ringCss}
+							<!-- The box-shadows live on an overlay ABOVE the img: inset shadows
+							     (inner-shadow effects, inside/center strokes) paint BEHIND a
+							     replaced element's pixels, so on the <img> itself they would be
+							     invisible. Outer entries only paint outside the box, so the
+							     overlay never covers the picture. -->
+							<div class="pointer-events-none absolute inset-0" style="border-radius:{rad}; {ringCss}"></div>
+						{/if}
 					{:else}
 						<!-- Empty / bound source → neutral placeholder tile. -->
 						<div class="grid h-full w-full place-items-center bg-line-strong/60 text-faint" style="border-radius:{rad}; {ringCss}">
@@ -2649,36 +3022,52 @@
 						</div>
 					{/if}
 				</div>
-				{#if wob}{@html wobbleSvg(l, false)}{:else if brush}{@html brushShapeSvg(l)}{:else if l.stroke_style === 'dashed' && (l.stroke_width ?? 0) > 0 && !l.clip}{@html dashStrokeSvg(l)}{/if}
+				{#if wob}{@html wobbleSvg(l, false)}{:else if brush}{@html brushShapeSvg(l)}{:else if svgStroke}{@html svgStroke}{/if}
 			{:else if l.type === 'rect'}
 				{@const sw = (l.stroke_width ?? 0) * scale}
 				{@const wob = (l.dynamic_wiggle ?? 0) > 0 && (l.stroke_width ?? 0) > 0 && !l.clip}
 				{@const brush = !!l.brush_name && (l.stroke_width ?? 0) > 0 && !l.clip}
 				{@const perSide = sw > 0 && !l.clip && sidesRestricted(l) && !wob && !brush}
-				{@const dashed = l.stroke_style === 'dashed' && sw > 0 && !perSide && !wob && !brush}
-				{@const strokeBase = sw > 0 && !l.clip && !dashed && !perSide && !wob && !brush ? strokeShadow(l, sw) : ''}
+				{@const svgStroke = !l.clip && !perSide && !wob && !brush ? boxStrokeSvg(l) : ''}
+				{@const strokeBase = sw > 0 && !l.clip && !svgStroke && !perSide && !wob && !brush ? strokeShadow(l, sw) : ''}
 				<div
 					class="h-full w-full"
 					class:stencil-ghost={l.clip && isSel}
-					style="background:{wob || l.clip ? 'transparent' : (l.fill ?? '#000')}; border-radius:{radiusCss(l)}; {wob ? '' : boxShadow(l, strokeBase)}"
+					style="{wob || l.clip ? 'background:transparent;' : cssBackgrounds(l)} border-radius:{radiusCss(l)}; {wob ? '' : boxShadow(l, strokeBase, shadowsViaBox)}"
 				></div>
-				{#if wob}{@html wobbleSvg(l, true)}{:else if brush}{@html brushShapeSvg(l)}{:else if perSide}{@html strokeSidesSvg(l)}{:else if dashed && !l.clip}{@html dashStrokeSvg(l)}{/if}
+				{#if wob}{@html wobbleSvg(l, true)}{:else if brush}{@html brushShapeSvg(l)}{:else if perSide}{@html strokeSidesSvg(l)}{:else if svgStroke}{@html svgStroke}{/if}
 			{:else if l.type === 'ellipse'}
 				{@const sw = (l.stroke_width ?? 0) * scale}
 				{@const wob = (l.dynamic_wiggle ?? 0) > 0 && (l.stroke_width ?? 0) > 0 && !l.clip}
 				{@const brush = !!l.brush_name && (l.stroke_width ?? 0) > 0 && !l.clip}
-				{@const dashed = l.stroke_style === 'dashed' && sw > 0 && !wob && !brush}
-				{@const strokeBase = sw > 0 && !l.clip && !dashed && !wob && !brush ? strokeShadow(l, sw) : ''}
+				{@const svgStroke = !l.clip && !wob && !brush ? boxStrokeSvg(l) : ''}
+				{@const strokeBase = sw > 0 && !l.clip && !svgStroke && !wob && !brush ? strokeShadow(l, sw) : ''}
 				<div
 					class="h-full w-full"
 					class:stencil-ghost={l.clip && isSel}
-					style="background:{wob || l.clip ? 'transparent' : (l.fill ?? '#000')}; border-radius:50%; {wob ? '' : boxShadow(l, strokeBase)}"
+					style="{wob || l.clip ? 'background:transparent;' : cssBackgrounds(l)} border-radius:50%; {wob ? '' : boxShadow(l, strokeBase, shadowsViaBox)}"
 				></div>
-				{#if wob}{@html wobbleSvg(l, true)}{:else if brush}{@html brushShapeSvg(l)}{:else if dashed && !l.clip}{@html dashStrokeSvg(l)}{/if}
+				{#if wob}{@html wobbleSvg(l, true)}{:else if brush}{@html brushShapeSvg(l)}{:else if svgStroke}{@html svgStroke}{/if}
 			{/if}
 
-			{#if isSel}
-				<!-- Resize handles, only on the selected layer. -->
+			</div>
+			{/key}
+		</div>
+		{/if}
+	{/each}
+	<!-- Selection chrome overlay: outline + resize handles for box layers render ABOVE
+	     all layers (paths/booleans keep their own .path-sel chrome). The content itself
+	     stays at its natural stacking position — lifting the selected layer (the old
+	     z-index approach) painted it and its drop shadow over layers that should cover
+	     it, so shadows looked wrong exactly while selected. -->
+	{#each visible as l (`sel:${l.id}`)}
+		{#if editor.isSelected(l.id) && !boolMemberIds.has(l.id) && l.type !== 'path'}
+			{@const b = box(l)}
+			<div
+				class="sel-chrome"
+				style="left:{b.left}; top:{b.top}; width:{b.width}; height:{b.height}; transform:rotate({l.rotation ??
+					0}deg);"
+			>
 				{#each HANDLES as hd (hd.dir)}
 					<button
 						type="button"
@@ -2691,8 +3080,7 @@
 						onpointercancel={endGesture}
 					></button>
 				{/each}
-			{/if}
-		</div>
+			</div>
 		{/if}
 	{/each}
 </div>
@@ -2807,11 +3195,18 @@
 		cursor: default;
 		touch-action: none;
 		outline: none;
-		/* fractional % positions land mid-pixel; this keeps edges crisp */
-		will-change: left, top, width, height;
+		/* NO will-change here: promoting every layer to its own composited surface
+		   makes Chrome cache a stale raster when a child's filter (drop shadow/blur)
+		   changes — the shadow then only updates on the next unrelated repaint. */
 	}
 	.layer.selected {
 		cursor: move;
+	}
+	/* Full-size effects wrapper inside .layer — hosts filter/backdrop-filter so the
+	   selection outline and handles on .layer never get shadowed or blurred. */
+	.fx-wrap {
+		position: absolute;
+		inset: 0;
 	}
 	/* Dashed-stroke overlay for box shapes (rect/ellipse/image) — box-shadow can't dash.
 	   Fills the layer box; the stroke is painted by the inline SVG, never takes pointers. */
@@ -2823,10 +3218,17 @@
 		overflow: visible;
 		pointer-events: none;
 	}
-	.selected {
+	/* Selection chrome lives in .sel-chrome (an overlay above all layers) so the
+	   layer itself — and its drop shadow — keep their natural stacking order. */
+	.sel-chrome {
+		position: absolute;
 		outline: 1px solid var(--vec);
 		outline-offset: 0;
-		z-index: 2;
+		pointer-events: none;
+		z-index: 3;
+	}
+	.sel-chrome .handle {
+		pointer-events: all;
 	}
 
 	/* Path layers render as a full-stage SVG; only the painted path takes pointers

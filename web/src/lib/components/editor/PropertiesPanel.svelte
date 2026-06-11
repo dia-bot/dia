@@ -14,12 +14,13 @@
 	// portalled popover so they never clip either.
 	import { getContext } from 'svelte';
 	import { DropdownMenu, Tooltip, Popover } from 'bits-ui';
-	import { EditorStore, EDITOR_CTX, type AlignEdge } from '$lib/layout/editor.svelte';
+	import { EditorStore, EDITOR_CTX, type AlignEdge, type PaintTarget } from '$lib/layout/editor.svelte';
 	import { inspectorAnchor } from '$lib/layout/inspectorAnchor';
 	import { SIZE_PRESETS, clampCanvas, EFFECT_LABELS } from '$lib/layout/schema';
 	import { CARD_FONTS } from '$lib/layout/fonts';
 	import type {
-		BackgroundType,
+		Effect,
+		Paint,
 		HandleMode,
 		StrokeAlign,
 		StrokeStyle,
@@ -34,8 +35,6 @@
 		TextDecoration
 	} from '$lib/layout/schema';
 	import Select from '$lib/components/Select.svelte';
-	import ColorPicker from '$lib/components/ui/ColorPicker.svelte';
-	import Toggle from '$lib/components/Toggle.svelte';
 	import ImageInput from '$lib/components/editor/ImageInput.svelte';
 	import InspectorSection from '$lib/components/editor/InspectorSection.svelte';
 	import StrokeStyleSelect from '$lib/components/editor/StrokeStyleSelect.svelte';
@@ -44,6 +43,7 @@
 	import StrokeProfileSelect from '$lib/components/editor/StrokeProfileSelect.svelte';
 	import ArrowCapSelect from '$lib/components/editor/ArrowCapSelect.svelte';
 	import { uploadFont, deleteFont } from '$lib/api';
+	import PaintPicker from '$lib/components/editor/PaintPicker.svelte';
 	import { scrub } from '$lib/actions/scrub';
 	import {
 		Copy,
@@ -128,12 +128,6 @@
 	function typeLabel(t: string): string {
 		return t === 'path' ? 'Vector' : t[0].toUpperCase() + t.slice(1);
 	}
-
-	const bgTypes: { value: BackgroundType; label: string }[] = [
-		{ value: 'solid', label: 'Solid' },
-		{ value: 'gradient', label: 'Gradient' },
-		{ value: 'image', label: 'Image' }
-	];
 
 	// Boolean ops for the "all operations" combine section.
 	const boolOps: [BoolOp, string][] = [
@@ -245,25 +239,79 @@
 		}
 	}
 
-	function setBgType(t: BackgroundType) {
-		const bg = editor.layout.background;
-		bg.type = t;
-		if (t === 'solid' && bg.color === undefined) bg.color = '#141417';
-		if (t === 'gradient') {
-			if (bg.from === undefined) bg.from = '#FF6363';
-			if (bg.to === undefined) bg.to = '#B244FC';
-			if (bg.angle === undefined) bg.angle = 45;
-		}
-		if (t === 'image' && bg.blur === undefined) bg.blur = 0;
+	// ── effect colour ↔ one solid paint ────────────────────────────────────────
+	// A shadow's colour + opacity edit as a single #RRGGBB[AA] through the SAME
+	// PaintPicker dropdown as every other colour in the editor (solid-only mode).
+	function effectPaint(e: Effect): Paint {
+		const c = (e.color ?? '#000000').toUpperCase();
+		if (/^#[0-9A-F]{8}$/.test(c)) return { type: 'solid', color: c }; // legacy 8-digit colour
+		const op = Math.round(Math.min(1, Math.max(0, e.opacity ?? 0.25)) * 255);
+		return {
+			type: 'solid',
+			color: op >= 255 ? c : c + op.toString(16).padStart(2, '0').toUpperCase()
+		};
+	}
+	function setEffectColor(i: number, hex: string | undefined) {
+		if (!hex) return;
+		const m = /^#([0-9a-fA-F]{6})([0-9a-fA-F]{2})?$/.exec(hex);
+		if (!m) return;
+		editor.updateEffect(i, {
+			color: '#' + m[1].toUpperCase(),
+			opacity: m[2] ? parseInt(m[2], 16) / 255 : 1
+		});
 	}
 </script>
 
 <!-- Reusable bits ──────────────────────────────────────────────────────────── -->
 
+<!-- glyphIcon: the Figma-style 12px property glyphs that lucide doesn't have — corner
+     radius (uniform + each corner), rotation angle, line height, letter spacing,
+     stroke weight, dash/gap and blur/spread. Referenced from `field` via 'i:<name>'. -->
+{#snippet glyphIcon(name: string)}
+	<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+		{#if name === 'rotate'}
+			<path d="M3.5 3.5 V12.5 H12.5" />
+			<path d="M3.5 7.5 A5 5 0 0 1 8.5 12.5" stroke-opacity="0.55" />
+		{:else if name === 'radius'}
+			<path d="M3.5 12.5 V8.5 A5 5 0 0 1 8.5 3.5 H12.5" />
+		{:else if name === 'tl'}
+			<path d="M4 12.5 V8 A4 4 0 0 1 8 4 H12.5" />
+		{:else if name === 'tr'}
+			<path d="M3.5 4 H8 A4 4 0 0 1 12 8 V12.5" />
+		{:else if name === 'br'}
+			<path d="M12 3.5 V8 A4 4 0 0 1 8 12 H3.5" />
+		{:else if name === 'bl'}
+			<path d="M12.5 12 H8 A4 4 0 0 1 4 8 V3.5" />
+		{:else if name === 'lineheight'}
+			<path d="M3 2.7 H13 M3 13.3 H13" />
+			<path d="M8 5 V11 M6.3 6.6 L8 4.9 L9.7 6.6 M6.3 9.4 L8 11.1 L9.7 9.4" />
+		{:else if name === 'letterspacing'}
+			<path d="M5.4 9.6 L8 3.4 L10.6 9.6 M6.3 7.8 H9.7" />
+			<path d="M3 11.4 V14 M13 11.4 V14 M3 12.7 H13" />
+		{:else if name === 'weight'}
+			<path d="M3 3.8 H13" stroke-width="1" />
+			<path d="M3 7.8 H13" stroke-width="1.8" />
+			<path d="M3 12 H13" stroke-width="2.8" />
+		{:else if name === 'dash'}
+			<path d="M2.5 8 H13.5" stroke-width="1.8" stroke-dasharray="3 2.2" />
+		{:else if name === 'gapline'}
+			<path d="M4.5 3.5 V12.5 M11.5 3.5 V12.5" />
+			<path d="M6.8 8 H9.2" stroke-opacity="0.55" />
+		{:else if name === 'blur'}
+			<path d="M8 3.2 A4.8 4.8 0 0 0 8 12.8" />
+			<path d="M8 3.2 A4.8 4.8 0 0 1 8 12.8" stroke-dasharray="1.6 2" />
+		{:else if name === 'spread'}
+			<circle cx="8" cy="8" r="2.2" />
+			<circle cx="8" cy="8" r="5.4" stroke-dasharray="2 2.4" />
+		{/if}
+	</svg>
+{/snippet}
+
 <!-- field: THE one numeric field used everywhere — a recognizable "glyph + number"
-     control on a bg-ink-2 chip. `glyph` is either a short string label (e.g. 'LH')
-     or a lucide icon component; drag the glyph to scrub. A `value` of undefined means
-     the selected layers disagree → empty input with a "Mixed" placeholder. -->
+     control on a bg-ink-2 chip. `glyph` is a short string label (e.g. 'W'), an
+     'i:<name>' custom glyph (see glyphIcon), or a lucide icon component; drag the
+     glyph to scrub. A `value` of undefined means the selected layers disagree →
+     empty input with a "Mixed" placeholder. -->
 {#snippet field(
 	glyph: string | typeof Group,
 	value: number | undefined,
@@ -278,7 +326,7 @@
 			title="Drag to change"
 			class="grid w-6 shrink-0 cursor-ew-resize select-none place-items-center border-r border-line/70 bg-white/[0.02] text-[10px] font-semibold leading-none text-faint transition-colors group-hover:text-muted group-focus-within:text-ink"
 		>
-			{#if typeof glyph === 'string'}{glyph}{:else}{@const I = glyph}<I size={12} strokeWidth={2} />{/if}
+			{#if typeof glyph === 'string'}{#if glyph.startsWith('i:')}{@render glyphIcon(glyph.slice(2))}{:else}{glyph}{/if}{:else}{@const I = glyph}<I size={12} strokeWidth={2} />{/if}
 		</span>
 		<input
 			type="number"
@@ -328,16 +376,54 @@
 	<span class="w-24 shrink-0 text-xs text-muted">{caption}</span>
 {/snippet}
 
-<!-- ColorPicker bound through get/set so optional (string | undefined) fields stay
-     type-safe and always feed the picker a defined hex. `anchor` opens it to the LEFT of
-     the inspector (Figma-style); pass false for a picker already nested in a popover. -->
-{#snippet color(value: string | undefined, set: (hex: string) => void, anchor: boolean = true)}
-	<ColorPicker
-		dense
-		inspector={anchor}
-		bind:value={() => value ?? '#FFFFFF', (v) => set(v)}
-		class="w-full justify-start"
-	/>
+<!-- paintRows: THE paint-stack editor — the identical row list (PaintPicker chip +
+     per-paint opacity + hide + remove, top paint first like Figma) for every paint
+     slot: a layer's Fill, its Stroke, and the canvas Background. -->
+{#snippet paintRows(target: PaintTarget, empty: string)}
+	{@const ps = editor.paints(target)}
+	{#if ps.length}
+		<div class="space-y-1.5">
+			{#each ps.slice().reverse() as p, ri (ps.length - 1 - ri)}
+				{@const pi = ps.length - 1 - ri}
+				<div class="flex items-center gap-1.5 {p.hidden ? 'opacity-50' : ''}">
+					<PaintPicker
+						paint={p}
+						guildId={editor.guildId}
+						patch={(patch) => editor.setPaint(target, pi, patch)}
+						convert={(t) => editor.convertPaint(target, pi, t)}
+						setStops={(stops) => editor.setPaintStops(target, pi, stops)}
+					/>
+					<div class="w-20 shrink-0">
+						{@render field(Contrast, Math.round((p.opacity ?? 1) * 100), (n) =>
+							editor.setPaint(target, pi, { opacity: Math.min(1, Math.max(0, n / 100)) }), {
+							min: 0,
+							max: 100
+						})}
+					</div>
+					<button
+						type="button"
+						title={p.hidden ? 'Show paint' : 'Hide paint'}
+						aria-label={p.hidden ? 'Show paint' : 'Hide paint'}
+						onclick={() => editor.togglePaintHidden(target, pi)}
+						class="{btnGhost} h-7 w-7 shrink-0"
+					>
+						{#if p.hidden}<EyeOff size={13} />{:else}<Eye size={13} />{/if}
+					</button>
+					<button
+						type="button"
+						title="Remove paint"
+						aria-label="Remove paint"
+						onclick={() => editor.removePaint(target, pi)}
+						class="{btnBase} h-7 w-7 shrink-0 text-faint hover:bg-ink-2 hover:text-danger"
+					>
+						<X size={13} />
+					</button>
+				</div>
+			{/each}
+		</div>
+	{:else}
+		<p class="text-[11px] text-faint">{empty}</p>
+	{/if}
 {/snippet}
 
 <!-- Generic segmented control. items: [value, label][]. current === '' (Mixed)
@@ -424,6 +510,24 @@
 	</div>
 {/snippet}
 
+<!-- Figma-style Fill: the "+" in the header adds a paint; rows edit the stack. -->
+{#snippet fillSection()}
+	<InspectorSection title="Fill">
+		{#snippet action()}
+			<button
+				type="button"
+				title="Add fill"
+				aria-label="Add fill"
+				onclick={() => editor.addPaint('fill')}
+				class="{btnGhost} h-5 w-5"
+			>
+				<Plus size={14} />
+			</button>
+		{/snippet}
+		{@render paintRows('fill', 'No fill. Add one with +.')}
+	</InspectorSection>
+{/snippet}
+
 <!-- Figma-style Stroke: the "+" in the header adds it, then colour · Weight · Position
      (box shapes) · Style · Join · Cap. `showPosition` for box shapes, `showCaps` for paths,
      `advanced` for the settings popover (off for text), `sides` for per-side rect strokes. -->
@@ -432,6 +536,16 @@
 		{#snippet action()}
 			{#if editor.hasStroke}
 				<div class="flex items-center gap-0.5">
+					<!-- Figma: "+" on an existing stroke stacks ANOTHER paint onto it. -->
+					<button
+						type="button"
+						title="Add stroke paint"
+						aria-label="Add stroke paint"
+						onclick={() => editor.addPaint('stroke')}
+						class="{btnGhost} h-5 w-5"
+					>
+						<Plus size={14} />
+					</button>
 					{#if advanced}
 					<Popover.Root>
 						<Popover.Trigger
@@ -486,11 +600,11 @@
 										{#if editor.strokeDashed}
 											<div class="flex items-center justify-between gap-3">
 												{@render prow('Dash')}
-												{@render field('px', editor.dash, (n) => editor.setDash(n), { min: 0 })}
+												{@render field('i:dash', editor.dash, (n) => editor.setDash(n), { min: 0, suffix: 'px' })}
 											</div>
 											<div class="flex items-center justify-between gap-3">
 												{@render prow('Gap')}
-												{@render field('px', editor.gap, (n) => editor.setGap(n), { min: 0 })}
+												{@render field('i:gapline', editor.gap, (n) => editor.setGap(n), { min: 0, suffix: 'px' })}
 											</div>
 										{/if}
 										{#if showCaps || editor.strokeDashed}
@@ -585,7 +699,7 @@
 				{#if editor.brushKind === 'scatter'}
 					<div class="flex items-center justify-between gap-3">
 						{@render prow('Gap')}
-						{@render field('×', editor.scatterGap, (n) => editor.setScatterGap(n), { min: 0.05, max: 8, step: 0.05 })}
+						{@render field('i:gapline', editor.scatterGap, (n) => editor.setScatterGap(n), { min: 0.05, max: 8, step: 0.05, suffix: '×' })}
 					</div>
 					<div class="flex items-center justify-between gap-3">
 						{@render prow('Wiggle')}
@@ -594,6 +708,14 @@
 					<div class="flex items-center justify-between gap-3">
 						{@render prow('Size jitter')}
 						{@render field(Scaling, editor.scatterSize, (n) => editor.setScatterSize(n), { min: 0, max: 100, suffix: '%' })}
+					</div>
+					<div class="flex items-center justify-between gap-3">
+						{@render prow('Rotation')}
+						{@render field('i:rotate', editor.scatterRotation, (n) => editor.setScatterRotation(n), { min: -180, max: 180, suffix: '°' })}
+					</div>
+					<div class="flex items-center justify-between gap-3">
+						{@render prow('Angular jitter')}
+						{@render field('∠', editor.scatterAngular, (n) => editor.setScatterAngular(n), { min: 0, max: 180, suffix: '°' })}
 					</div>
 					<p class="pt-0.5 text-[11px] text-faint">A mark stippled along the stroke.</p>
 				{:else}
@@ -636,18 +758,12 @@
 		{/snippet}
 		{#if editor.hasStroke}
 			<div class="space-y-2.5">
-				<div class="flex items-center justify-between gap-3">
-					{@render row('Stroke')}
-					{@render color(
-						editor.common((l) => l.stroke_color),
-						(v) => editor.setAll((l) => (l.stroke_color = v))
-					)}
-				</div>
+				{@render paintRows('stroke', 'No stroke paint. Add one with +.')}
 				<div class="flex items-center justify-between gap-3">
 					{@render row('Weight')}
 					<div class="flex items-center gap-1.5">
 						{@render field(
-							'px',
+							'i:weight',
 							editor.common((l) => l.stroke_width ?? 0),
 							(n) => editor.setAll((l) => (l.stroke_width = Math.max(0, n))),
 							{ min: 0 }
@@ -836,8 +952,8 @@
 			)}
 		</div>
 		<div class="mt-2">
-			{@render field('°', editor.common((l) => l.rotation ?? 0), (n) =>
-				editor.setAll((l) => (l.rotation = n))
+			{@render field('i:rotate', editor.common((l) => l.rotation ?? 0), (n) =>
+				editor.setAll((l) => (l.rotation = n)), { suffix: '°' }
 			)}
 		</div>
 	</InspectorSection>
@@ -924,12 +1040,12 @@
 				<!-- ── Object-operations toolbar (always shown) ────────────────────── -->
 				<Tooltip.Provider delayDuration={250}>
 					<div class="flex items-center gap-1 border-b border-line px-4 py-2">
-						{#if editor.canEditObject && one}
+						{#if editor.canEditObject}
 							{@render tipBtn(
-								editor.editId === one.id ? 'Done editing' : 'Edit object',
-								editor.editId === one.id,
+								editor.editId ? 'Done editing' : 'Edit object',
+								!!editor.editId,
 								false,
-								() => (editor.editId === one.id ? editor.exitEdit() : editor.editSelected()),
+								() => (editor.editId ? editor.exitEdit() : editor.editSelected()),
 								SquarePen
 							)}
 						{/if}
@@ -973,14 +1089,13 @@
 									sideOffset={6}
 									class="menu-pop z-50 min-w-[210px] rounded-xl border border-line-strong bg-surface p-1.5 shadow-2xl shadow-black/60 ring-1 ring-black/40 outline-none"
 								>
-									{#if editor.canEditObject && one}
+									{#if editor.canEditObject}
 										<DropdownMenu.Item
 											class={menuItem}
-											onSelect={() =>
-												editor.editId === one.id ? editor.exitEdit() : editor.editSelected()}
+											onSelect={() => (editor.editId ? editor.exitEdit() : editor.editSelected())}
 										>
 											<SquarePen size={14} class="text-faint" />
-											{editor.editId === one.id ? 'Done editing' : 'Edit object'}
+											{editor.editId ? 'Done editing' : 'Edit object'}
 										</DropdownMenu.Item>
 										<DropdownMenu.Separator class="my-1 h-px bg-line" />
 									{/if}
@@ -1099,8 +1214,8 @@
 						)}
 					</div>
 					<div class="mt-2 grid grid-cols-2 gap-2">
-						{@render field('°', editor.common((l) => l.rotation ?? 0), (n) =>
-							editor.setAll((l) => (l.rotation = n))
+						{@render field('i:rotate', editor.common((l) => l.rotation ?? 0), (n) =>
+							editor.setAll((l) => (l.rotation = n)), { suffix: '°' }
 						)}
 						{@render field(Contrast, opacityPct, (n) =>
 							editor.setAll((l) => (l.opacity = Math.min(1, Math.max(0, n / 100)))), {
@@ -1117,7 +1232,7 @@
 						<div class="flex items-center gap-2">
 							<div class="flex-1">
 								{@render field(
-									'R',
+									'i:radius',
 									editor.common((l) =>
 										Array.isArray(l.corners) && l.corners.length === 4 ? l.corners[0] : (l.radius ?? 0)
 									),
@@ -1144,27 +1259,27 @@
 								transition:slide={{ duration: 180, easing: cubicOut }}
 							>
 								{@render field(
-									'TL',
+									'i:tl',
 									editor.common((l) => l.corners?.[0] ?? l.radius ?? 0),
 									(n) => editor.setCorner(0, n),
 									{ min: 0 }
 								)}
 								{@render field(
-									'TR',
+									'i:tr',
 									editor.common((l) => l.corners?.[1] ?? l.radius ?? 0),
 									(n) => editor.setCorner(1, n),
 									{ min: 0 }
 								)}
 								{@render field(
-									'BR',
-									editor.common((l) => l.corners?.[2] ?? l.radius ?? 0),
-									(n) => editor.setCorner(2, n),
+									'i:bl',
+									editor.common((l) => l.corners?.[3] ?? l.radius ?? 0),
+									(n) => editor.setCorner(3, n),
 									{ min: 0 }
 								)}
 								{@render field(
-									'BL',
-									editor.common((l) => l.corners?.[3] ?? l.radius ?? 0),
-									(n) => editor.setCorner(3, n),
+									'i:br',
+									editor.common((l) => l.corners?.[2] ?? l.radius ?? 0),
+									(n) => editor.setCorner(2, n),
 									{ min: 0 }
 								)}
 							</div>
@@ -1289,20 +1404,13 @@
 
 							<div class="grid grid-cols-2 gap-2">
 								{@render field(
-									'LH',
+									'i:lineheight',
 									editor.common((l) => l.line_height ?? 1.3),
 									(n) => editor.setAll((l) => (l.line_height = Math.max(0, n))),
 									{ min: 0, step: 0.1 }
 								)}
-								{@render field('LS', editor.common((l) => l.letter_spacing ?? 0), (n) =>
+								{@render field('i:letterspacing', editor.common((l) => l.letter_spacing ?? 0), (n) =>
 									editor.setAll((l) => (l.letter_spacing = n))
-								)}
-							</div>
-
-							<div class="flex items-center justify-between gap-3">
-								{@render row('Color')}
-								{@render color(editor.common((l) => l.color), (v) =>
-									editor.setAll((l) => (l.color = v))
 								)}
 							</div>
 
@@ -1352,6 +1460,9 @@
 							</div>
 						</div>
 					</InspectorSection>
+					<!-- Text fill is the SAME paint stack as a shape's fill (gradient /
+					     image text renders via glyph masks; the legacy colour stays synced). -->
+					{@render fillSection()}
 					{@render strokeSection(false, false, true, false)}
 				{:else if editor.selectionType === 'image'}
 					<InspectorSection title="Image">
@@ -1396,14 +1507,7 @@
 					     set the corner radius to max. -->
 					{@render strokeSection(true, false, true, false)}
 				{:else if editor.selectionType === 'rect' || editor.selectionType === 'ellipse'}
-					<InspectorSection title="Fill">
-						<div class="flex items-center justify-between gap-3">
-							{@render row('Fill')}
-							{@render color(editor.common((l) => l.fill), (v) =>
-								editor.setAll((l) => (l.fill = v))
-							)}
-						</div>
-					</InspectorSection>
+					{@render fillSection()}
 					{@render strokeSection(true, false, true, editor.selectionType === 'rect')}
 				{:else if editor.selectionType === 'path'}
 					<!-- Path controls are single-selection only. -->
@@ -1439,14 +1543,11 @@
 							</InspectorSection>
 						{/if}
 
+						{@render fillSection()}
 						{@render strokeSection(false, true, true, false)}
 
 						<InspectorSection title="Path">
 							<div class="space-y-3">
-								<div class="flex items-center justify-between gap-3">
-									<span class="text-xs text-muted">Closed</span>
-									<Toggle bind:checked={() => one.closed ?? false, (v) => editor.setClosed(v)} />
-								</div>
 								<button
 									type="button"
 									onclick={() => editor.reversePath()}
@@ -1454,38 +1555,17 @@
 								>
 									<Repeat2 size={13} /> Reverse direction
 								</button>
-								<p class="text-[11px] text-faint">{one.nodes?.length ?? 0} nodes</p>
-							</div>
-						</InspectorSection>
-
-						<InspectorSection title="Fill">
-							<div class="space-y-3">
-								<div class="flex items-center justify-between gap-3">
-									<span class="text-xs text-muted">Fill</span>
-									<Toggle bind:checked={() => editor.fillEnabled, (v) => editor.setFillEnabled(v)} />
-								</div>
-								{#if editor.fillEnabled}
-									<div
-										class="flex items-center justify-between gap-3"
-										transition:slide={{ duration: 150, easing: cubicOut }}
-									>
-										{@render row('Fill color')}
-										{@render color(one.fill, (v) => (one.fill = v))}
-									</div>
-								{/if}
+								<p class="text-[11px] text-faint">
+									{one.nodes?.length ?? 0} nodes · {one.closed ? 'closed' : 'open'} — close a path on
+									the canvas: click its first point with the pen, or drag an endpoint onto the
+									other end.
+								</p>
 							</div>
 						</InspectorSection>
 					{:else}
-						<!-- Multiple vector layers: stroke (shared) + the fill that setAll cleanly. -->
+						<!-- Multiple vector layers: fill + stroke (both setAll cleanly). -->
+						{@render fillSection()}
 						{@render strokeSection(false, true, true, false)}
-						<InspectorSection title="Fill">
-							<div class="flex items-center justify-between gap-3">
-								{@render row('Fill')}
-								{@render color(editor.common((l) => l.fill), (v) =>
-									editor.setAll((l) => (l.fill = v))
-								)}
-							</div>
-						</InspectorSection>
 					{/if}
 				{/if}
 
@@ -1556,33 +1636,34 @@
 																											</div>
 																											<div class="grid grid-cols-2 gap-2">
 																												{@render field(
-																													'Blur',
+																													'i:blur',
 																													e.radius ?? 0,
 																													(n) => editor.updateEffect(i, { radius: Math.max(0, n) }),
 																													{ min: 0 }
 																												)}
-																												{@render field('Sprd', e.spread ?? 0, (n) =>
+																												{@render field('i:spread', e.spread ?? 0, (n) =>
 																													editor.updateEffect(i, { spread: n })
 																												)}
 																											</div>
+																											<!-- The shadow colour + opacity edit as ONE solid paint through
+																											     the same dropdown as every other colour (alpha = opacity). -->
 																											<div class="flex items-center justify-between gap-3">
 																												{@render row('Color')}
-																												{@render color(e.color, (v) => editor.updateEffect(i, { color: v }), false)}
+																												<PaintPicker
+																													paint={effectPaint(e)}
+																													types={['solid']}
+																													anchor={false}
+																													guildId={editor.guildId}
+																													patch={(p) => setEffectColor(i, p.color)}
+																													convert={() => {}}
+																													setStops={() => {}}
+																												/>
 																											</div>
-																											{@render field(
-																												Contrast,
-																												Math.round((e.opacity ?? 0.25) * 100),
-																												(n) =>
-																													editor.updateEffect(i, {
-																														opacity: Math.min(1, Math.max(0, n / 100))
-																													}),
-																												{ min: 0, max: 100, suffix: '%' }
-																											)}
 																										</div>
 																									{:else}
 																										<div class="space-y-2">
 																											{@render field(
-																												'Blur',
+																												'i:blur',
 																												e.radius ?? 0,
 																												(n) => editor.updateEffect(i, { radius: Math.max(0, n) }),
 																												{ min: 0, suffix: 'px' }
@@ -1745,56 +1826,30 @@
 					</p>
 				</InspectorSection>
 
+				<!-- The canvas background is the SAME paint stack as a layer's fill —
+				     solids, all four gradients, images, stacked and individually hideable. -->
 				<InspectorSection title="Background">
-					<div class="space-y-3">
-						{@render segmented(
-							editor.layout.background.type,
-							bgTypes.map((b) => [b.value, b.label]),
-							(v) => setBgType(v as BackgroundType)
-						)}
-
-						{#if editor.layout.background.type === 'solid'}
-							<div class="flex items-center justify-between gap-3">
-								{@render row('Fill')}
-								{@render color(
-									editor.layout.background.color,
-									(v) => (editor.layout.background.color = v)
-								)}
-							</div>
-						{:else if editor.layout.background.type === 'gradient'}
-							<div class="flex items-center justify-between gap-3">
-								{@render row('From')}
-								{@render color(editor.layout.background.from, (v) => (editor.layout.background.from = v))}
-							</div>
-							<div class="flex items-center justify-between gap-3">
-								{@render row('To')}
-								{@render color(editor.layout.background.to, (v) => (editor.layout.background.to = v))}
-							</div>
-							<div class="flex items-center justify-between gap-3">
-								{@render row('Angle')}
-								{@render field(
-									'°',
-									editor.layout.background.angle ?? 0,
-									(n) => (editor.layout.background.angle = n)
-								)}
-							</div>
-						{:else}
-							<div class="block">
-								<span class="mb-1 block text-xs text-muted">Image</span>
-								<ImageInput
-									value={editor.layout.background.image_url ?? ''}
-									onChange={(v) => (editor.layout.background.image_url = v)}
-									guildId={editor.guildId}
-									placeholder="https://… or upload"
-								/>
-							</div>
+					{#snippet action()}
+						<button
+							type="button"
+							title="Add background paint"
+							aria-label="Add background paint"
+							onclick={() => editor.addPaint('bg')}
+							class="{btnGhost} h-5 w-5"
+						>
+							<Plus size={14} />
+						</button>
+					{/snippet}
+					<div class="space-y-2.5">
+						{@render paintRows('bg', 'No background. Add a paint with +.')}
+						{#if editor.paints('bg').some((p) => p.type === 'image' && !p.hidden)}
 							<div class="flex items-center justify-between gap-3">
 								{@render row('Blur')}
 								{@render field(
-									'px',
+									'i:blur',
 									editor.layout.background.blur ?? 0,
 									(n) => (editor.layout.background.blur = Math.max(0, n)),
-									{ min: 0 }
+									{ min: 0, suffix: 'px' }
 								)}
 							</div>
 						{/if}
