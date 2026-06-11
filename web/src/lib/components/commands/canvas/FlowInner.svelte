@@ -799,7 +799,22 @@
 		border-radius: 9999px;
 		transition:
 			background 140ms,
-			box-shadow 140ms ease-out;
+			box-shadow 140ms ease-out,
+			opacity 220ms ease;
+	}
+	/* Entry dots that appear when a line re-routes (e.g. a card becomes a
+	   click target) ease in instead of snapping — an animation, not a
+	   transition, so it also runs when the rebuild recreates the element. */
+	:global(.svelte-flow__handle.dia-dot-in) {
+		animation: dia-dot-in 280ms cubic-bezier(0.22, 1, 0.36, 1) both;
+	}
+	@keyframes -global-dia-dot-in {
+		from {
+			opacity: 0;
+		}
+		to {
+			opacity: 1;
+		}
 	}
 	/* A generous invisible hit area — the visible dot stays small, but the
 	   grab target is ~24px so connecting lines doesn't need pixel-hunting. */

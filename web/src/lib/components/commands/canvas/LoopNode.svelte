@@ -49,7 +49,7 @@
 		id="in-left"
 		style="top: 18px"
 		class="!size-2 !border-2 !border-card !bg-muted-foreground/70 {data.clickTarget
-			? ''
+			? 'dia-dot-in'
 			: '!opacity-0'}"
 	/>
 
