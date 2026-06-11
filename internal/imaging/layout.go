@@ -97,33 +97,56 @@ func (r *Renderer) RenderLayout(ctx context.Context, in layout.Layout, vars map[
 		dc.DrawImage(fitted, 0, 0)
 		return true
 	}
-	// Branch on the declared background Type (matching the DOM's type-first logic);
-	// fall back to field-presence only for legacy documents with no Type set.
-	switch in.Background.Type {
-	case "image":
-		if !drawImageBG(in.Background.ImageURL) {
-			fillRect(imgFallback)
+	// New-style background: a Figma paint stack (the same model as a layer's
+	// fill), composited over the brand-ink base. A non-nil-but-empty stack means
+	// "no background" (just the base). Blur, when set, blurs the whole composite.
+	// Legacy documents (Fills == nil) keep the exact old type-switch rendering.
+	if in.Background.Fills != nil {
+		fillRect(fallbackBG)
+		bgl := layout.Layer{W: float64(w), H: float64(h), Fills: in.Background.Fills}
+		full := func(c *gg.Context) {
+			c.DrawRectangle(0, 0, float64(w), float64(h))
 		}
-	case "solid":
-		r.drawBackground(ctx, dc, w, h, Background{Color: in.Background.Color}, fallbackBG)
-	case "gradient":
-		r.drawBackground(ctx, dc, w, h, Background{
-			From:  in.Background.From,
-			To:    in.Background.To,
-			Angle: in.Background.Angle,
-		}, fallbackBG)
-	default:
-		if in.Background.ImageURL != "" {
-			if !drawImageBG(in.Background.ImageURL) {
-				fillRect(fallbackBG)
-			}
+		if in.Background.Blur > 0 {
+			sub := gg.NewContext(w, h)
+			sub.SetColor(fallbackBG) // opaque base so the blur can't pull in transparency at the edges
+			sub.DrawRectangle(0, 0, float64(w), float64(h))
+			sub.Fill()
+			r.fillShape(ctx, sub, bgl, 1, full)
+			dc.DrawImage(xdraw.Blur(sub.Image(), in.Background.Blur), 0, 0)
 		} else {
+			r.fillShape(ctx, dc, bgl, 1, full)
+		}
+	} else {
+		// Branch on the declared background Type (matching the DOM's type-first
+		// logic); fall back to field-presence only for legacy documents with no
+		// Type set.
+		switch in.Background.Type {
+		case "image":
+			if !drawImageBG(in.Background.ImageURL) {
+				fillRect(imgFallback)
+			}
+		case "solid":
+			r.drawBackground(ctx, dc, w, h, Background{Color: in.Background.Color}, fallbackBG)
+		case "gradient":
 			r.drawBackground(ctx, dc, w, h, Background{
-				Color: in.Background.Color,
 				From:  in.Background.From,
 				To:    in.Background.To,
 				Angle: in.Background.Angle,
 			}, fallbackBG)
+		default:
+			if in.Background.ImageURL != "" {
+				if !drawImageBG(in.Background.ImageURL) {
+					fillRect(fallbackBG)
+				}
+			} else {
+				r.drawBackground(ctx, dc, w, h, Background{
+					Color: in.Background.Color,
+					From:  in.Background.From,
+					To:    in.Background.To,
+					Angle: in.Background.Angle,
+				}, fallbackBG)
+			}
 		}
 	}
 
@@ -135,7 +158,10 @@ func (r *Renderer) RenderLayout(ctx context.Context, in layout.Layout, vars map[
 	// white), so a text member of a boolean op follows its GLYPHS, not its bounding box
 	// (Figma's behaviour). The caller owns rotation (it draws into an already-rotated
 	// context, like drawRaw/drawSilhouette do).
-	paintText := func(c *gg.Context, l layout.Layer, text string, col color.Color) {
+	// part selects what's painted: "all" (outline ring + glyphs + decorations),
+	// "fill" (glyphs + decorations only) or "stroke" (just the outline ring) — the
+	// split lets the paint-stack text renderer build separate fill/stroke stencils.
+	paintText := func(c *gg.Context, l layout.Layer, text string, col color.Color, part string) {
 		size := l.FontSize
 		if size <= 0 {
 			size = 32
@@ -216,10 +242,15 @@ func (r *Renderer) RenderLayout(ctx context.Context, in layout.Layout, vars map[
 		// Stroke (outline): paint the glyphs in a ring of offsets (radius = weight/2) in
 		// the stroke colour BEHIND the fill — an outside outline, mirroring the web's
 		// `paint-order:stroke`. 16 steps is smooth for typical weights; the stroke shares
-		// the fill's alpha.
-		if l.StrokeWidth > 0 {
-			_, _, _, fa := col.RGBA()
-			c.SetColor(withAlpha(parseHex(l.StrokeColor, color.White), float64(fa)/0xffff))
+		// the fill's alpha. A "stroke" stencil pass paints the ring in col instead.
+		if l.StrokeWidth > 0 && part != "fill" {
+			ringCol := col
+			if part != "stroke" {
+				sc, _ := flatTextColor(strokePaintsOf(l), l.StrokeColor)
+				_, _, _, fa := col.RGBA()
+				ringCol = withAlpha(sc, float64(fa)/0xffff)
+			}
+			c.SetColor(ringCol)
 			rr := l.StrokeWidth / 2
 			const steps = 16
 			for k := 0; k < steps; k++ {
@@ -227,6 +258,9 @@ func (r *Renderer) RenderLayout(ctx context.Context, in layout.Layout, vars map[
 				drawGlyphs(rr*math.Cos(a), rr*math.Sin(a))
 			}
 			c.SetColor(col)
+		}
+		if part == "stroke" {
+			return
 		}
 		drawGlyphs(0, 0)
 		// Decorations (underline / strike) paint once, over the fill.
@@ -255,6 +289,43 @@ func (r *Renderer) RenderLayout(ctx context.Context, in layout.Layout, vars map[
 		}
 	}
 
+	// drawTextPaints renders a text layer whose fill or stroke carries a REAL
+	// paint stack (gradient / image / multiple paints): gg can't paint a font
+	// face with a pattern, so the glyphs (and the outline ring) are drawn white
+	// into canvas-sized stencils, the paints are filled over the layer's bbox,
+	// and each stencil shapes its paint image. Handles its own rotation (the
+	// stencils rotate; gradients stay axis-aligned, like every other layer).
+	drawTextPaints := func(dc *gg.Context, l layout.Layer, text string, opacity float64) {
+		full := func(c *gg.Context) {
+			c.DrawRectangle(0, 0, float64(w), float64(h))
+		}
+		stencilFor := func(part string) image.Image {
+			mc := gg.NewContext(w, h)
+			if l.Rotation != 0 {
+				mc.RotateAbout(l.Rotation*math.Pi/180, l.X+l.W/2, l.Y+l.H/2)
+			}
+			paintText(mc, l, text, color.White, part)
+			return mc.Image()
+		}
+		paintImage := func(ps []layout.Paint) image.Image {
+			pc := gg.NewContext(w, h)
+			pl := l
+			pl.Fill = ""
+			pl.Fills = ps
+			r.fillShape(ctx, pc, pl, opacity, full)
+			return pc.Image()
+		}
+		// Outline ring behind the fill, mirroring the flat-colour pass.
+		if l.StrokeWidth > 0 {
+			if ps := strokePaintsOf(l); len(ps) > 0 {
+				dc.DrawImage(applyMask(paintImage(ps), stencilFor("stroke"), "alpha", false), 0, 0)
+			}
+		}
+		if ps := textPaintsOf(l); len(ps) > 0 {
+			dc.DrawImage(applyMask(paintImage(ps), stencilFor("fill"), "alpha", false), 0, 0)
+		}
+	}
+
 	// drawRaw paints a single layer's own content (no effects) onto the given
 	// context. Factored out so a mask group can render its content + stencil onto
 	// separate sub-contexts, and so the effect-aware draw can render to a buffer.
@@ -278,6 +349,29 @@ func (r *Renderer) RenderLayout(ctx context.Context, in layout.Layout, vars map[
 		text := r.renderText(ctx, l.Text, data)
 		src := r.renderText(ctx, l.Src, data)
 
+		// Paint-stack text takes the stencil route (it composites canvas-sized
+		// images, so it must run outside the rotated context below). A fully
+		// hidden/transparent fill with a visible stroke goes the same way — the
+		// fast path's outline ring shares the fill's alpha, which would wrongly
+		// erase the stroke.
+		if l.Type == "text" {
+			fc, fillFlat := flatTextColor(textPaintsOf(l), l.Color)
+			strokeFlat := true
+			if l.StrokeWidth > 0 {
+				_, strokeFlat = flatTextColor(strokePaintsOf(l), l.StrokeColor)
+			}
+			hiddenFill := false
+			if fillFlat && fc != nil {
+				if _, _, _, fa := fc.RGBA(); fa == 0 {
+					hiddenFill = true
+				}
+			}
+			if !fillFlat || !strokeFlat || (hiddenFill && l.StrokeWidth > 0) {
+				drawTextPaints(dc, l, text, opacity)
+				return
+			}
+		}
+
 		rotate := l.Rotation != 0
 		if rotate {
 			dc.Push()
@@ -286,33 +380,34 @@ func (r *Renderer) RenderLayout(ctx context.Context, in layout.Layout, vars map[
 		switch l.Type {
 		case "rect":
 			tl, tr, br, bl := cornerRadii(l)
-			dc.SetColor(withAlpha(parseHex(l.Fill, color.Black), opacity))
-			drawRoundRect(dc, l.X, l.Y, l.W, l.H, tl, tr, br, bl)
-			dc.Fill()
+			r.fillShape(ctx, dc, l, opacity, func(c *gg.Context) {
+				drawRoundRect(c, l.X, l.Y, l.W, l.H, tl, tr, br, bl)
+			})
 			if l.StrokeWidth > 0 {
-				dc.SetColor(withAlpha(parseHex(l.StrokeColor, color.White), opacity))
 				dc.SetLineWidth(l.StrokeWidth)
 				applyStroke(dc, l)
 				if l.BrushName != "" {
+					dc.SetColor(withAlpha(parseHex(strokePrimary(l), color.White), opacity))
 					strokeBrush(dc, roundRectPoints(l.X, l.Y, l.W, l.H, tl, tr, br, bl), l, opacity, true)
 				} else if restrictedSides(l.StrokeSides) {
 					// Per-side strokes (Figma's individual strokes): draw only the enabled
 					// edges as lines, each offset inward/outward by the Position. Corner
 					// radius is dropped, matching the web overlay.
 					off := strokeInset(l.StrokeAlign, l.StrokeWidth)
-					for _, s := range l.StrokeSides {
-						switch s {
-						case "top":
-							dc.DrawLine(l.X, l.Y+off, l.X+l.W, l.Y+off)
-						case "bottom":
-							dc.DrawLine(l.X, l.Y+l.H-off, l.X+l.W, l.Y+l.H-off)
-						case "left":
-							dc.DrawLine(l.X+off, l.Y, l.X+off, l.Y+l.H)
-						case "right":
-							dc.DrawLine(l.X+l.W-off, l.Y, l.X+l.W-off, l.Y+l.H)
+					r.strokeShape(ctx, dc, l, opacity, func(c *gg.Context) {
+						for _, s := range l.StrokeSides {
+							switch s {
+							case "top":
+								c.DrawLine(l.X, l.Y+off, l.X+l.W, l.Y+off)
+							case "bottom":
+								c.DrawLine(l.X, l.Y+l.H-off, l.X+l.W, l.Y+l.H-off)
+							case "left":
+								c.DrawLine(l.X+off, l.Y, l.X+off, l.Y+l.H)
+							case "right":
+								c.DrawLine(l.X+l.W-off, l.Y, l.X+l.W-off, l.Y+l.H)
+							}
 						}
-						dc.Stroke()
-					}
+					})
 				} else {
 					d := strokeInset(l.StrokeAlign, l.StrokeWidth)
 					if d > 0 { // inside: never inset past the centre (negative box)
@@ -320,50 +415,54 @@ func (r *Renderer) RenderLayout(ctx context.Context, in layout.Layout, vars map[
 					}
 					sr := strokeRadius(d)
 					if l.DynamicWiggle > 0 {
-						strokeWobbledOutline(dc, l, roundRectPoints(l.X+d, l.Y+d, l.W-2*d, l.H-2*d, sr(tl), sr(tr), sr(br), sr(bl)), opacity)
+						r.strokeWobbledOutline(ctx, dc, l, roundRectPoints(l.X+d, l.Y+d, l.W-2*d, l.H-2*d, sr(tl), sr(tr), sr(br), sr(bl)), opacity)
 					} else {
-						drawRoundRect(dc, l.X+d, l.Y+d, l.W-2*d, l.H-2*d, sr(tl), sr(tr), sr(br), sr(bl))
-						dc.Stroke()
+						r.strokeShape(ctx, dc, l, opacity, func(c *gg.Context) {
+							drawRoundRect(c, l.X+d, l.Y+d, l.W-2*d, l.H-2*d, sr(tl), sr(tr), sr(br), sr(bl))
+						})
 					}
 				}
 			}
 
 		case "ellipse":
-			dc.SetColor(withAlpha(parseHex(l.Fill, color.Black), opacity))
-			dc.DrawEllipse(l.X+l.W/2, l.Y+l.H/2, l.W/2, l.H/2)
-			dc.Fill()
+			r.fillShape(ctx, dc, l, opacity, func(c *gg.Context) {
+				c.DrawEllipse(l.X+l.W/2, l.Y+l.H/2, l.W/2, l.H/2)
+			})
 			if l.StrokeWidth > 0 {
 				d := strokeInset(l.StrokeAlign, l.StrokeWidth)
 				if l.BrushName != "" {
+					dc.SetColor(withAlpha(parseHex(strokePrimary(l), color.White), opacity))
 					strokeBrush(dc, ellipsePoints(l.X+l.W/2, l.Y+l.H/2, l.W/2, l.H/2), l, opacity, true)
 				} else if l.DynamicWiggle > 0 {
-					strokeWobbledOutline(dc, l, ellipsePoints(l.X+l.W/2, l.Y+l.H/2, math.Max(0, l.W/2-d), math.Max(0, l.H/2-d)), opacity)
+					r.strokeWobbledOutline(ctx, dc, l, ellipsePoints(l.X+l.W/2, l.Y+l.H/2, math.Max(0, l.W/2-d), math.Max(0, l.H/2-d)), opacity)
 				} else {
-					dc.SetColor(withAlpha(parseHex(l.StrokeColor, color.White), opacity))
 					dc.SetLineWidth(l.StrokeWidth)
 					applyStroke(dc, l)
-					dc.DrawEllipse(l.X+l.W/2, l.Y+l.H/2, math.Max(0, l.W/2-d), math.Max(0, l.H/2-d))
-					dc.Stroke()
+					r.strokeShape(ctx, dc, l, opacity, func(c *gg.Context) {
+						c.DrawEllipse(l.X+l.W/2, l.Y+l.H/2, math.Max(0, l.W/2-d), math.Max(0, l.H/2-d))
+					})
 				}
 			}
 
 		case "path":
 			if len(l.Nodes) >= 2 {
-				// Fill (closed paths) uses the smooth bezier outline.
-				if l.Closed && len(l.Nodes) >= 3 && l.Fill != "" {
-					buildPathBezier(dc, l)
-					dc.SetColor(withAlpha(parseHex(l.Fill, color.White), opacity))
-					dc.Fill()
+				// Fill uses the smooth bezier outline. Open paths fill too — the region
+				// closes with an implicit straight chord, exactly like Figma (and SVG).
+				if len(l.Nodes) >= 3 {
+					r.fillShape(ctx, dc, l, opacity, func(c *gg.Context) {
+						buildPathBezier(c, l)
+					})
 					dc.ClearPath()
 				}
 				// Stroke — Figma's advanced stroke (width profile / dynamic wobble /
 				// arrowheads) when any is set, else the plain smooth bezier stroke.
 				if l.StrokeWidth > 0 {
-					strokePathLayer(dc, l, opacity)
+					r.strokePathLayer(ctx, dc, l, opacity)
 				}
 			}
 		case "text":
-			paintText(dc, l, text, withAlpha(parseHex(l.Color, color.White), opacity))
+			fillCol, _ := flatTextColor(textPaintsOf(l), l.Color)
+			paintText(dc, l, text, withAlpha(fillCol, opacity), "all")
 
 		case "image":
 			if src == "" {
@@ -403,7 +502,6 @@ func (r *Renderer) RenderLayout(ctx context.Context, in layout.Layout, vars map[
 			dc.Pop()
 			// Stroke (border) — outline the image's rounded-rect, honouring stroke Position.
 			if l.StrokeWidth > 0 {
-				dc.SetColor(withAlpha(parseHex(l.StrokeColor, color.White), opacity))
 				dc.SetLineWidth(l.StrokeWidth)
 				applyStroke(dc, l)
 				d := strokeInset(l.StrokeAlign, l.StrokeWidth)
@@ -413,12 +511,14 @@ func (r *Renderer) RenderLayout(ctx context.Context, in layout.Layout, vars map[
 				stl, str2, sbr, sbl := cornerRadii(l)
 				sr := strokeRadius(d)
 				if l.BrushName != "" {
+					dc.SetColor(withAlpha(parseHex(strokePrimary(l), color.White), opacity))
 					strokeBrush(dc, roundRectPoints(l.X, l.Y, l.W, l.H, stl, str2, sbr, sbl), l, opacity, true)
 				} else if l.DynamicWiggle > 0 {
-					strokeWobbledOutline(dc, l, roundRectPoints(l.X+d, l.Y+d, l.W-2*d, l.H-2*d, sr(stl), sr(str2), sr(sbr), sr(sbl)), opacity)
+					r.strokeWobbledOutline(ctx, dc, l, roundRectPoints(l.X+d, l.Y+d, l.W-2*d, l.H-2*d, sr(stl), sr(str2), sr(sbr), sr(sbl)), opacity)
 				} else {
-					drawRoundRect(dc, l.X+d, l.Y+d, l.W-2*d, l.H-2*d, sr(stl), sr(str2), sr(sbr), sr(sbl))
-					dc.Stroke()
+					r.strokeShape(ctx, dc, l, opacity, func(c *gg.Context) {
+						drawRoundRect(c, l.X+d, l.Y+d, l.W-2*d, l.H-2*d, sr(stl), sr(str2), sr(sbr), sr(sbl))
+					})
 				}
 			}
 		}
@@ -461,7 +561,7 @@ func (r *Renderer) RenderLayout(ctx context.Context, in layout.Layout, vars map[
 			// background-blur stencil keeps the BOX so it matches the web preview (CSS
 			// backdrop-filter is clipped to the layer box, not the letters).
 			if textGlyphs {
-				paintText(c, l, r.renderText(ctx, l.Text, data), color.White)
+				paintText(c, l, r.renderText(ctx, l.Text, data), color.White, "all")
 			} else {
 				stl, str, sbr, sbl := cornerRadii(l)
 				drawRoundRect(c, l.X, l.Y, l.W, l.H, stl, str, sbr, sbl)
@@ -576,7 +676,7 @@ func (r *Renderer) RenderLayout(ctx context.Context, in layout.Layout, vars map[
 		}
 		// A text source has no Fill — use its text Colour so a text-topped boolean keeps
 		// the text's colour (Figma takes the front-most member's appearance).
-		fillStr := source.Fill
+		fillStr := paintPrimary(source)
 		if fillStr == "" && source.Type == "text" {
 			fillStr = source.Color
 		}
@@ -647,6 +747,30 @@ func (r *Renderer) RenderLayout(ctx context.Context, in layout.Layout, vars map[
 	}
 
 	return encodePNG(dc)
+}
+
+// flatTextColor reduces a text paint stack to one flat colour when it is at
+// most a single visible solid paint (the fast glyph path): a nil stack keeps
+// the legacy fallback hex (historically white), an all-hidden stack paints
+// nothing. ok=false means the stack needs the stencil-based paint renderer
+// (gradient / image / multiple visible paints).
+func flatTextColor(raw []layout.Paint, fallback string) (color.Color, bool) {
+	if len(raw) == 0 {
+		return parseHex(fallback, color.White), true
+	}
+	var vis []layout.Paint
+	for _, p := range raw {
+		if !p.Hidden && paintOpacity(p) > 0 {
+			vis = append(vis, p)
+		}
+	}
+	if len(vis) == 0 {
+		return color.Transparent, true
+	}
+	if len(vis) == 1 && vis[0].Type == "solid" {
+		return withAlpha(parseHex(vis[0].Color, color.White), paintOpacity(vis[0])), true
+	}
+	return nil, false
 }
 
 // applyMask multiplies content's alpha by the stencil's coverage (Figma's three
@@ -1208,21 +1332,23 @@ func drawArrowCap(dc *gg.Context, tip, outDir pathPt, kind string, sw float64) {
 	}
 }
 
-// strokePathLayer renders a path's stroke. Plain strokes use the smooth bezier path
-// (identical to the pre-feature output); width profile / dynamic wobble / arrowheads use
-// a sampled polyline. Brushes render as a plain stroke for now; miter angle is unused.
-func strokePathLayer(dc *gg.Context, l layout.Layer, opacity float64) {
-	col := withAlpha(parseHex(l.StrokeColor, color.White), opacity)
-	dc.SetColor(col)
+// strokePathLayer renders a path's stroke, once per visible stroke paint (the
+// Figma stroke stack — solid colours, gradients or images). Plain strokes use
+// the smooth bezier path (identical to the pre-feature output); width profile /
+// dynamic wobble / arrowheads use a sampled polyline. Brushes tint their stamps
+// with the stack's primary colour; miter angle is unused.
+func (r *Renderer) strokePathLayer(ctx context.Context, dc *gg.Context, l layout.Layer, opacity float64) {
 	if l.BrushName != "" {
+		dc.SetColor(withAlpha(parseHex(strokePrimary(l), color.White), opacity))
 		strokeBrush(dc, samplePathPoints(l, 24), l, opacity, l.Closed)
 		return
 	}
 	if !pathHasAdvancedStroke(l) {
 		applyStroke(dc, l)
 		dc.SetLineWidth(l.StrokeWidth)
-		buildPathBezier(dc, l)
-		dc.Stroke()
+		r.strokeShape(ctx, dc, l, opacity, func(c *gg.Context) {
+			buildPathBezier(c, l)
+		})
 		dc.ClearPath()
 		return
 	}
@@ -1231,21 +1357,33 @@ func strokePathLayer(dc *gg.Context, l layout.Layer, opacity float64) {
 		return
 	}
 	pts = wobblePath(pts, l, l.Closed)
-	if profile := l.WidthProfile; profile != "" && profile != "uniform" {
-		strokeVariableWidth(dc, pts, l.StrokeWidth, profile)
-	} else {
-		applyStroke(dc, l)
-		dc.SetLineWidth(l.StrokeWidth)
-		strokeSmoothPath(dc, pts, l.Closed)
-		dc.Stroke()
-		dc.ClearPath()
-	}
-	if !l.Closed && len(pts) >= 2 {
-		dc.SetColor(col)
-		s0, s1 := pts[0], pts[1]
-		e0, e1 := pts[len(pts)-1], pts[len(pts)-2]
-		drawArrowCap(dc, s0, unit(s0.x-s1.x, s0.y-s1.y), arrowKind(l.StartCap), l.StrokeWidth)
-		drawArrowCap(dc, e0, unit(e0.x-e1.x, e0.y-e1.y), arrowKind(l.EndCap), l.StrokeWidth)
+	for _, p := range strokePaintsOf(l) {
+		if p.Hidden {
+			continue
+		}
+		a := opacity * paintOpacity(p)
+		if a <= 0 {
+			continue
+		}
+		if !r.setPaintStyle(ctx, dc, l, p, a) {
+			continue
+		}
+		if profile := l.WidthProfile; profile != "" && profile != "uniform" {
+			strokeVariableWidth(dc, pts, l.StrokeWidth, profile)
+		} else {
+			applyStroke(dc, l)
+			dc.SetLineWidth(l.StrokeWidth)
+			strokeSmoothPath(dc, pts, l.Closed)
+			dc.Stroke()
+			dc.ClearPath()
+		}
+		// Arrowheads fill/stroke with this paint's style (setPaintStyle sets both).
+		if !l.Closed && len(pts) >= 2 {
+			s0, s1 := pts[0], pts[1]
+			e0, e1 := pts[len(pts)-1], pts[len(pts)-2]
+			drawArrowCap(dc, s0, unit(s0.x-s1.x, s0.y-s1.y), arrowKind(l.StartCap), l.StrokeWidth)
+			drawArrowCap(dc, e0, unit(e0.x-e1.x, e0.y-e1.y), arrowKind(l.EndCap), l.StrokeWidth)
+		}
 	}
 }
 
@@ -1297,18 +1435,19 @@ func ellipsePoints(cx, cy, rx, ry float64) []pathPt {
 }
 
 // strokeWobbledOutline applies the dynamic wobble to a CLOSED shape outline (a rect/ellipse/
-// image border) and strokes it — the hand-drawn look on a box shape. The caller passes the
-// outline already inset for the stroke Position; cap/join/dash come from the layer.
-func strokeWobbledOutline(dc *gg.Context, l layout.Layer, pts []pathPt, opacity float64) {
+// image border) and strokes it — the hand-drawn look on a box shape, painted once per
+// visible stroke paint. The caller passes the outline already inset for the stroke
+// Position; cap/join/dash come from the layer.
+func (r *Renderer) strokeWobbledOutline(ctx context.Context, dc *gg.Context, l layout.Layer, pts []pathPt, opacity float64) {
 	if len(pts) < 3 {
 		return
 	}
 	pts = wobblePath(pts, l, true)
-	dc.SetColor(withAlpha(parseHex(l.StrokeColor, color.White), opacity))
 	dc.SetLineWidth(l.StrokeWidth)
 	applyStroke(dc, l)
-	strokeSmoothPath(dc, pts, true)
-	dc.Stroke()
+	r.strokeShape(ctx, dc, l, opacity, func(c *gg.Context) {
+		strokeSmoothPath(c, pts, true)
+	})
 	dc.ClearPath()
 }
 

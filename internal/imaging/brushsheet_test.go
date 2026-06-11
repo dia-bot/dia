@@ -19,8 +19,13 @@ package imaging
 //     The engines are mirrored bit-for-bit; mean diffs above ~0.01 mean they diverged.
 
 import (
+	"context"
+	"image"
 	"image/color"
+	"image/png"
 	"math"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"sort"
 	"testing"
@@ -301,6 +306,129 @@ func TestDynamicSideBySide(t *testing.T) {
 	strokeSmoothPath(dc, pts, true)
 	dc.Stroke()
 	if err := dc.SavePNG("/tmp/dynamic-vs.png"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestInnerShadowRender renders inner/drop shadows on a rect + circle via the full
+// RenderLayout path → /tmp/inner-shadow.png (BRUSH_SHEET=1 gated, eyeball check).
+func TestInnerShadowRender(t *testing.T) {
+	if os.Getenv("BRUSH_SHEET") == "" {
+		t.Skip()
+	}
+	r := New(t.TempDir(), nil)
+	fp := func(v float64) *float64 { return &v }
+	doc := layout.Layout{
+		Width: 640, Height: 300,
+		Background: layout.Background{Type: "solid", Color: "#e8e0f0"},
+		Layers: []layout.Layer{
+			{ID: "r", Type: "rect", X: 60, Y: 70, W: 200, H: 150, Fill: "#ff6363", Radius: 24,
+				Effects: []layout.Effect{{Type: "inner_shadow", X: 10, Y: 10, Radius: 18, Color: "#000000", Opacity: fp(0.8)}}},
+			{ID: "c", Type: "ellipse", X: 360, Y: 60, W: 170, H: 170, Fill: "#63a8ff",
+				Effects: []layout.Effect{
+					{Type: "inner_shadow", X: -8, Y: -8, Radius: 14, Color: "#000000", Opacity: fp(0.9)},
+					{Type: "drop_shadow", X: 10, Y: 12, Radius: 16, Color: "#000000", Opacity: fp(0.5)},
+				}},
+		},
+	}
+	png, err := r.RenderLayout(context.Background(), doc, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile("/tmp/inner-shadow.png", png, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestFillSemantics renders the Figma fill rules: ” = no fill on rect/ellipse, and
+// open paths fill with an implicit chord → /tmp/fill-semantics.png.
+func TestFillSemantics(t *testing.T) {
+	if os.Getenv("BRUSH_SHEET") == "" {
+		t.Skip()
+	}
+	r := New(t.TempDir(), nil)
+	doc := layout.Layout{
+		Width: 640, Height: 260,
+		Background: layout.Background{Type: "solid", Color: "#202028"},
+		Layers: []layout.Layer{
+			{ID: "a", Type: "rect", X: 40, Y: 60, W: 140, H: 120, Fill: "", StrokeColor: "#ffffff", StrokeWidth: 1},
+			{ID: "b", Type: "ellipse", X: 220, Y: 60, W: 130, H: 130, Fill: ""},
+			{ID: "c", Type: "path", X: 400, Y: 50, W: 200, H: 160, Fill: "#63a8ff", StrokeColor: "#ffffff", StrokeWidth: 1,
+				Closed: false,
+				Nodes: []layout.PathNode{
+					{X: 410, Y: 200, H1X: 410, H1Y: 200, H2X: 410, H2Y: 200},
+					{X: 470, Y: 60, H1X: 470, H1Y: 60, H2X: 470, H2Y: 60},
+					{X: 530, Y: 140, H1X: 530, H1Y: 140, H2X: 530, H2Y: 140},
+					{X: 590, Y: 70, H1X: 590, H1Y: 70, H2X: 590, H2Y: 70},
+				}},
+		},
+	}
+	png, err := r.RenderLayout(context.Background(), doc, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile("/tmp/fill-semantics.png", png, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestPaintStack renders the Figma paint system: stacked fills, all four gradient
+// types, and an image fill with the three fit modes → /tmp/paints.png.
+func TestPaintStack(t *testing.T) {
+	if os.Getenv("BRUSH_SHEET") == "" {
+		t.Skip()
+	}
+	// serve a tiny checker image for the image-fill paints
+	img := image.NewNRGBA(image.Rect(0, 0, 64, 64))
+	for y := 0; y < 64; y++ {
+		for x := 0; x < 64; x++ {
+			c := color.NRGBA{40, 90, 200, 255}
+			if (x/16+y/16)%2 == 0 {
+				c = color.NRGBA{240, 200, 60, 255}
+			}
+			img.SetNRGBA(x, y, c)
+		}
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = png.Encode(w, img)
+	}))
+	defer srv.Close()
+
+	fp := func(v float64) *float64 { return &v }
+	stops := []layout.GradientStop{{Pos: 0, Color: "#ff6363"}, {Pos: 1, Color: "#6363ff"}}
+	fade := []layout.GradientStop{{Pos: 0, Color: "#ffffff"}, {Pos: 1, Color: "#ffffff", Alpha: fp(0)}}
+	doc := layout.Layout{
+		Width: 900, Height: 420, Background: layout.Background{Type: "solid", Color: "#1c1c22"},
+		Layers: []layout.Layer{
+			// stacked: solid base + white fade on top
+			{ID: "1", Type: "rect", X: 30, Y: 40, W: 160, H: 120, Radius: 16, Fills: []layout.Paint{
+				{Type: "solid", Color: "#ff6363"},
+				{Type: "linear", Angle: 180, Stops: fade, Opacity: fp(0.9)},
+			}},
+			{ID: "2", Type: "rect", X: 230, Y: 40, W: 160, H: 120, Radius: 16, Fills: []layout.Paint{{Type: "linear", Angle: 135, Stops: stops}}},
+			{ID: "3", Type: "rect", X: 430, Y: 40, W: 160, H: 120, Radius: 16, Fills: []layout.Paint{{Type: "radial", Stops: stops}}},
+			{ID: "4", Type: "rect", X: 630, Y: 40, W: 160, H: 120, Radius: 16, Fills: []layout.Paint{{Type: "angular", Stops: stops}}},
+			{ID: "5", Type: "rect", X: 30, Y: 220, W: 160, H: 120, Radius: 16, Fills: []layout.Paint{{Type: "diamond", Stops: stops}}},
+			{ID: "6", Type: "ellipse", X: 230, Y: 210, W: 140, H: 140, Fills: []layout.Paint{{Type: "angular", Angle: 45, Stops: stops}}},
+			// image fills: cover and tile
+			{ID: "7", Type: "rect", X: 430, Y: 220, W: 160, H: 120, Radius: 16, Fills: []layout.Paint{{Type: "image", Src: "https://help.figma.com/hc/article_attachments/31937315309591", Fit: "cover"}}},
+			{ID: "8", Type: "rect", X: 630, Y: 220, W: 160, H: 120, Radius: 16, Fills: []layout.Paint{{Type: "image", Src: "https://help.figma.com/hc/article_attachments/31937315309591", Fit: "tile", Opacity: fp(0.8)}}},
+			// gradient on an open path
+			{ID: "9", Type: "path", X: 810, Y: 40, W: 80, H: 320, StrokeColor: "#ffffff", StrokeWidth: 1,
+				Fills: []layout.Paint{{Type: "linear", Angle: 180, Stops: stops}},
+				Nodes: []layout.PathNode{
+					{X: 820, Y: 350, H1X: 820, H1Y: 350, H2X: 820, H2Y: 350},
+					{X: 850, Y: 60, H1X: 850, H1Y: 60, H2X: 850, H2Y: 60},
+					{X: 880, Y: 350, H1X: 880, H1Y: 350, H2X: 880, H2Y: 350},
+				}},
+		},
+	}
+	r := New(t.TempDir(), nil)
+	out, err := r.RenderLayout(context.Background(), doc, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile("/tmp/paints.png", out, 0o644); err != nil {
 		t.Fatal(err)
 	}
 }

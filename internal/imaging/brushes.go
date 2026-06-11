@@ -895,6 +895,8 @@ func brushScatter(dc *gg.Context, pts []pathPt, l layout.Layer, col color.Color,
 	}
 	wig := (l.ScatterWiggle / 100) * sw * 1.2
 	sizeJit := l.ScatterSize / 100
+	rotBase := l.ScatterRotation * math.Pi / 180
+	angJit := l.ScatterAngular * math.Pi / 180
 	cr, cg, cb, _ := col.RGBA()
 	rng := newBrushRng(11)
 	setA := func(a float64) {
@@ -929,7 +931,10 @@ func brushScatter(dc *gg.Context, pts []pathPt, l layout.Layer, col color.Color,
 			setA(def.alpha)
 			switch def.form {
 			case "fleck":
-				rot := theta + (rng.next()*2-1)*0.9
+				rot := theta + (rng.next()*2-1)*0.9 + rotBase
+				if angJit > 0 {
+					rot += (rng.next()*2 - 1) * angJit
+				}
 				lw, lh := rad*1.9, rad*0.7
 				cs, sn := math.Cos(rot), math.Sin(rot)
 				dc.MoveTo(x-lw*cs+lh*sn, y-lw*sn-lh*cs)
@@ -941,8 +946,12 @@ func brushScatter(dc *gg.Context, pts []pathPt, l layout.Layer, col color.Color,
 			case "blob":
 				const bn = 14
 				ph := rng.next() * 12
+				rot := rotBase
+				if angJit > 0 {
+					rot += (rng.next()*2 - 1) * angJit
+				}
 				for k := 0; k <= bn; k++ {
-					a := float64(k) / bn * 2 * math.Pi
+					a := float64(k)/bn*2*math.Pi + rot
 					wob := 1 + 0.26*(vnoise(41, ph+float64(k)*0.55)*2-1)
 					px := x + math.Cos(a)*rad*wob
 					py := y + math.Sin(a)*rad*wob
@@ -967,7 +976,9 @@ func strokeBrush(dc *gg.Context, pts []pathPt, l layout.Layer, opacity float64, 
 	if len(pts) < 2 || l.StrokeWidth <= 0 {
 		return
 	}
-	base := parseHex(l.StrokeColor, color.White)
+	// Brush stamps take ONE tint — the stroke stack's primary colour (gradient
+	// brush strokes aren't rasterised; mirrors the web preview's brushOpts).
+	base := parseHex(strokePrimary(l), color.White)
 	if brushFor(l.BrushName).kind == "scatter" {
 		brushScatter(dc, pts, l, base, opacity, closed)
 	} else {
