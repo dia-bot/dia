@@ -34,8 +34,11 @@ func hMessageEdit(ctx context.Context, h *Halt) error {
 		if len(send.Components) > 0 {
 			edit.Components = &send.Components
 		}
-		_, err := h.Deps.Discord.EditResponse(refForRun(h.Run, ""), edit)
-		return err
+		if _, err := h.Deps.Discord.EditResponse(refForRun(h.Run, ""), edit); err != nil {
+			return err
+		}
+		h.Scope.MarkReplied(true)
+		return nil
 	}
 
 	channelID, err := cc.EvalSnowflake(ctx, spec.Channel, h.Scope)

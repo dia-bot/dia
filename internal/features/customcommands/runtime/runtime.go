@@ -216,6 +216,10 @@ func (p *Plugin) resume(c *interactions.Context, kind string) error {
 
 	_ = c.Defer(false)
 	scope.MarkDeferred(true)
+	// A component click is a FRESH interaction: it gets its own single
+	// response (the defer above), so the first reply after a resume edits
+	// it and later ones follow up.
+	scope.MarkReplied(false)
 
 	resumeRun := &exec.RunState{
 		ID:                 run.ID,

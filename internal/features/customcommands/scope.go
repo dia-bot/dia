@@ -31,6 +31,10 @@ type ScopeData struct {
 	PendingAttachments []ScopeAttachment    `json:"pending_attachments,omitempty"`
 	ImageBlobs         map[string]ImageBlob `json:"image_blobs,omitempty"`
 	Deferred           bool                 `json:"deferred,omitempty"`
+	// Replied: the current interaction has had its single initial response
+	// (Discord allows exactly one); later replies become follow-ups. Reset
+	// on every resume — each component click is a fresh interaction.
+	Replied bool `json:"replied,omitempty"`
 	// Error is set by the runtime when a step fails and recovery is about
 	// to run, so templates inside on_error / on_error_cases can read
 	// `.Error.Kind`, `.Error.Message`, etc. Cleared again after the
@@ -314,6 +318,17 @@ func (s *Scope) MarkDeferred(yes bool) {
 
 // Deferred reports whether Defer has been called for the interaction.
 func (s *Scope) Deferred() bool { return s != nil && s.Data != nil && s.Data.Deferred }
+
+// MarkReplied records that the interaction's single initial response was
+// sent (or edited in); further replies must be follow-up messages.
+func (s *Scope) MarkReplied(yes bool) {
+	if s != nil && s.Data != nil {
+		s.Data.Replied = yes
+	}
+}
+
+// Replied reports whether the current interaction already got its response.
+func (s *Scope) Replied() bool { return s != nil && s.Data != nil && s.Data.Replied }
 
 // CardVars produces the map[string]string that image_render hands to the
 // imaging.Renderer. Each ctx value is exposed under its canonical key plus

@@ -93,6 +93,44 @@ func Validate(name string, def Definition) ValidationResult {
 	// to the first user-visible reply means we must Defer.
 	r.RequiresDefer = requiresDefer(def.Steps)
 
+	// Interaction-lifecycle sanity on the root chain: Discord gives ONE
+	// initial response per interaction. Replies after the first become
+	// follow-ups automatically; modals must BE the first response; edits
+	// need something to edit.
+	seenResponse := false
+	sawSlow := false
+	for i, st := range def.Steps {
+		path := fmt.Sprintf("steps[%d]", i)
+		switch st.Kind {
+		case KindModalOpen:
+			if seenResponse {
+				r.fail(path, "modal_after_response",
+					"a modal must be the interaction's first response — move it before any reply or defer")
+			} else if sawSlow {
+				r.fail(path, "modal_after_slow",
+					"slow steps before a modal force a defer, and a modal cannot follow a defer — open the modal first")
+			}
+			seenResponse = true
+		case KindDeferReply, KindReply:
+			seenResponse = true
+		case KindEditReply:
+			if !seenResponse {
+				r.warn(path, "edit_before_reply",
+					"edit_reply runs before any reply or defer on this path")
+			}
+		case KindMessageEdit:
+			var spec SpecMessageEdit
+			if decodeSpec(st.Spec, &spec) == nil && spec.Target == "reply" && !seenResponse {
+				r.warn(path, "edit_before_reply",
+					"this edits the command's reply, but nothing has replied or deferred yet on this path")
+			}
+		}
+		switch LatencyOf(st.Kind) {
+		case LatencySlow, LatencyDefer:
+			sawSlow = true
+		}
+	}
+
 	// Trigger sanity.
 	for i, t := range def.Triggers {
 		path := fmt.Sprintf("triggers[%d]", i)

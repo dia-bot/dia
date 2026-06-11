@@ -49,6 +49,25 @@ func hReply(ctx context.Context, h *Halt) error {
 	}
 	send := buildMessageSend(ctx, h, spec.Content, spec.Embeds, spec.Components, spec.Attachments)
 	files := send.Files
+
+	// Discord allows exactly ONE initial response per interaction. The first
+	// reply responds (or resolves the defer); every further reply on the same
+	// interaction becomes a follow-up message instead of erroring.
+	if h.Scope.Replied() {
+		params := &discordgo.WebhookParams{
+			Content:         send.Content,
+			Embeds:          send.Embeds,
+			Components:      send.Components,
+			Files:           files,
+			AllowedMentions: send.AllowedMentions,
+		}
+		if spec.Ephemeral {
+			params.Flags = discordgo.MessageFlagsEphemeral
+		}
+		_, err := h.Deps.Discord.Followup(refForRun(h.Run, ""), params)
+		return err
+	}
+
 	// If we've already deferred, an Edit is required.
 	if h.Scope.Deferred() {
 		edit := &discordgo.WebhookEdit{
@@ -59,8 +78,11 @@ func hReply(ctx context.Context, h *Halt) error {
 		if len(send.Components) > 0 {
 			edit.Components = &send.Components
 		}
-		_, err := h.Deps.Discord.EditResponse(refForRun(h.Run, ""), edit)
-		return err
+		if _, err := h.Deps.Discord.EditResponse(refForRun(h.Run, ""), edit); err != nil {
+			return err
+		}
+		h.Scope.MarkReplied(true)
+		return nil
 	}
 	data := &discordgo.InteractionResponseData{
 		Content:    send.Content,
@@ -71,10 +93,14 @@ func hReply(ctx context.Context, h *Halt) error {
 	if spec.Ephemeral {
 		data.Flags = discordgo.MessageFlagsEphemeral
 	}
-	return h.Deps.Discord.Respond(refForRun(h.Run, ""), &discordgo.InteractionResponse{
+	if err := h.Deps.Discord.Respond(refForRun(h.Run, ""), &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseChannelMessageWithSource,
 		Data: data,
-	})
+	}); err != nil {
+		return err
+	}
+	h.Scope.MarkReplied(true)
+	return nil
 }
 
 func hEditReply(ctx context.Context, h *Halt) error {
@@ -94,8 +120,11 @@ func hEditReply(ctx context.Context, h *Halt) error {
 	if len(send.Components) > 0 {
 		edit.Components = &send.Components
 	}
-	_, err := h.Deps.Discord.EditResponse(refForRun(h.Run, ""), edit)
-	return err
+	if _, err := h.Deps.Discord.EditResponse(refForRun(h.Run, ""), edit); err != nil {
+		return err
+	}
+	h.Scope.MarkReplied(true)
+	return nil
 }
 
 func hSendMessage(ctx context.Context, h *Halt) error {
