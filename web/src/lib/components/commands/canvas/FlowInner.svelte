@@ -45,6 +45,7 @@
 	import BranchEdge from './BranchEdge.svelte';
 	import ErrorEdge from './ErrorEdge.svelte';
 	import { onMount, untrack } from 'svelte';
+	import { dragState } from './path-tween.svelte';
 	import { fly, fade } from 'svelte/transition';
 	import { cubicOut } from 'svelte/easing';
 	import { dur } from '$lib/motion';
@@ -415,6 +416,14 @@
 	let dragging = $state(false);
 	function onnodedragstart() {
 		dragging = true;
+		dragState.active = true;
+	}
+	// The lib caches layouted edge geometry by object identity; refreshing
+	// edge identities every drag frame forces it to re-derive coordinates so
+	// lines FOLLOW the dragged card instead of freezing until the next
+	// rebuild (the tween snaps during drags, so tracking is 1:1).
+	function onnodedrag() {
+		edges = edges.map((e) => ({ ...e }));
 	}
 	function onnodedragstop({
 		targetNode,
@@ -424,6 +433,7 @@
 		nodes: XYNode[];
 	}) {
 		dragging = false;
+		dragState.active = false;
 		// Remember every node that moved (multi-select drags move several).
 		for (const n of dragged ?? (targetNode ? [targetNode] : [])) {
 			positions.set(n.id, n.position);
@@ -630,6 +640,7 @@
 		{onpaneclick}
 		{onedgeclick}
 		{onnodedragstart}
+		{onnodedrag}
 		{onnodedragstop}
 		{onconnectend}
 		{onconnect}
@@ -802,12 +813,24 @@
 			box-shadow 140ms ease-out,
 			opacity 220ms ease;
 	}
-	/* Entry dots that appear when a line re-routes (e.g. a card becomes a
-	   click target) TRAVEL from the old top-centre spot to the left edge —
-	   the independent translate property composes with xyflow's positioning
-	   transform, and an animation (not a transition) survives the rebuild
-	   recreating the element. --dia-dot-dx is set per node width. */
-	:global(.svelte-flow__handle.dia-dot-in) {
+	/* Left entry dots: the HANDLE div must never move (xyflow measures it
+	   once at mount; displacing it re-anchors every line to a phantom spot).
+	   The visible dot is a ::after pseudo that travels from the old
+	   top-centre position to the left edge when a click path connects.
+	   --dia-dot-dx is set per node width. */
+	:global(.svelte-flow__handle.dia-left-dot) {
+		background: transparent !important;
+		border: none !important;
+	}
+	:global(.svelte-flow__handle.dia-left-dot)::after {
+		content: '';
+		position: absolute;
+		inset: -1px;
+		border-radius: 9999px;
+		background: hsl(var(--muted-foreground) / 0.7);
+		border: 2px solid hsl(var(--card));
+	}
+	:global(.svelte-flow__handle.dia-dot-in)::after {
 		animation: dia-dot-move 360ms cubic-bezier(0.22, 1, 0.36, 1) both;
 	}
 	@keyframes -global-dia-dot-move {

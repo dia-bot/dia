@@ -53,9 +53,7 @@
 		position={Position.Left}
 		id="in-left"
 		style="top: 18px; --dia-dot-dx: 124px"
-		class="!size-2 !border-2 !border-card !bg-muted-foreground/70 {data.clickTarget
-			? 'dia-dot-in'
-			: '!opacity-0'}"
+		class="dia-left-dot !size-2 {data.clickTarget ? 'dia-dot-in' : '!opacity-0'}"
 	/>
 
 	<div
