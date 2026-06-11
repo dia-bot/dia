@@ -294,13 +294,22 @@
 		return seen;
 	}
 
+	// Tidy sets this so the next rebuild relayouts from scratch instead of
+	// re-capturing the on-screen positions (which would undo the relayout).
+	let forceLayout = false;
+
 	function rebuild() {
 		// Capture live positions first — drags land in `nodes` via bind:nodes.
 		// untrack: rebuild runs inside an $effect that also WRITES `nodes`;
 		// reading it tracked would loop the effect forever.
-		untrack(() => {
-			for (const n of nodes) positions.set(n.id, n.position);
-		});
+		if (forceLayout) {
+			forceLayout = false;
+			positions.clear();
+		} else {
+			untrack(() => {
+				for (const n of nodes) positions.set(n.id, n.position);
+			});
+		}
 		const { nodes: rawNodes, edges: rawEdges } = treeToGraph(steps, commandName, scratch);
 		const ids = new Set(rawNodes.map((n) => n.id));
 		for (const k of [...positions.keys()]) if (!ids.has(k)) positions.delete(k);
@@ -612,8 +621,32 @@
 	});
 
 	export async function tidyUp() {
-		positions.clear();
+		// Relayout from scratch, then glide every card from where it was to its
+		// new spot; the edges re-derive each frame so the lines travel along.
+		const from = new Map(nodes.map((n) => [n.id, { ...n.position }]));
+		forceLayout = true;
 		rebuild();
+		const total = dur(360);
+		if (total > 0 && from.size > 0) {
+			const target = new Map(nodes.map((n) => [n.id, { ...n.position }]));
+			const start = performance.now();
+			const tick = (now: number) => {
+				if (dragState.active) return; // a drag takes over — stop steering
+				const k = cubicOut(Math.min(1, (now - start) / total));
+				nodes = nodes.map((n) => {
+					const f = from.get(n.id);
+					const to = target.get(n.id);
+					if (!f || !to) return n;
+					return {
+						...n,
+						position: { x: f.x + (to.x - f.x) * k, y: f.y + (to.y - f.y) * k }
+					};
+				});
+				edges = edges.map((e) => ({ ...e }));
+				if (now - start < total) requestAnimationFrame(tick);
+			};
+			requestAnimationFrame(tick);
+		}
 		await Promise.resolve();
 		fitView(FIT_OPTS);
 	}
