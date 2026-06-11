@@ -7,8 +7,7 @@
 	import FlowCanvas from '$lib/components/commands/canvas/FlowCanvas.svelte';
 	import { ENTRY_ID, errorRouterOwner } from '$lib/components/commands/canvas/adapter';
 	import StepDrawer from '$lib/components/commands/StepDrawer.svelte';
-	import SlashCommandPreview from '$lib/components/commands/SlashCommandPreview.svelte';
-	import PropertiesEditor from '$lib/components/commands/PropertiesEditor.svelte';
+	import PropertiesStudio from '$lib/components/commands/PropertiesStudio.svelte';
 	import FieldSelect from '$lib/components/commands/FieldSelect.svelte';
 	import NumberField from '$lib/components/commands/NumberField.svelte';
 	import type { Definition, Step, ValidationResult, ValidationIssue } from '$lib/commands/types';
@@ -927,7 +926,9 @@
 
 	<!-- ── Properties dialog: the /command <property> builder ── -->
 	<Dialog.Root bind:open={propertiesOpen}>
-		<Dialog.Content class="max-w-[760px] gap-0 overflow-hidden p-0">
+		<Dialog.Content
+			class="flex h-[min(720px,90vh)] max-w-[1080px] flex-col gap-0 overflow-hidden p-0"
+		>
 			<Dialog.Title class="sr-only">Properties</Dialog.Title>
 			<div class="flex h-12 shrink-0 items-center gap-2.5 border-b border-line px-4">
 				<div class="grid size-5 place-items-center rounded border border-line bg-surface text-muted">
@@ -942,28 +943,10 @@
 					{cmd.definition.options?.length ?? 0}/25
 				</span>
 			</div>
-			<!-- Live Discord preview pinned up top; the list scrolls underneath it,
-			     so what members will see stays in sight while editing. -->
-			<div class="shrink-0 border-b border-line bg-ink-2/40 px-5 pb-4 pt-3.5">
-				<div class="mb-2 flex items-baseline justify-between">
-					<span class="font-mono text-[10px] font-medium uppercase tracking-[0.14em] text-faint">
-						How it looks in Discord
-					</span>
-					<span class="text-[11px] text-muted">
-						read any property as
-						<code class="rounded bg-surface px-1 font-mono text-[10.5px] text-ink"
-							>{'{{ .Input.name }}'}</code
-						>
-					</span>
-				</div>
-				<SlashCommandPreview
+			<div class="min-h-0 flex-1">
+				<PropertiesStudio
 					name={cmd.name}
 					description={cmd.description}
-					options={cmd.definition.options ?? []}
-				/>
-			</div>
-			<div class="max-h-[56vh] overflow-y-auto px-5 py-4">
-				<PropertiesEditor
 					options={cmd.definition.options ?? []}
 					onChange={(next) => {
 						if (!cmd) return;
