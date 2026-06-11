@@ -803,17 +803,21 @@
 			opacity 220ms ease;
 	}
 	/* Entry dots that appear when a line re-routes (e.g. a card becomes a
-	   click target) ease in instead of snapping — an animation, not a
-	   transition, so it also runs when the rebuild recreates the element. */
+	   click target) TRAVEL from the old top-centre spot to the left edge —
+	   the independent translate property composes with xyflow's positioning
+	   transform, and an animation (not a transition) survives the rebuild
+	   recreating the element. --dia-dot-dx is set per node width. */
 	:global(.svelte-flow__handle.dia-dot-in) {
-		animation: dia-dot-in 280ms cubic-bezier(0.22, 1, 0.36, 1) both;
+		animation: dia-dot-move 360ms cubic-bezier(0.22, 1, 0.36, 1) both;
 	}
-	@keyframes -global-dia-dot-in {
+	@keyframes -global-dia-dot-move {
 		from {
-			opacity: 0;
+			opacity: 0.4;
+			translate: var(--dia-dot-dx, 124px) -22px;
 		}
 		to {
 			opacity: 1;
+			translate: 0 0;
 		}
 	}
 	/* A generous invisible hit area — the visible dot stays small, but the
