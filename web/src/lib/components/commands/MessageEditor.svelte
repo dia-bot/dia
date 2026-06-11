@@ -147,13 +147,19 @@
 	function setRows(rows: { components: AnySpec[] }[]) {
 		set('components', rows);
 	}
+
+	// Random click ids: two buttons (even across copies of the same command)
+	// can never collide, and the run id scopes them per invocation anyway.
+	function randId(prefix: string): string {
+		return `${prefix}_${Math.random().toString(36).slice(2, 7)}`;
+	}
 	function addButtonRow() {
 		if (rowList.length >= 5) return;
 		setRows([
 			...rowList,
 			{
 				components: [
-					{ type: 'button', style: 'primary', label: 'Button', custom_id_suffix: `btn${rowList.length + 1}` }
+					{ type: 'button', style: 'primary', label: 'Button', custom_id_suffix: randId('btn') }
 				]
 			}
 		]);
@@ -167,7 +173,7 @@
 					{
 						type: 'select_string',
 						placeholder: 'Make a selection',
-						custom_id_suffix: `pick${rowList.length + 1}`,
+						custom_id_suffix: randId('pick'),
 						options: [{ label: 'Option 1', value: 'one' }]
 					}
 				]
@@ -213,7 +219,7 @@
 			patch.url = cur.url ?? '';
 		} else {
 			patch.url = undefined;
-			patch.custom_id_suffix = cur.custom_id_suffix || `btn${ri + 1}_${ci + 1}`;
+			patch.custom_id_suffix = cur.custom_id_suffix || randId('btn');
 		}
 		const next = { ...cur, ...patch };
 		for (const k of Object.keys(next)) if (next[k] === undefined) delete next[k];
@@ -514,7 +520,7 @@
 														onclick={() =>
 															patchComponent(ri, ci, {
 																custom_id_manual: undefined,
-																custom_id_suffix: `btn${ri + 1}_${ci + 1}`
+																custom_id_suffix: randId('btn')
 															})}
 													>
 														Use the automatic id instead
