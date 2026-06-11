@@ -545,8 +545,8 @@ func validateSpec(s Step, path string, r *ValidationResult) {
 		if spec.Timeout != "" {
 			if d, err := time.ParseDuration(spec.Timeout); err != nil {
 				r.fail(path+".spec.timeout", "duration_invalid", err.Error())
-			} else if d > 24*time.Hour {
-				r.fail(path+".spec.timeout", "timeout_too_long", "wait_for timeout is capped at 24h")
+			} else if d > 10*time.Minute {
+				r.fail(path+".spec.timeout", "timeout_too_long", "wait_for timeout is capped at 10 minutes")
 			}
 		}
 		if spec.Trigger == "" {

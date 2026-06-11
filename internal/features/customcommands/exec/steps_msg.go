@@ -240,9 +240,12 @@ func hModalOpen(ctx context.Context, h *Halt) error {
 	// Pause the run until the modal is submitted.
 	timeout := 5 * time.Minute
 	if spec.Timeout != "" {
-		if d, err := time.ParseDuration(spec.Timeout); err == nil {
+		if d, err := time.ParseDuration(spec.Timeout); err == nil && d > 0 {
 			timeout = d
 		}
+	}
+	if timeout > 10*time.Minute {
+		timeout = 10 * time.Minute
 	}
 	resume := time.Now().Add(timeout)
 	h.Run.markDurable()

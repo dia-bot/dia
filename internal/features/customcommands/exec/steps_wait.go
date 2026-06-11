@@ -51,8 +51,10 @@ func hWaitFor(ctx context.Context, h *Halt) error {
 			timeout = d
 		}
 	}
-	if timeout > 24*time.Hour {
-		timeout = 24 * time.Hour
+	// Hard cap: the interaction token itself dies after ~15 minutes, so a
+	// longer park can never be answered anyway.
+	if timeout > 10*time.Minute {
+		timeout = 10 * time.Minute
 	}
 	resume := time.Now().Add(timeout)
 
