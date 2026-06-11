@@ -38,6 +38,11 @@ func (c *Client) AppID() string { return c.appID }
 // not yet wrapped here.
 func (c *Client) Session() *discordgo.Session { return c.s }
 
+// GuildEmojis lists a guild's custom emojis (dashboard emoji picker).
+func (c *Client) GuildEmojis(guildID string) ([]*discordgo.Emoji, error) {
+	return c.s.GuildEmojis(guildID)
+}
+
 // InteractionRef identifies an interaction for REST responses.
 type InteractionRef struct {
 	ID    string
