@@ -12,6 +12,11 @@ import {
 	hasHandles,
 	shapeInBox,
 	newEffect,
+	paintsOf,
+	strokePaintsOf,
+	textPaintsOf,
+	bgPaintsOf,
+	stackPrimary,
 	MAX_LAYERS,
 	type Layout,
 	type Layer,
@@ -22,16 +27,33 @@ import {
 	type ClipMode,
 	type BoolOp,
 	type Effect,
-	type EffectType
+	type EffectType,
+	type StrokeAlign,
+	type StrokeStyle,
+	type StrokeCap,
+	type StrokeJoin,
+	type StrokeSide,
+	type WidthProfile,
+	type ArrowCap,
+	type BrushDirection,
+	type Paint,
+	type PaintType,
+	type GradientStop
 } from './schema';
+import { brushDef, DEFAULT_BRUSH, type BrushKind } from './brushes';
 
 export const EDITOR_CTX = Symbol('dia-layout-editor');
 
 // Active canvas tool. 'select' is the arrow; rect..avatar are drag-to-create
 // shapes; 'pen' places bezier nodes and 'pencil' draws freehand.
-export type Tool = 'select' | 'scale' | 'rect' | 'ellipse' | 'text' | 'image' | 'avatar' | 'pen' | 'pencil' | 'shape' | 'bend';
+export type Tool = 'select' | 'scale' | 'rect' | 'ellipse' | 'text' | 'image' | 'pen' | 'pencil' | 'shape' | 'bend';
 
 export type AlignEdge = 'left' | 'hcenter' | 'right' | 'top' | 'vcenter' | 'bottom';
+
+// Which paint slot a paint operation edits — a layer's fill, its stroke, or the
+// canvas background. All three carry the same Figma paint-stack model, so the
+// inspector reuses one UI (and one set of store ops) for every colour control.
+export type PaintTarget = 'fill' | 'stroke' | 'bg';
 
 // A row in the layers panel's derived tree (one level of nesting). A 'group' row
 // is a group / mask-group header; a 'leaf' row is a single layer at depth 0
@@ -271,7 +293,6 @@ export class EditorStore {
 		l.type = 'path';
 		l.nodes = nodes;
 		l.closed = true;
-		if (!l.fill) l.fill = '#FFFFFF';
 		this.fitPath(l);
 	}
 
@@ -291,7 +312,7 @@ export class EditorStore {
 		} else {
 			layer.fill = '';
 			layer.stroke_color = '#FFFFFF';
-			layer.stroke_width = 6;
+			layer.stroke_width = 1; // Figma seeds 1px strokes
 		}
 		this.layout.layers.push(layer);
 		this.fitPath(layer);
@@ -307,12 +328,12 @@ export class EditorStore {
 		this.fitPath(l);
 	}
 	// scaleLayer is the Scale tool (Figma's K): like resize, but it ALSO scales the
-	// layer's intrinsic properties (font size, stroke width, corner radius, ring) by
+	// layer's intrinsic properties (font size, stroke width, corner radius) by
 	// the uniform factor f, so the whole object grows proportionally. props holds the
 	// values captured at gesture start.
 	scaleLayer(
 		id: string,
-		props: { fontSize?: number; stroke?: number; radius?: number; ring?: number },
+		props: { fontSize?: number; stroke?: number; radius?: number },
 		startNodes: PathNode[] | undefined,
 		sx: number,
 		sy: number,
@@ -337,7 +358,6 @@ export class EditorStore {
 		if (props.fontSize != null) l.font_size = Math.max(1, Math.round(props.fontSize * f));
 		if (props.stroke != null) l.stroke_width = Math.max(0, Math.round(props.stroke * f * 10) / 10);
 		if (props.radius != null) l.radius = Math.max(0, Math.round(props.radius * f));
-		if (props.ring != null) l.ring_width = Math.max(0, Math.round(props.ring * f));
 	}
 
 	// scalePath maps a path's nodes (captured at gesture start) from the start bbox
@@ -400,6 +420,13 @@ export class EditorStore {
 		copy.x = Math.round(src.x + dx);
 		copy.y = Math.round(src.y + dy);
 		delete copy.group;
+		// An ungrouped copy must never stay a dangling stencil (clip with no group) — the
+		// preview's maskFor ignores it so it'd vanish, but the Go renderer would paint it.
+		if (copy.clip) {
+			copy.clip = false;
+			delete copy.clip_mode;
+			copy.clip_invert = false;
+		}
 		if (copy.nodes) {
 			for (const n of copy.nodes) {
 				n.x += dx;
@@ -421,6 +448,9 @@ export class EditorStore {
 	cut() {
 		this.copy();
 		this.removeSelected();
+	}
+	get canPasteInternal(): boolean {
+		return this.#clipboard.length > 0;
 	}
 	paste() {
 		if (!this.#clipboard.length) return;
@@ -965,23 +995,356 @@ export class EditorStore {
 		this.fitPath(l);
 	}
 
-	// setClosed opens/closes a path. Closing gives it a sensible default fill so a
-	// freshly closed shape is actually filled (the old default '' rendered nothing).
+	// setClosed opens/closes a path's geometry. Like Figma, closing does NOT add a
+	// fill — the shape stays stroke-only until a fill is added in the Fill section.
 	setClosed(v: boolean) {
 		const l = this.editPath ?? this.selected;
 		if (l?.type !== 'path') return;
 		l.closed = v;
-		if (v && !l.fill) l.fill = l.stroke_color || '#FFFFFF';
 	}
-	// setFillEnabled toggles whether a path paints a fill ('' = no fill).
-	setFillEnabled(on: boolean) {
-		const l = this.selected;
-		if (l?.type !== 'path') return;
-		l.fill = on ? l.fill || l.stroke_color || '#FFFFFF' : '';
+
+	// ── paint stacks (Figma's paints: solid / gradients / image, stacked) ───────
+	// ONE generic engine drives every paint slot, so a layer's FILL, its STROKE
+	// and the canvas BACKGROUND all edit through the same PaintPicker UI:
+	//   'fill'   — the selected layers' fill stack (shapes, paths and TEXT, where
+	//              it supersedes the legacy `color`)
+	//   'stroke' — the selected layers' stroke stack (supersedes `stroke_color`)
+	//   'bg'     — the document background's stack (supersedes the legacy
+	//              type/color/from/to/image_url fields)
+	// The panel edits the ACTIVE layer's stack; every mutation applies to all
+	// selected paintable layers at the same index, so multi-select edits work.
+	#fillable(l: Layer): boolean {
+		return l.type === 'rect' || l.type === 'ellipse' || l.type === 'path' || l.type === 'text';
 	}
-	get fillEnabled(): boolean {
+	#clonePaints(ps: Paint[]): Paint[] {
+		return ps.map((p) => ({ ...p, stops: p.stops?.map((st) => ({ ...st })) }));
+	}
+	#layerPaints(l: Layer, target: 'fill' | 'stroke'): Paint[] {
+		if (target === 'stroke') return strokePaintsOf(l);
+		return l.type === 'text' ? textPaintsOf(l) : paintsOf(l);
+	}
+	// #mutatePaints migrates the slot's legacy field(s) into its paint stack and
+	// applies fn. The legacy single colours stay synced to the stack's primary so
+	// old consumers (boolean text colour, brush tints) keep working.
+	#mutatePaints(target: PaintTarget, fn: (ps: Paint[]) => void) {
+		if (target === 'bg') {
+			const ps = this.#clonePaints(bgPaintsOf(this.layout.background));
+			fn(ps);
+			this.layout.background.fills = ps;
+			return;
+		}
+		this.setAll((l) => {
+			if (target === 'fill' && !this.#fillable(l)) return;
+			const ps = this.#clonePaints(this.#layerPaints(l, target));
+			fn(ps);
+			if (target === 'fill') {
+				l.fills = ps;
+				l.fill = undefined;
+				if (l.type === 'text') l.color = stackPrimary(ps) || l.color;
+			} else {
+				l.strokes = ps;
+				l.stroke_color = stackPrimary(ps) || l.stroke_color;
+			}
+		});
+	}
+	// paints returns the slot's stack for the inspector list (primary selection).
+	paints(target: PaintTarget): Paint[] {
+		if (target === 'bg') return bgPaintsOf(this.layout.background);
 		const l = this.selected;
-		return l?.type === 'path' ? !!l.fill : false;
+		if (!l) return [];
+		if (target === 'fill' && !this.#fillable(l)) return [];
+		return this.#layerPaints(l, target);
+	}
+	get hasFill(): boolean {
+		return this.selectedLayers.some((l) => this.#fillable(l) && paintsOf(l).length > 0);
+	}
+	addPaint(target: PaintTarget) {
+		this.#mutatePaints(target, (ps) => ps.push({ type: 'solid', color: '#D9D9D9' }));
+	}
+	removePaint(target: PaintTarget, i: number) {
+		// Deleting a stroke's LAST paint removes the stroke itself (Figma's "−").
+		if (target === 'stroke' && this.paints('stroke').length <= 1) {
+			this.removeStroke();
+			return;
+		}
+		this.#mutatePaints(target, (ps) => ps.splice(i, 1));
+	}
+	setPaint(target: PaintTarget, i: number, patch: Partial<Paint>) {
+		this.#mutatePaints(target, (ps) => {
+			if (ps[i]) ps[i] = { ...ps[i], ...patch };
+		});
+	}
+	togglePaintHidden(target: PaintTarget, i: number) {
+		const cur = this.paints(target)[i]?.hidden ?? false;
+		this.setPaint(target, i, { hidden: !cur });
+	}
+	setPaintStops(target: PaintTarget, i: number, stops: GradientStop[]) {
+		this.setPaint(target, i, { stops: stops.slice().sort((a, b) => a.pos - b.pos) });
+	}
+	// convertPaint switches a paint's type, seeding sensible Figma-style defaults:
+	// solid → gradient keeps the colour (fading to transparent); gradient → solid
+	// keeps the first stop; → image starts empty for the picker.
+	convertPaint(target: PaintTarget, i: number, type: PaintType) {
+		const p = this.paints(target)[i];
+		if (!p || p.type === type) return;
+		const base = p.type === 'solid' ? (p.color ?? '#D9D9D9') : (p.stops?.[0]?.color ?? '#D9D9D9');
+		const patch: Partial<Paint> = { type };
+		if (type === 'solid') {
+			patch.color = base;
+		} else if (type !== 'image' && !(p.stops?.length ?? 0)) {
+			patch.stops = [
+				{ pos: 0, color: base },
+				{ pos: 1, color: base, alpha: 0 }
+			];
+			if (type === 'linear' && p.angle === undefined) patch.angle = 180;
+		}
+		this.setPaint(target, i, patch);
+	}
+
+	// ── stroke (border, Figma-style: a "+" adds it, then position/weight/colour) ──
+	get hasStroke(): boolean {
+		return this.selectedLayers.some((l) => (l.stroke_width ?? 0) > 0);
+	}
+	// addStroke gives the selection a 1px stroke (Figma seeds 1px), defaulting colour
+	// and the Position to 'inside' (Figma's default for shapes).
+	addStroke() {
+		this.setAll((l) => {
+			if ((l.stroke_width ?? 0) <= 0) l.stroke_width = 1;
+			if (!l.stroke_color) l.stroke_color = '#FFFFFF';
+			if (!l.stroke_align) l.stroke_align = 'inside';
+		});
+	}
+	removeStroke() {
+		this.setAll((l) => (l.stroke_width = 0));
+	}
+	get strokeAlign(): StrokeAlign {
+		return this.common((l) => (l.stroke_align ?? 'center') as StrokeAlign) ?? 'center';
+	}
+	setStrokeAlign(a: StrokeAlign) {
+		this.setAll((l) => (l.stroke_align = a));
+	}
+	get strokeStyle(): StrokeStyle | '' {
+		// '' = Mixed (a solid+dashed selection) so the segmented control highlights neither.
+		return this.common((l) => (l.stroke_style ?? 'solid') as StrokeStyle) ?? '';
+	}
+	get strokeDashed(): boolean {
+		return this.selectedLayers.some((l) => l.stroke_style === 'dashed');
+	}
+	// setStrokeStyle switches solid⇄dashed; turning dashes on seeds a sensible dash/gap
+	// from the weight (Figma defaults to roughly twice the weight) when none is set.
+	setStrokeStyle(s: StrokeStyle) {
+		this.setAll((l) => {
+			l.stroke_style = s;
+			if (s === 'dashed' && !(l.dash && l.dash > 0)) {
+				const w = Math.max(1, Math.round(l.stroke_width ?? 1));
+				l.dash = w * 2;
+				l.gap = w * 2;
+			}
+		});
+	}
+	get dash(): number {
+		return this.common((l) => l.dash ?? 0) ?? 0;
+	}
+	setDash(n: number) {
+		this.setAll((l) => (l.dash = Math.max(0, n)));
+	}
+	get gap(): number {
+		return this.common((l) => l.gap ?? 0) ?? 0;
+	}
+	setGap(n: number) {
+		this.setAll((l) => (l.gap = Math.max(0, n)));
+	}
+	get strokeCap(): StrokeCap {
+		return this.common((l) => (l.stroke_cap ?? 'round') as StrokeCap) ?? 'round';
+	}
+	setStrokeCap(c: StrokeCap) {
+		this.setAll((l) => (l.stroke_cap = c));
+	}
+	get strokeJoin(): StrokeJoin {
+		return this.common((l) => (l.stroke_join ?? 'round') as StrokeJoin) ?? 'round';
+	}
+	setStrokeJoin(j: StrokeJoin) {
+		this.setAll((l) => (l.stroke_join = j));
+	}
+	// Per-side strokes (rect): unset/empty OR all four = a full outline. isStrokeSide
+	// reports whether a side is on for the selection (a side counts as ON when sides is
+	// unset). allStrokeSides is true when no side is excluded.
+	isStrokeSide(side: StrokeSide): boolean {
+		return (
+			this.common((l) => {
+				const s = l.stroke_sides;
+				return !s || s.length === 0 || s.includes(side);
+			}) ?? true
+		);
+	}
+	get allStrokeSides(): boolean {
+		return (
+			this.common((l) => {
+				const s = l.stroke_sides;
+				return !s || s.length === 0 || s.length === 4;
+			}) ?? true
+		);
+	}
+	toggleStrokeSide(side: StrokeSide) {
+		const order: StrokeSide[] = ['top', 'right', 'bottom', 'left'];
+		this.setAll((l) => {
+			const cur = new Set(l.stroke_sides && l.stroke_sides.length ? l.stroke_sides : order);
+			if (cur.has(side)) cur.delete(side);
+			else cur.add(side);
+			const next = order.filter((s) => cur.has(s));
+			// never leave a stroke with zero sides — fall back to the full outline
+			l.stroke_sides = next.length === 0 || next.length === 4 ? undefined : next;
+		});
+	}
+	setAllStrokeSides() {
+		this.setAll((l) => (l.stroke_sides = undefined));
+	}
+
+	// ── advanced stroke (Figma's Stroke-settings popover) ──────────────────────
+	// Width profile — tapers a path's weight along its length (paths only).
+	get widthProfile(): WidthProfile | '' {
+		// '' = Mixed (a multi-select with differing profiles) so the select shows "Mixed".
+		return this.common((l) => (l.width_profile ?? 'uniform') as WidthProfile) ?? '';
+	}
+	setWidthProfile(p: WidthProfile) {
+		this.setAll((l) => (l.width_profile = p === 'uniform' ? undefined : p));
+	}
+	// Arrowheads at the path's first / last node (Figma's Start point / End point).
+	get startCap(): ArrowCap | '' {
+		return this.common((l) => (l.start_cap ?? 'none') as ArrowCap) ?? '';
+	}
+	setStartCap(c: ArrowCap) {
+		this.setAll((l) => (l.start_cap = c === 'none' ? undefined : c));
+	}
+	get endCap(): ArrowCap | '' {
+		return this.common((l) => (l.end_cap ?? 'none') as ArrowCap) ?? '';
+	}
+	setEndCap(c: ArrowCap) {
+		this.setAll((l) => (l.end_cap = c === 'none' ? undefined : c));
+	}
+	// Miter cutoff angle (degrees). Figma seeds 28.96°; only meaningful for a miter join.
+	get miterAngle(): number {
+		return this.common((l) => l.miter_angle ?? 28.96) ?? 28.96;
+	}
+	setMiterAngle(n: number) {
+		this.setAll((l) => (l.miter_angle = Math.min(180, Math.max(0, n))));
+	}
+	// Brush — a named brush from the catalog (brushes.ts). brushName is the selected id; its kind
+	// drives which params show. Scatter params default to the brush's preset; switching re-seeds.
+	get brushName(): string {
+		return this.common((l) => l.brush_name ?? DEFAULT_BRUSH) ?? DEFAULT_BRUSH;
+	}
+	setBrushName(id: string) {
+		this.setAll((l) => {
+			l.brush_name = id;
+			l.scatter_gap = undefined;
+			l.scatter_wiggle = undefined;
+			l.scatter_size = undefined;
+			l.scatter_rotation = undefined;
+			l.scatter_angular = undefined;
+		});
+	}
+	get brushKind(): BrushKind {
+		return brushDef(this.brushName).kind;
+	}
+	get scatterGap(): number {
+		return this.common((l) => l.scatter_gap ?? brushDef(l.brush_name).gap) ?? 0.15;
+	}
+	setScatterGap(n: number) {
+		this.setAll((l) => (l.scatter_gap = Math.min(8, Math.max(0.05, Math.round(n * 100) / 100))));
+	}
+	get scatterWiggle(): number {
+		return this.common((l) => l.scatter_wiggle ?? Math.round(brushDef(l.brush_name).jitter * 100)) ?? 0;
+	}
+	setScatterWiggle(n: number) {
+		this.setAll((l) => (l.scatter_wiggle = Math.min(100, Math.max(0, Math.round(n)))));
+	}
+	get scatterSize(): number {
+		return this.common((l) => l.scatter_size ?? Math.round(brushDef(l.brush_name).size * 100)) ?? 0;
+	}
+	setScatterSize(n: number) {
+		this.setAll((l) => (l.scatter_size = Math.min(100, Math.max(0, Math.round(n)))));
+	}
+	get scatterRotation(): number {
+		return this.common((l) => l.scatter_rotation ?? 0) ?? 0;
+	}
+	setScatterRotation(n: number) {
+		this.setAll((l) => (l.scatter_rotation = Math.min(180, Math.max(-180, Math.round(n))) || undefined));
+	}
+	get scatterAngular(): number {
+		return this.common((l) => l.scatter_angular ?? 0) ?? 0;
+	}
+	setScatterAngular(n: number) {
+		this.setAll((l) => (l.scatter_angular = Math.min(180, Math.max(0, Math.round(n))) || undefined));
+	}
+	get brushDirection(): BrushDirection {
+		return this.common((l) => (l.brush_direction ?? 'forward') as BrushDirection) ?? 'forward';
+	}
+	setBrushDirection(d: BrushDirection) {
+		this.setAll((l) => (l.brush_direction = d === 'forward' ? undefined : d));
+	}
+	// Dynamic (hand-drawn wobble) — frequency/wiggle/smoothen, each a 0-based percent.
+	get dynamicFrequency(): number {
+		return this.common((l) => l.dynamic_frequency ?? 0) ?? 0;
+	}
+	setDynamicFrequency(n: number) {
+		this.setAll((l) => (l.dynamic_frequency = Math.min(100, Math.max(0, Math.round(n))) || undefined));
+	}
+	get dynamicWiggle(): number {
+		return this.common((l) => l.dynamic_wiggle ?? 0) ?? 0;
+	}
+	setDynamicWiggle(n: number) {
+		this.setAll((l) => (l.dynamic_wiggle = Math.min(200, Math.max(0, Math.round(n))) || undefined));
+	}
+	get dynamicSmoothen(): number {
+		return this.common((l) => l.dynamic_smoothen ?? 0) ?? 0;
+	}
+	setDynamicSmoothen(n: number) {
+		this.setAll((l) => (l.dynamic_smoothen = Math.min(100, Math.max(0, Math.round(n))) || undefined));
+	}
+	// strokeMode reflects which of Figma's mutually-exclusive stroke TYPES the selection uses:
+	// 'dynamic' (hand-drawn wobble), 'brush' (textured), else 'basic'. Drives the Stroke-settings
+	// tabs, which act as the type switcher.
+	get strokeMode(): 'basic' | 'dynamic' | 'brush' {
+		if (this.common((l) => (l.dynamic_wiggle ?? 0) > 0) === true) return 'dynamic';
+		if (this.common((l) => !!l.brush_name) === true) return 'brush';
+		return 'basic';
+	}
+	// setStrokeMode switches stroke TYPE like Figma's Basic/Dynamic/Brush tabs: it CLEARS the
+	// other types and seeds sensible defaults for the chosen one — so picking Dynamic shows a
+	// visible hand-drawn stroke immediately (Figma applies non-zero defaults the same way).
+	// Dynamic and Brush are center-only, so they reset the stroke Position to centre.
+	setStrokeMode(mode: 'basic' | 'dynamic' | 'brush') {
+		this.setAll((l) => {
+			if (mode === 'dynamic') {
+				l.brush_name = undefined;
+				l.brush_direction = undefined;
+				l.scatter_gap = undefined;
+				l.scatter_wiggle = undefined;
+				l.scatter_size = undefined;
+				if (!(l.dynamic_wiggle && l.dynamic_wiggle > 0)) {
+					l.dynamic_frequency = 50;
+					l.dynamic_wiggle = 100;
+					l.dynamic_smoothen = 80;
+				}
+				l.stroke_align = undefined; // center-only
+			} else if (mode === 'brush') {
+				l.dynamic_frequency = undefined;
+				l.dynamic_wiggle = undefined;
+				l.dynamic_smoothen = undefined;
+				if (!l.brush_name) l.brush_name = DEFAULT_BRUSH;
+				l.stroke_align = undefined; // center-only
+			} else {
+				l.dynamic_frequency = undefined;
+				l.dynamic_wiggle = undefined;
+				l.dynamic_smoothen = undefined;
+				l.brush_name = undefined;
+				l.brush_direction = undefined;
+				l.scatter_gap = undefined;
+				l.scatter_wiggle = undefined;
+				l.scatter_size = undefined;
+			}
+		});
 	}
 
 	// ── masking ("use as mask") ──────────────────────────────────────────────────
@@ -1044,7 +1407,9 @@ export class EditorStore {
 		if (layer.clip || !layer.group) return null;
 		const arr = this.layout.layers;
 		const [lo] = this.#groupSpan(layer.group);
-		if (lo < 0 || !arr[lo].clip) return null;
+		// A hidden stencil clips nothing (matches the Go renderer, which draws the masked
+		// run normally when the stencil is hidden) — so the preview shouldn't clip either.
+		if (lo < 0 || !arr[lo].clip || arr[lo].hidden) return null;
 		return arr.findIndex((l) => l.id === layer.id) > lo ? arr[lo] : null;
 	}
 
@@ -1222,19 +1587,32 @@ export class EditorStore {
 	}
 
 	// ── "edit object" (Figma's Enter) ────────────────────────────────────────────
-	// canEditObject: deep-edit is meaningful for a single vector/text/primitive — a
-	// path/text edits inline; a rect/ellipse flips to an editable vector first.
+	// editTarget: the layer "Edit object" acts on — the single selected editable
+	// layer (a path/text edits inline; a rect/ellipse flips to a vector first), or,
+	// when a whole group is selected (e.g. a boolean combine), its single text
+	// member — so the text inside a combined shape stays editable from the panel.
+	get editTarget(): Layer | null {
+		if (this.selectedIds.length === 1) {
+			const l = this.selected;
+			return l &&
+				(l.type === 'path' || l.type === 'text' || l.type === 'rect' || l.type === 'ellipse')
+				? l
+				: null;
+		}
+		const sel = this.selectedLayers;
+		const gid = sel[0]?.group;
+		if (gid && sel.length > 1 && sel.every((l) => l.group === gid)) {
+			const texts = sel.filter((l) => l.type === 'text');
+			if (texts.length === 1) return texts[0];
+		}
+		return null;
+	}
 	get canEditObject(): boolean {
-		const l = this.selected;
-		return (
-			this.selectedIds.length === 1 &&
-			!!l &&
-			(l.type === 'path' || l.type === 'text' || l.type === 'rect' || l.type === 'ellipse')
-		);
+		return !!this.editTarget;
 	}
 	editSelected() {
-		const l = this.selected;
-		if (l && this.selectedIds.length === 1) this.enterEdit(l.id);
+		const t = this.editTarget;
+		if (t) this.enterEdit(t.id);
 	}
 
 	// ── multi-selection editing (Figma: one inspector, "Mixed" when values differ) ──
@@ -1360,7 +1738,6 @@ export class EditorStore {
 		if (l.stroke_width) l.stroke_width = Math.max(0, Math.round(l.stroke_width * f * 10) / 10);
 		if (l.radius) l.radius = Math.max(0, Math.round(l.radius * f));
 		if (Array.isArray(l.corners)) l.corners = l.corners.map((c) => Math.max(0, Math.round(c * f))) as [number, number, number, number];
-		if (l.ring_width) l.ring_width = Math.max(0, Math.round(l.ring_width * f));
 		if (l.letter_spacing) l.letter_spacing = Math.round(l.letter_spacing * f);
 	}
 	// resizeW/resizeH set a new width/height across the selection (each layer from its

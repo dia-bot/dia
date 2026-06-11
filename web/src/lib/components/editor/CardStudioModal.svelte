@@ -6,7 +6,8 @@
 	// layout each time — Cancel always discards, Apply commits via onApply.
 	import { setContext, untrack, onMount } from 'svelte';
 	import { beforeNavigate, goto } from '$app/navigation';
-	import { fade } from 'svelte/transition';
+	import { fade, scale } from 'svelte/transition';
+	import { cubicOut } from 'svelte/easing';
 	import { EditorStore, EDITOR_CTX } from '$lib/layout/editor.svelte';
 	import type { Layout } from '$lib/layout/schema';
 	import { guildFonts } from '$lib/api';
@@ -58,6 +59,10 @@
 	let proceed: (() => void) | null = null; // what "leave" does once confirmed
 	let bypassGuard = false;
 
+	// Respect the OS "reduce motion" setting: skip the open/close pop when asked.
+	const reduceMotion =
+		typeof window !== 'undefined' && !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+
 	function requestClose() {
 		if (!isDirty()) {
 			onClose();
@@ -106,11 +111,11 @@
 	type="button"
 	aria-label="Close Card Studio"
 	onclick={requestClose}
-	transition:fade={{ duration: 120 }}
+	transition:fade={{ duration: reduceMotion ? 0 : 160 }}
 	class="fixed inset-0 z-40 cursor-default bg-black/65 backdrop-blur-sm"
 ></button>
 <div
-	transition:fade={{ duration: 120 }}
+	transition:scale={{ duration: reduceMotion ? 0 : 220, start: 0.96, opacity: 0, easing: cubicOut }}
 	class="fixed inset-3 z-50 overflow-hidden rounded-2xl border border-line-strong bg-bg shadow-2xl md:inset-6 lg:inset-8"
 >
 	<LayoutEditor {guildId} {extraVars} title="Card Studio">

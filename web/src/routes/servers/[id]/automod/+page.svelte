@@ -4,6 +4,7 @@
 	import { GuildStore, GUILD_CTX } from '$lib/guild.svelte';
 	import { api } from '$lib/api';
 	import Field from '$lib/components/Field.svelte';
+	import NumberField from '$lib/components/ui/NumberField.svelte';
 	import Toggle from '$lib/components/Toggle.svelte';
 	import Select from '$lib/components/Select.svelte';
 	import MultiSelect from '$lib/components/MultiSelect.svelte';
@@ -130,7 +131,7 @@
 			</label>
 
 			<Field label="Max mentions" hint="Messages with more mentions than this trigger the action. Set 0 to disable.">
-				<input class="input" type="number" min="0" bind:value={cfg.max_mentions} />
+				<NumberField min={0} bind:value={cfg.max_mentions} />
 			</Field>
 
 			<Field label="Banned words" hint="Type a word and press Enter to add it.">
@@ -166,7 +167,7 @@
 			</Field>
 			{#if cfg.action === 'timeout'}
 				<Field label="Timeout duration" hint="How long the member is timed out, in seconds.">
-					<input class="input" type="number" min="1" bind:value={cfg.timeout_seconds} />
+					<NumberField min={1} bind:value={cfg.timeout_seconds} />
 				</Field>
 			{/if}
 		</section>

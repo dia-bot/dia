@@ -391,8 +391,50 @@
 
 <style>
 	/* The studio uses the dashboard's own clean palette (white text on neutral
-	   charcoal surfaces, like the sidebar) — no custom colour overrides. Open/close
-	   motion lives on the modal container (a subtle fade), not here. */
+	   charcoal surfaces, like the sidebar) — no custom colour overrides. The modal
+	   container pops the whole studio in; the chrome below adds a short staggered
+	   reveal so the toolbar, canvas and rails settle in sequence (this also gives the
+	   standalone editor page an entrance). Disabled under reduce-motion. */
+	@media (prefers-reduced-motion: no-preference) {
+		.studio-bar {
+			animation: studio-bar-in 320ms cubic-bezier(0.16, 1, 0.3, 1) both;
+		}
+		.canvas-pit {
+			animation: studio-canvas-in 460ms cubic-bezier(0.16, 1, 0.3, 1) 70ms both;
+		}
+		.studio-rail {
+			/* opacity only — the rails already own a translate for the mobile drawer. */
+			animation: studio-fade-in 380ms ease 150ms both;
+		}
+	}
+	@keyframes studio-bar-in {
+		from {
+			opacity: 0;
+			transform: translateY(-8px);
+		}
+		to {
+			opacity: 1;
+			transform: none;
+		}
+	}
+	@keyframes studio-canvas-in {
+		from {
+			opacity: 0;
+			transform: translateY(10px) scale(0.995);
+		}
+		to {
+			opacity: 1;
+			transform: none;
+		}
+	}
+	@keyframes studio-fade-in {
+		from {
+			opacity: 0;
+		}
+		to {
+			opacity: 1;
+		}
+	}
 
 	/* Toolbar: a faint top sheen for depth (over bg-surface). */
 	.studio-bar {
