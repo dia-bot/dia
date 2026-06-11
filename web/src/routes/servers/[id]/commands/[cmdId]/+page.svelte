@@ -184,10 +184,65 @@
 			cooldown: d.cooldown,
 			variables: d.variables ?? [],
 			triggers: d.triggers ?? [{ kind: 'slash' }],
-			steps: d.steps ?? [],
-			scratch: d.scratch ?? [],
+			steps: migrateClickPaths(d.steps ?? []),
+			scratch: (d.scratch ?? []).map((ch) => migrateClickPaths(ch)),
 			ui_hints: d.ui_hints
 		};
+	}
+
+	// migrateClickPaths upgrades flows built before the click-router: a
+	// per-button wait_for chained inline becomes the hidden listener + switch
+	// cluster, so old flows render and behave exactly like new ones.
+	function migrateClickPaths(steps: Step[]): Step[] {
+		for (let i = 0; i < steps.length; i++) {
+			const st = steps[i];
+			if (st.then) st.then = migrateClickPaths(st.then);
+			if (st.else) st.else = migrateClickPaths(st.else);
+			if (st.default) st.default = migrateClickPaths(st.default);
+			if (st.on_error) st.on_error = migrateClickPaths(st.on_error);
+			for (const c of st.cases ?? []) c.do = migrateClickPaths(c.do);
+			for (const ec of st.on_error_cases ?? []) ec.do = migrateClickPaths(ec.do);
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any
+			const sp = (st.spec ?? {}) as any;
+			if (Array.isArray(sp.branches)) {
+				sp.branches = sp.branches.map((b: Step[]) => migrateClickPaths(b));
+			}
+
+			// The message's own buttons.
+			const suffixes = new Set<string>();
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any
+			for (const row of (sp.components ?? []) as { components: any[] }[]) {
+				for (const c of row.components ?? []) {
+					if (!c.custom_id_manual && c.custom_id_suffix) suffixes.add(c.custom_id_suffix);
+				}
+			}
+			if (suffixes.size === 0) continue;
+			const next = steps[i + 1];
+			if (!next || next.kind !== 'wait_for') continue;
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any
+			const wsp = (next.spec ?? {}) as any;
+			if ((wsp.trigger ?? 'component') !== 'component') continue;
+			if (!wsp.custom_id_suffix || !suffixes.has(wsp.custom_id_suffix)) continue;
+
+			// Legacy shape: [msg, wait(sfx), ...everything ran on the click].
+			const tail = steps.splice(i + 2);
+			steps.splice(i + 1, 1);
+			const wait = newStep('wait_for');
+			const into = wsp.into || 'click';
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any
+			const waitSpec: any = { trigger: 'component', into, timeout: wsp.timeout || '5m' };
+			if (wsp.from_user) waitSpec.from_user = wsp.from_user;
+			wait.spec = waitSpec;
+			const sw = newStep('switch');
+			sw.spec = { on: { lang: 'tmpl', src: `{{ .Vars.${into}.id }}` } };
+			sw.cases = [
+				{ when: { lang: 'tmpl', src: wsp.custom_id_suffix }, do: migrateClickPaths(tail) }
+			];
+			sw.default = [];
+			steps.splice(i + 1, 0, wait, sw);
+			i += 2; // continue after the cluster
+		}
+		return steps;
 	}
 
 	async function validate() {
