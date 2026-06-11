@@ -781,7 +781,10 @@ func validChannelType(t int) bool {
 func validateOptionFields(o CommandOption, path string, r *ValidationResult) {
 	bucket := optionKindBucket(o.Kind)
 
-	if len(o.Description) > 100 {
+	if strings.TrimSpace(o.Description) == "" {
+		r.fail(path+".description", "option_description_required",
+			"option descriptions are required by Discord")
+	} else if len(o.Description) > 100 {
 		r.fail(path+".description", "option_description_too_long",
 			"option description must be 1-100 chars (Discord limit)")
 	}
