@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { Dialog, Command } from 'bits-ui';
-	import { presentGuildsQuery } from '$lib/queries';
+	import { manageableGuildsQuery } from '$lib/queries';
 	import { Search, CornerDownLeft, Hash, ArrowRight } from 'lucide-svelte';
 
 	type Page = { label: string; path: string };
@@ -12,8 +12,13 @@
 		pages
 	}: { open?: boolean; serverId: string; pages: Page[] } = $props();
 
-	const guilds = presentGuildsQuery();
-	const otherServers = $derived((guilds.data ?? []).filter((g) => g.id !== serverId));
+	const guilds = manageableGuildsQuery();
+	// Other-server picker is for jumping between servers Dia is actually in —
+	// listing not-yet-added guilds here would be confusing because picking one
+	// just bounces you back to /servers to invite the bot.
+	const otherServers = $derived(
+		(guilds.data ?? []).filter((g) => g.id !== serverId && g.bot_present)
+	);
 
 	function go(href: string) {
 		open = false;
