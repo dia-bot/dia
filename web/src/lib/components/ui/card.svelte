@@ -1,0 +1,16 @@
+<script lang="ts">
+	import type { Snippet } from 'svelte';
+	import { cn } from '$lib/utils';
+
+	let {
+		class: cls,
+		children
+	}: {
+		class?: string;
+		children: Snippet;
+	} = $props();
+</script>
+
+<div class={cn('rounded-md border border-border bg-card text-card-foreground', cls)}>
+	{@render children()}
+</div>
