@@ -525,6 +525,8 @@ interface BrushOpts {
 	gap?: number;
 	wiggle?: number;
 	size?: number;
+	rotation?: number; // base mark rotation, degrees
+	angular?: number; // random per-mark rotation jitter, degrees
 	// particle budget — leave unset for canvas strokes (12000, matching the Go
 	// renderer exactly); the tiny picker previews pass a small cap instead
 	cap?: number;
@@ -709,6 +711,8 @@ function scatterMarkup(pts: BrushPt[], o: BrushOpts, closed: boolean): string {
 	if (r.pts.length < 2) return '';
 	const wig = ((o.wiggle ?? 0) / 100) * sw * 1.2;
 	const sizeJit = (o.size ?? 0) / 100;
+	const rotBase = ((o.rotation ?? 0) * Math.PI) / 180;
+	const angJit = ((o.angular ?? 0) * Math.PI) / 180;
 	const rng = newRng(11);
 	let cores = '',
 		parts = '';
@@ -730,7 +734,8 @@ function scatterMarkup(pts: BrushPt[], o: BrushOpts, closed: boolean): string {
 			let rad = def.prad * sw * (0.6 + 0.8 * rng()) * (1 - sizeJit * 0.85 * rng());
 			if (rad < 0.25) rad = 0.25;
 			if (def.form === 'fleck') {
-				const rot = theta + (rng() * 2 - 1) * 0.9;
+				let rot = theta + (rng() * 2 - 1) * 0.9 + rotBase;
+				if (angJit > 0) rot += (rng() * 2 - 1) * angJit;
 				const lw = rad * 1.9,
 					lh = rad * 0.7;
 				const cs = Math.cos(rot),
@@ -739,9 +744,11 @@ function scatterMarkup(pts: BrushPt[], o: BrushOpts, closed: boolean): string {
 			} else if (def.form === 'blob') {
 				const bn = 14;
 				const ph = rng() * 12;
+				let rot = rotBase;
+				if (angJit > 0) rot += (rng() * 2 - 1) * angJit;
 				let d = '';
 				for (let k = 0; k <= bn; k++) {
-					const a = (k / bn) * 2 * Math.PI;
+					const a = (k / bn) * 2 * Math.PI + rot;
 					const wob = 1 + 0.26 * (vnoise(41, ph + k * 0.55) * 2 - 1);
 					d += `${k === 0 ? 'M' : ' L'} ${F(x + Math.cos(a) * rad * wob)} ${F(y + Math.sin(a) * rad * wob)}`;
 				}

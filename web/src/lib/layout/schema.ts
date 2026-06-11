@@ -130,6 +130,27 @@ export const SIZE_PRESETS: SizePreset[] = [
 // A "fat" layer: common geometry + type-specific fields (only the ones relevant
 // to `type` are used). Pragmatic over a strict union — the editor switches on
 // `type` to decide which controls and drawing to apply.
+// ── Fill paints — Figma's paint stack ─────────────────────────────────────────
+// A layer's fill is a list of paints composited bottom→top, each independently
+// hideable with its own opacity: solid colour, four gradient types or an image.
+export type PaintType = 'solid' | 'linear' | 'radial' | 'angular' | 'diamond' | 'image';
+export type PaintFit = 'cover' | 'contain' | 'tile';
+export interface GradientStop {
+	pos: number; // 0..1 along the gradient line
+	color: string; // hex
+	alpha?: number; // 0..1 (default 1)
+}
+export interface Paint {
+	type: PaintType;
+	hidden?: boolean;
+	opacity?: number; // 0..1 (default 1)
+	color?: string; // solid
+	stops?: GradientStop[]; // gradients (2+)
+	angle?: number; // linear: CSS angle in degrees (0 = up, clockwise); angular: rotation
+	src?: string; // image fill URL (or {{template}})
+	fit?: PaintFit; // image: cover (Figma Fill) | contain (Fit) | tile (default cover)
+}
+
 export interface Layer {
 	id: string;
 	type: LayerType;
@@ -164,10 +185,12 @@ export interface Layer {
 	src?: string; // url or {user.avatar}
 	fit?: Fit;
 	// rect / ellipse / common
-	fill?: string; // hex (rect/ellipse/path fill)
+	fill?: string; // LEGACY single hex fill; superseded by `fills` when set
+	fills?: Paint[]; // Figma-style paint stack, BOTTOM → TOP (index 0 paints first)
 	radius?: number; // corner radius (rect / image / rounded avatar)
 	corners?: [number, number, number, number]; // independent corner radii [tl,tr,br,bl]; overrides `radius` when set (rect/image)
-	stroke_color?: string; // outline colour (rect / ellipse / path / image / text)
+	stroke_color?: string; // LEGACY single outline hex; superseded by `strokes` when set
+	strokes?: Paint[]; // Figma-style stroke paint stack, BOTTOM → TOP (like `fills`)
 	stroke_width?: number; // outline width in canvas px
 	stroke_align?: StrokeAlign; // stroke Position (inside/center/outside); default 'center'
 	stroke_style?: StrokeStyle; // 'dashed' draws dash/gap dashes (default 'solid')
@@ -186,6 +209,8 @@ export interface Layer {
 	scatter_gap?: number; // scatter: stamp spacing as a multiple of stroke weight (unset = brush preset)
 	scatter_wiggle?: number; // scatter: perpendicular position jitter %, 0..100
 	scatter_size?: number; // scatter: mark size jitter %, 0..100
+	scatter_rotation?: number; // scatter: base mark rotation, degrees (-180..180)
+	scatter_angular?: number; // scatter: random per-mark rotation jitter, degrees (0..180)
 	dynamic_frequency?: number; // hand-drawn wobble density, 0..100 (paths; default 0 = off)
 	dynamic_wiggle?: number; // hand-drawn wobble amplitude %, 0..200 (paths; default 0)
 	dynamic_smoothen?: number; // smooth the wobble, 0..100 (paths; default 0)
@@ -205,13 +230,18 @@ export interface Layer {
 
 export type BackgroundType = 'solid' | 'gradient' | 'image';
 export interface Background {
-	type: BackgroundType;
+	type: BackgroundType; // LEGACY type switch; superseded by `fills` when set
 	color?: string;
 	from?: string;
 	to?: string;
 	angle?: number;
 	image_url?: string;
-	blur?: number; // px
+	blur?: number; // px — blurs the whole composited background
+	// Figma-style paint stack for the canvas background — the SAME model as a
+	// layer's fill. Once set (even empty = no background) it supersedes the
+	// legacy type/color/from/to/image_url fields; the editor migrates a legacy
+	// background into `fills` on first edit.
+	fills?: Paint[];
 }
 
 // Metadata for a soft group, keyed by the group id used on layers. Membership and
@@ -265,7 +295,7 @@ export function newLayer(type: LayerType): Layer {
 	if (type === 'path') {
 		// Paths are built by the pen/pencil tools (see EditorStore.createPath); this
 		// is just a valid default for type-completeness.
-		return { ...base, name: 'Path', nodes: [], closed: false, fill: '', stroke_color: '#FFFFFF', stroke_width: 4, w: 1, h: 1 };
+		return { ...base, name: 'Path', nodes: [], closed: false, fill: '', stroke_color: '#FFFFFF', stroke_width: 1, w: 1, h: 1 };
 	}
 	// rect — solid, fully visible, sharp corners, no border (Figma's default shape)
 	return { ...base, name: 'Rectangle', fill: '#FFFFFF', radius: 0, opacity: 1, w: 400, h: 160 };
@@ -492,6 +522,77 @@ export function resolveText(s: string | undefined, vars: Record<string, string> 
 	let out = s ?? '';
 	for (const [k, v] of Object.entries(vars)) out = out.split(k).join(v);
 	return out;
+}
+
+// paintsOf normalizes a layer's fill to its paint stack: `fills` when present,
+// else the legacy single hex as one solid paint. [] = no fill.
+export function paintsOf(l: Layer): Paint[] {
+	if (l.fills && l.fills.length) return l.fills;
+	return l.fill ? [{ type: 'solid', color: l.fill }] : [];
+}
+
+// stackPrimary returns a representative solid hex for a paint stack: the topmost
+// visible paint's colour (a gradient contributes its first stop). '' = nothing.
+export function stackPrimary(ps: Paint[]): string {
+	for (let i = ps.length - 1; i >= 0; i--) {
+		const p = ps[i];
+		if (p.hidden) continue;
+		if (p.type === 'solid' && p.color) return p.color;
+		if (p.stops?.length) return p.stops[0].color;
+	}
+	return '';
+}
+
+// paintPrimary returns a representative solid hex for consumers that need ONE
+// colour (boolean composites, luminance masks, wobbled outlines).
+export function paintPrimary(l: Layer): string {
+	return stackPrimary(paintsOf(l));
+}
+
+// strokePaintsOf normalizes a layer's stroke to its paint stack: `strokes` when
+// present, else the legacy single stroke_color as one solid paint. An unset
+// colour keeps the renderers' historic white default. Only meaningful when the
+// layer actually has a stroke (stroke_width > 0).
+export function strokePaintsOf(l: Layer): Paint[] {
+	if (l.strokes && l.strokes.length) return l.strokes;
+	return [{ type: 'solid', color: l.stroke_color || '#FFFFFF' }];
+}
+
+// strokePrimary returns ONE representative stroke colour for consumers that
+// can't paint a stack (brush stamps, text outlines, arrowhead markers).
+export function strokePrimary(l: Layer): string {
+	return stackPrimary(strokePaintsOf(l));
+}
+
+// textPaintsOf normalizes a text layer's fill to a paint stack: `fills` when
+// present, else the legacy `color` as one solid paint.
+export function textPaintsOf(l: Layer): Paint[] {
+	if (l.fills && l.fills.length) return l.fills;
+	return l.color ? [{ type: 'solid', color: l.color }] : [];
+}
+
+// bgPaintsOf normalizes the canvas background to a paint stack: `fills` once set
+// (even empty — that means "no background"), else the legacy type fields mapped
+// to one equivalent paint. The Go renderer keeps a native legacy path, so this
+// mapping only has to match it visually (CSS gradient conventions on both ends).
+export function bgPaintsOf(b: Background): Paint[] {
+	if (b.fills) return b.fills;
+	if (b.type === 'image' || (!b.type && b.image_url)) {
+		return b.image_url ? [{ type: 'image', src: b.image_url, fit: 'cover' }] : [];
+	}
+	if (b.type === 'gradient' || (!b.type && (b.from || b.to))) {
+		return [
+			{
+				type: 'linear',
+				angle: b.angle ?? 0,
+				stops: [
+					{ pos: 0, color: b.from ?? '#000000' },
+					{ pos: 1, color: b.to ?? '#000000' }
+				]
+			}
+		];
+	}
+	return [{ type: 'solid', color: b.color || '#141417' }];
 }
 
 // resolveSrc maps {user.avatar} (and any future {tokens}) to a real URL for the

@@ -40,10 +40,12 @@ type Layer struct {
 	Fit string `json:"fit,omitempty"`
 
 	// rect / ellipse / common
-	Fill        string    `json:"fill,omitempty"`
+	Fill        string    `json:"fill,omitempty"`  // LEGACY single hex fill; superseded by Fills when set
+	Fills       []Paint   `json:"fills,omitempty"` // Figma-style paint stack, BOTTOM → TOP
 	Radius      float64   `json:"radius,omitempty"`
-	Corners     []float64 `json:"corners,omitempty"` // independent corner radii [tl,tr,br,bl]; overrides Radius when len==4
-	StrokeColor string    `json:"stroke_color,omitempty"`
+	Corners     []float64 `json:"corners,omitempty"`      // independent corner radii [tl,tr,br,bl]; overrides Radius when len==4
+	StrokeColor string    `json:"stroke_color,omitempty"` // LEGACY single outline hex; superseded by Strokes when set
+	Strokes     []Paint   `json:"strokes,omitempty"`      // Figma-style stroke paint stack, BOTTOM → TOP (like Fills)
 	StrokeWidth float64   `json:"stroke_width,omitempty"`
 	StrokeAlign string    `json:"stroke_align,omitempty"` // inside|center|outside (Figma stroke Position); default center
 	StrokeStyle string    `json:"stroke_style,omitempty"` // solid|dashed (default solid)
@@ -64,6 +66,8 @@ type Layer struct {
 	ScatterGap       float64 `json:"scatter_gap,omitempty"`       // scatter: stamp spacing × stroke weight (unset = brush preset)
 	ScatterWiggle    float64 `json:"scatter_wiggle,omitempty"`    // scatter: perpendicular position jitter % (0..100)
 	ScatterSize      float64 `json:"scatter_size,omitempty"`      // scatter: mark size jitter % (0..100)
+	ScatterRotation  float64 `json:"scatter_rotation,omitempty"`  // scatter: base mark rotation, degrees (-180..180)
+	ScatterAngular   float64 `json:"scatter_angular,omitempty"`   // scatter: random per-mark rotation jitter, degrees (0..180)
 	DynamicFrequency float64 `json:"dynamic_frequency,omitempty"` // hand-drawn wobble density 0..100 (0 = off)
 	DynamicWiggle    float64 `json:"dynamic_wiggle,omitempty"`    // wobble amplitude % 0..200
 	DynamicSmoothen  float64 `json:"dynamic_smoothen,omitempty"`  // wobble smoothing 0..100
@@ -103,6 +107,26 @@ type Effect struct {
 
 // PathNode is a bezier anchor with its two cubic control handles (absolute
 // canvas px). A corner node's handles equal the anchor.
+// GradientStop is one colour stop of a gradient paint.
+type GradientStop struct {
+	Pos   float64  `json:"pos"`             // 0..1 along the gradient line
+	Color string   `json:"color"`           // hex
+	Alpha *float64 `json:"alpha,omitempty"` // 0..1 (nil = 1)
+}
+
+// Paint is one entry of a layer's fill stack (Figma's paints): a solid colour,
+// one of four gradient types, or an image. Composited bottom→top.
+type Paint struct {
+	Type    string         `json:"type"` // solid | linear | radial | angular | diamond | image
+	Hidden  bool           `json:"hidden,omitempty"`
+	Opacity *float64       `json:"opacity,omitempty"` // 0..1 (nil = 1)
+	Color   string         `json:"color,omitempty"`   // solid
+	Stops   []GradientStop `json:"stops,omitempty"`   // gradients (2+)
+	Angle   float64        `json:"angle,omitempty"`   // linear: CSS degrees (0 = up, clockwise); angular: rotation
+	Src     string         `json:"src,omitempty"`     // image fill URL / template
+	Fit     string         `json:"fit,omitempty"`     // image: cover | contain | tile
+}
+
 type PathNode struct {
 	X   float64 `json:"x"`
 	Y   float64 `json:"y"`
@@ -117,15 +141,22 @@ type PathNode struct {
 	M string `json:"m,omitempty"`
 }
 
-// Background describes the canvas backdrop.
+// Background describes the canvas backdrop. Fills, once set by the editor (a
+// non-nil array; empty = "no background"), is the Figma-style paint stack and
+// supersedes the legacy Type/Color/From/To/ImageURL fields. Blur blurs the whole
+// composited background. Kept in sync with web/src/lib/layout/schema.ts.
 type Background struct {
-	Type     string  `json:"type"` // solid | gradient | image
+	Type     string  `json:"type"` // LEGACY: solid | gradient | image
 	Color    string  `json:"color,omitempty"`
 	From     string  `json:"from,omitempty"`
 	To       string  `json:"to,omitempty"`
 	Angle    float64 `json:"angle,omitempty"`
 	ImageURL string  `json:"image_url,omitempty"`
 	Blur     float64 `json:"blur,omitempty"`
+	// NO omitempty: an empty-but-set stack means "no background" and must
+	// survive a Go round-trip (feature configs embed Layout); nil ↔ null keeps
+	// legacy documents on the legacy fields.
+	Fills []Paint `json:"fills"`
 }
 
 // LayoutGroup is metadata for a soft group, keyed by Layer.Group id. Name
