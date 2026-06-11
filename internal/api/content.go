@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"regexp"
+	"sort"
 	"strconv"
 
 	"github.com/dia-bot/dia/internal/event"
@@ -280,8 +281,15 @@ func (s *Server) syncGuildCommands(ctx context.Context, gid string, gidInt int64
 }
 
 func buildSlashOptions(opts []cc.CommandOption) []*discordgo.ApplicationCommandOption {
-	out := make([]*discordgo.ApplicationCommandOption, 0, len(opts))
-	for _, o := range opts {
+	// Discord rejects registrations where a required option follows an optional
+	// one; sort stably so a stored out-of-order definition still syncs.
+	ordered := make([]cc.CommandOption, len(opts))
+	copy(ordered, opts)
+	sort.SliceStable(ordered, func(i, j int) bool {
+		return ordered[i].Required && !ordered[j].Required
+	})
+	out := make([]*discordgo.ApplicationCommandOption, 0, len(ordered))
+	for _, o := range ordered {
 		opt := &discordgo.ApplicationCommandOption{
 			Type:         slashOptKind(o.Kind),
 			Name:         o.Name,

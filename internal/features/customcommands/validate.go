@@ -40,6 +40,7 @@ func Validate(name string, def Definition) ValidationResult {
 
 	// Option name uniqueness + kind validation.
 	seenOpts := map[string]bool{}
+	sawOptional := false
 	for i, o := range def.Options {
 		path := fmt.Sprintf("options[%d]", i)
 		if !commandNamePattern.MatchString(o.Name) {
@@ -49,6 +50,15 @@ func Validate(name string, def Definition) ValidationResult {
 			r.fail(path+".name", "option_name_duplicate", "option names must be unique")
 		}
 		seenOpts[o.Name] = true
+		// Discord lists required options before optional ones; registration
+		// sorts them anyway, so flag the mismatch instead of failing.
+		if o.Required && sawOptional {
+			r.warn(path+".required", "option_required_after_optional",
+				"required options come before optional ones on Discord; they will be reordered at registration")
+		}
+		if !o.Required {
+			sawOptional = true
+		}
 		if !validOptionKind(o.Kind) {
 			r.fail(path+".kind", "option_kind_invalid", "unknown option kind: "+o.Kind)
 			continue
