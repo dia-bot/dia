@@ -1,8 +1,10 @@
-// Package templating is Dia's sandboxed template engine (YAGPDB-style): Go
-// text/template with a curated function map, a guild/member context, and hard
-// safety limits — an execution timeout, a capped output size, bounded loop
-// helpers, and a per-run action budget. It powers welcome/goodbye messages,
-// custom commands and any other place an admin writes dynamic text.
+// Package templating is Dia's sandboxed template engine: Go text/template
+// with a curated function map, a guild/member context, and hard safety
+// limits — an execution timeout, a capped output size and bounded loop
+// helpers. Templates are PURE: they read values and format strings, never
+// perform actions — side effects belong to custom-command steps. It powers
+// welcome/goodbye messages, custom commands and any other place an admin
+// writes dynamic text.
 package templating
 
 import (
@@ -17,7 +19,6 @@ import (
 const (
 	defaultMaxOutput = 4000                   // ~Discord message length
 	defaultTimeout   = 500 * time.Millisecond // per-render wall-clock budget
-	maxActions       = 5                      // side-effecting calls per render
 	maxListLen       = 1000                   // cap for seq/list helpers (bounds loops)
 )
 
@@ -62,20 +63,20 @@ type Context struct {
 	Guild   Guild
 	Channel Channel
 	Args    []string
+	// Error is populated inside an on_error subtree so the recovery
+	// branch's templates can dispatch on `.Error.Kind`, surface
+	// `.Error.Message`, etc. Outside an error scope it's zero-valued.
+	Error ErrorInfo
 }
 
-// ── Actions (the side-effecting surface; nil disables them) ──────────────────
-
-// Runtime is the gated action surface a render may call. The worker implements
-// it against the Discord client with permission checks; the engine enforces the
-// per-render action budget on top. Every method returns an error the template
-// can surface or ignore.
-type Runtime interface {
-	SendDM(userID, content string) error
-	SendChannelMessage(channelID, content string) error
-	AddRole(userID, roleID string) error
-	RemoveRole(userID, roleID string) error
-	AddReaction(channelID, messageID, emoji string) error
+// ErrorInfo mirrors customcommands.ErrorInfo for template consumption.
+// Kept here so the templating package stays leaf-level (no upward import).
+type ErrorInfo struct {
+	Kind      string
+	Message   string
+	Step      string
+	StepID    string
+	Retryable bool
 }
 
 // ── Read-only guild data (safe; the getRole/getChannel funcs use this) ────────
@@ -113,15 +114,14 @@ func New() *Engine {
 	return &Engine{maxOutput: defaultMaxOutput, timeout: defaultTimeout}
 }
 
-// Render executes src with data as the root. rt may be nil to disable actions;
-// lookup may be nil to disable getRole/getChannel. The returned string is the
-// produced output (possibly partial on error).
-func (e *Engine) Render(ctx context.Context, src string, data *Context, rt Runtime, lookup Lookup) (string, error) {
+// Render executes src with data as the root. lookup may be nil to disable
+// getRole/getChannel. The returned string is the produced output (possibly
+// partial on error).
+func (e *Engine) Render(ctx context.Context, src string, data *Context, lookup Lookup) (string, error) {
 	if src == "" {
 		return "", nil
 	}
-	actions := 0
-	tmpl, err := template.New("dia").Funcs(e.funcMap(rt, lookup, &actions)).Option("missingkey=zero").Parse(src)
+	tmpl, err := template.New("dia").Funcs(e.funcMap(lookup)).Option("missingkey=zero").Parse(src)
 	if err != nil {
 		return "", fmt.Errorf("template parse error: %w", err)
 	}

@@ -16,9 +16,9 @@ func sample() *Context {
 	}
 }
 
-func render(t *testing.T, src string, rt Runtime) (string, error) {
+func render(t *testing.T, src string) (string, error) {
 	t.Helper()
-	return New().Render(context.Background(), src, sample(), rt, nil)
+	return New().Render(context.Background(), src, sample(), nil)
 }
 
 type fakeLookup struct{}
@@ -51,7 +51,7 @@ func TestRenderBasics(t *testing.T) {
 		`{{title "hello there"}}`:                                  "Hello There",
 	}
 	for src, want := range cases {
-		got, err := render(t, src, nil)
+		got, err := render(t, src)
 		if err != nil {
 			t.Errorf("%q: unexpected error: %v", src, err)
 			continue
@@ -64,7 +64,7 @@ func TestRenderBasics(t *testing.T) {
 
 func TestOutputCapped(t *testing.T) {
 	// 4000-char cap: 5000 'x' must error.
-	_, err := render(t, `{{repeat 1000 "xxxxx"}}`, nil)
+	_, err := render(t, `{{repeat 1000 "xxxxx"}}`)
 	if err == nil {
 		t.Fatal("expected an output-too-long error, got nil")
 	}
@@ -72,23 +72,26 @@ func TestOutputCapped(t *testing.T) {
 
 func TestSeqIsBounded(t *testing.T) {
 	// seq is capped at maxListLen, so this can't loop unbounded; small output here.
-	got, err := render(t, `{{range seq 3}}{{.}}{{end}}`, nil)
+	got, err := render(t, `{{range seq 3}}{{.}}{{end}}`)
 	if err != nil || got != "012" {
 		t.Fatalf("seq render = %q, err %v", got, err)
 	}
 }
 
-func TestActionsDisabledByDefault(t *testing.T) {
-	_, err := render(t, `{{sendDM "1" "hi"}}`, nil)
-	if err == nil || !strings.Contains(err.Error(), "disabled") {
-		t.Fatalf("expected actions-disabled error, got %v", err)
+func TestNoActionFuncs(t *testing.T) {
+	// Templates are pure by design: side-effecting functions must not exist —
+	// actions are custom-command steps, never template calls.
+	for _, fn := range []string{"sendDM", "sendMessage", "addRole", "removeRole", "addReaction"} {
+		if _, err := render(t, `{{`+fn+` "1" "x"}}`); err == nil || !strings.Contains(err.Error(), "not defined") {
+			t.Errorf("%s: expected a not-defined parse error, got %v", fn, err)
+		}
 	}
 }
 
 func TestLookupFuncs(t *testing.T) {
 	out, err := New().Render(context.Background(),
 		`{{(getRole "Mod").mention}} in {{(getChannel "general").mention}}`,
-		sample(), nil, fakeLookup{})
+		sample(), fakeLookup{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -96,31 +99,11 @@ func TestLookupFuncs(t *testing.T) {
 		t.Fatalf("lookup render = %q", out)
 	}
 	// Unknown role → empty fields, no error.
-	if out, err := New().Render(context.Background(), `[{{(getRole "Nope").name}}]`, sample(), nil, fakeLookup{}); err != nil || out != "[]" {
+	if out, err := New().Render(context.Background(), `[{{(getRole "Nope").name}}]`, sample(), fakeLookup{}); err != nil || out != "[]" {
 		t.Fatalf("unknown role = %q, err %v", out, err)
 	}
 	// nil lookup → getRole errors (falls back upstream).
-	if _, err := New().Render(context.Background(), `{{getRole "Mod"}}`, sample(), nil, nil); err == nil {
+	if _, err := New().Render(context.Background(), `{{getRole "Mod"}}`, sample(), nil); err == nil {
 		t.Fatal("expected an error when lookup is nil")
-	}
-}
-
-type fakeRT struct{ dms, budget int }
-
-func (f *fakeRT) SendDM(string, string) error              { f.dms++; return nil }
-func (f *fakeRT) SendChannelMessage(string, string) error  { return nil }
-func (f *fakeRT) AddRole(string, string) error             { return nil }
-func (f *fakeRT) RemoveRole(string, string) error          { return nil }
-func (f *fakeRT) AddReaction(string, string, string) error { return nil }
-
-func TestActionBudget(t *testing.T) {
-	rt := &fakeRT{}
-	// 6 sendDM calls; the per-run budget (5) must reject the 6th with an error.
-	_, err := render(t, `{{range seq 6}}{{sendDM "1" "x"}}{{end}}`, rt)
-	if err == nil {
-		t.Fatal("expected an action-limit error on the 6th call")
-	}
-	if rt.dms != maxActions {
-		t.Fatalf("executed %d DMs, want %d", rt.dms, maxActions)
 	}
 }
