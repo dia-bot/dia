@@ -85,8 +85,12 @@
 	const pageTitle = $derived(flatPages.find((p) => p.path === currentSeg)?.label ?? 'Overview');
 
 	// A few builder pages want the whole content width (no centered column).
-	const fullWidthPages = ['welcome', 'editor'];
+	const fullWidthPages = ['welcome', 'editor', 'commands'];
 	const fullWidth = $derived(fullWidthPages.includes(currentSeg));
+	// And a few want to paint edge-to-edge — no outer px/py wrapper at all.
+	// Used by the dashboard surfaces that draw their own slab topbar / rows.
+	const flushPages = ['commands'];
+	const flush = $derived(flushPages.includes(currentSeg));
 
 	let paletteOpen = $state(false);
 	let navOpen = $state(false); // mobile drawer
@@ -232,34 +236,54 @@
 			class="relative min-w-0 flex-1 overflow-auto border-line bg-bg md:rounded-tl-2xl md:border-l md:border-t"
 		>
 			{#if store.error}
-				<div class="px-6 py-7">
-					<div class="mx-auto max-w-3xl rounded-xl border border-line bg-surface p-6 text-danger">
-						{store.error}
+				<div class="px-6 py-12">
+					<div
+						class="mx-auto flex max-w-lg flex-col items-center gap-3 rounded-xl border border-line bg-surface p-8 text-center"
+					>
+						<div
+							class="grid size-10 place-items-center rounded-full border border-line bg-bg text-danger"
+						>
+							!
+						</div>
+						<div>
+							<p class="text-[13px] font-semibold text-ink">Couldn't load this server</p>
+							<p class="mt-1 text-[12px] text-muted">{store.error}</p>
+						</div>
+						<div class="mt-1 flex gap-2">
+							<button
+								type="button"
+								onclick={() => store.load()}
+								class="h-7 rounded-md border border-line bg-bg px-2.5 text-[12px] font-medium text-ink hover:border-line-strong"
+							>
+								Retry
+							</button>
+							<a
+								href="/servers"
+								class="h-7 rounded-md bg-ink px-2.5 text-[12px] font-medium leading-7 text-bg hover:bg-ink/90"
+							>
+								Back to servers
+							</a>
+						</div>
 					</div>
 				</div>
 			{:else if store.loading && !store.detail}
-				<div class="mx-auto max-w-3xl px-6 py-7">
-					<div class="mb-6 space-y-2.5">
-						<div class="skeleton h-6 w-44"></div>
-						<div class="skeleton h-3.5 w-80 max-w-full"></div>
+				<div class="mx-auto flex max-w-md flex-col items-center gap-3 px-6 py-16 text-center">
+					<div class="flex items-center gap-2">
+						<span class="size-2 animate-pulse rounded-full bg-accent"></span>
+						<span class="font-mono text-[11px] uppercase tracking-[0.14em] text-faint">
+							Loading server…
+						</span>
 					</div>
-					<div class="grid gap-3 sm:grid-cols-2">
-						{#each { length: 6 } as _, i (i)}
-							<div class="rounded-card border border-line bg-surface p-5">
-								<div class="flex items-start justify-between">
-									<div class="skeleton h-10 w-10 rounded-xl"></div>
-									<div class="skeleton h-5 w-9 rounded-full"></div>
-								</div>
-								<div class="skeleton mt-4 h-4 w-28"></div>
-								<div class="skeleton mt-2.5 h-3 w-full"></div>
-								<div class="skeleton mt-1.5 h-3 w-2/3"></div>
-								<div class="skeleton mt-4 h-3 w-20"></div>
-							</div>
-						{/each}
-					</div>
+					<p class="font-mono text-[11px] text-muted">
+						If this takes more than a few seconds, the API may be down.
+					</p>
 				</div>
 			{:else}
-				<div class="{fullWidth ? 'max-w-none' : 'mx-auto max-w-3xl'} px-6 py-7">
+				<div
+					class="{fullWidth ? 'max-w-none' : 'mx-auto max-w-3xl'} {flush
+						? 'h-full'
+						: 'px-6 py-7'}"
+				>
 					{@render children()}
 				</div>
 			{/if}
