@@ -15,6 +15,9 @@
 	import { EXPR_SCOPE_CTX, type ExprScope } from '$lib/commands/expr-meta';
 
 	import { Dialog } from '$lib/components/ui';
+	import { fade, fly } from 'svelte/transition';
+	import { cubicOut } from 'svelte/easing';
+	import { dur } from '$lib/motion';
 
 	import ChevronLeft from 'lucide-svelte/icons/chevron-left';
 	import Send from 'lucide-svelte/icons/send';
@@ -23,6 +26,8 @@
 	import Braces from 'lucide-svelte/icons/braces';
 	import Plus from 'lucide-svelte/icons/plus';
 	import Trash2 from 'lucide-svelte/icons/trash-2';
+	import Check from 'lucide-svelte/icons/check';
+	import LoaderCircle from 'lucide-svelte/icons/loader-circle';
 
 	const store = getContext<GuildStore>(GUILD_CTX);
 	// Reactive: SvelteKit reuses this component on param-only navigations
@@ -50,6 +55,12 @@
 	let loadStartMs = $state(0);
 	let saving = $state(false);
 	let publishing = $state(false);
+	// Post-save feedback: the button flashes its success state, errors surface
+	// as a chip beside the actions instead of vanishing into the console.
+	let saveFlash = $state<'' | 'saved' | 'published'>('');
+	let saveError = $state('');
+	let flashTimer: ReturnType<typeof setTimeout> | null = null;
+	let errorTimer: ReturnType<typeof setTimeout> | null = null;
 	let selectedId = $state('');
 	let validation = $state<ValidationResult | null>(null);
 	let runs = $state<
@@ -268,9 +279,10 @@
 	});
 
 	async function save(thenPublish = false) {
-		if (!cmd) return;
+		if (!cmd || saving || publishing) return;
 		if (thenPublish) publishing = true;
 		else saving = true;
+		saveError = '';
 		try {
 			const r = await api.upsertCommand(store.id, {
 				id: cmd.id,
@@ -282,9 +294,23 @@
 			});
 			validation = r.validation;
 			await reload();
+			saveFlash = thenPublish ? 'published' : 'saved';
+			if (flashTimer) clearTimeout(flashTimer);
+			flashTimer = setTimeout(() => (saveFlash = ''), 1800);
+		} catch (e) {
+			saveError = e instanceof Error ? e.message : 'Save failed';
+			if (errorTimer) clearTimeout(errorTimer);
+			errorTimer = setTimeout(() => (saveError = ''), 5000);
 		} finally {
 			saving = false;
 			publishing = false;
+		}
+	}
+
+	function onShortcut(e: KeyboardEvent) {
+		if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
+			e.preventDefault();
+			if (dirty && !saving && !publishing) void save(false);
 		}
 	}
 
@@ -690,6 +716,8 @@
 	<title>{cmd ? `/${cmd.name}` : 'Command'} · {store.name} · Dia</title>
 </svelte:head>
 
+<svelte:window onkeydown={onShortcut} />
+
 {#if loadError}
 	<div class="flex h-full flex-col bg-bg">
 		<div class="flex h-12 shrink-0 items-center gap-3 border-b border-line bg-bg px-3">
@@ -819,8 +847,11 @@
 			{/if}
 
 			{#if dirty}
-				<span class="inline-flex shrink-0 items-center gap-1 font-mono text-[10px] uppercase tracking-[0.12em] text-muted">
-					<span class="size-1 rounded-full bg-ink/70"></span> unsaved
+				<span
+					transition:fade={{ duration: dur(150) }}
+					class="inline-flex shrink-0 items-center gap-1 font-mono text-[10px] uppercase tracking-[0.12em] text-muted"
+				>
+					<span class="size-1 animate-pulse rounded-full bg-ink/70"></span> unsaved
 				</span>
 			{/if}
 
@@ -851,43 +882,140 @@
 
 				<div class="mx-1 h-3.5 w-px bg-line"></div>
 
-				<!-- On/Off pill -->
+				{#if saveError}
+					<span
+						transition:fade={{ duration: dur(150) }}
+						class="inline-flex h-6 max-w-52 items-center gap-1 truncate rounded border border-danger/30 bg-danger/5 px-1.5 font-mono text-[10px] text-danger"
+						title={saveError}
+					>
+						<CircleAlert size={10} class="shrink-0" />
+						<span class="truncate">{saveError}</span>
+					</span>
+				{/if}
+
+				<!-- On/Off — a real switch: knob slides, the label rolls over -->
 				<button
 					type="button"
-					class="inline-flex h-6 items-center gap-1.5 rounded border border-line bg-bg/40 px-1.5 font-mono text-[10px] uppercase tracking-[0.12em] transition-colors hover:border-line-strong"
+					role="switch"
+					aria-checked={cmd.enabled}
+					aria-label="Command enabled"
+					class="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-full border py-0 pl-1.5 pr-2 transition-colors duration-200 {cmd.enabled
+						? 'border-success/35 bg-success/[0.06] hover:border-success/60'
+						: 'border-line bg-bg/40 hover:border-line-strong'}"
 					onclick={() => cmd && (cmd.enabled = !cmd.enabled)}
-					title={cmd.enabled ? 'Disable' : 'Enable'}
+					title={cmd.enabled
+						? 'Members can run this command'
+						: 'Hidden from members until turned on'}
 				>
-					<span class="size-1.5 rounded-full {cmd.enabled ? 'bg-success' : 'bg-faint/40'}"></span>
-					{cmd.enabled ? 'On' : 'Off'}
+					<span
+						class="relative h-4 w-7 shrink-0 rounded-full transition-colors duration-200 {cmd.enabled
+							? 'bg-success/80'
+							: 'bg-line-strong'}"
+					>
+						<span
+							class="absolute left-0.5 top-0.5 size-3 rounded-full bg-white shadow-sm transition-transform duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none {cmd.enabled
+								? 'translate-x-3'
+								: ''}"
+						></span>
+					</span>
+					<span
+						class="relative h-3 w-[22px] overflow-hidden text-left font-mono text-[10px] font-medium uppercase leading-3 tracking-[0.12em]"
+					>
+						<span
+							class="absolute inset-0 transition-[opacity,transform] duration-200 motion-reduce:transition-none {cmd.enabled
+								? 'translate-y-0 text-success opacity-100'
+								: '-translate-y-2 opacity-0'}"
+						>
+							On
+						</span>
+						<span
+							class="absolute inset-0 transition-[opacity,transform] duration-200 motion-reduce:transition-none {cmd.enabled
+								? 'translate-y-2 opacity-0'
+								: 'translate-y-0 text-faint opacity-100'}"
+						>
+							Off
+						</span>
+					</span>
 				</button>
 
 				{#if dirty}
 					<button
 						type="button"
-						class="inline-flex h-7 items-center rounded-md px-2 text-[13px] font-medium text-muted hover:text-ink"
+						in:fly={{ x: 8, duration: dur(180), easing: cubicOut }}
+						out:fade={{ duration: dur(120) }}
+						class="inline-flex h-7 items-center rounded-md px-2 text-[13px] font-medium text-muted transition-colors hover:text-ink"
 						onclick={reset}
 						disabled={saving || publishing}
 					>
 						Reset
 					</button>
 				{/if}
+
+				<!-- Save morphs through its states: idle, spinner, saved flash -->
 				<button
 					type="button"
-					class="inline-flex h-7 items-center rounded-md border border-line bg-bg px-2.5 text-[13px] font-medium text-ink transition-colors hover:border-line-strong disabled:opacity-50"
+					class="inline-flex h-7 w-[76px] items-center justify-center rounded-md border px-2 text-[13px] font-medium transition-[border-color,background,color,opacity] duration-200 {saveFlash ===
+						'saved' && !dirty
+						? 'border-success/40 bg-success/10 text-success'
+						: 'border-line bg-bg text-ink hover:border-line-strong disabled:opacity-50'}"
 					onclick={() => save(false)}
 					disabled={saving || publishing || !dirty}
 				>
-					{saving ? 'Saving' : 'Save'}
+					{#if saving}
+						<span
+							in:fade={{ duration: dur(120) }}
+							class="inline-flex items-center gap-1.5"
+						>
+							<LoaderCircle size={12} class="animate-spin" />
+							Saving
+						</span>
+					{:else if saveFlash === 'saved' && !dirty}
+						<span
+							in:fly={{ y: 6, duration: dur(200), easing: cubicOut }}
+							class="inline-flex items-center gap-1.5"
+						>
+							<Check size={12} />
+							Saved
+						</span>
+					{:else}
+						<span in:fade={{ duration: dur(120) }}>Save</span>
+					{/if}
 				</button>
+
 				<button
 					type="button"
-					class="inline-flex h-7 items-center gap-1.5 rounded-md bg-ink px-2.5 text-[13px] font-medium text-bg transition-opacity hover:opacity-90 disabled:opacity-40"
+					class="inline-flex h-7 w-[100px] items-center justify-center rounded-md px-2 text-[13px] font-medium transition-[background,color,opacity] duration-200 {saveFlash ===
+						'published'
+						? 'bg-success/15 text-success'
+						: 'bg-ink text-bg hover:opacity-90 disabled:opacity-40'}"
 					onclick={() => save(true)}
 					disabled={publishing || (validation && !validation.ok) || false}
 				>
-					<Send size={11} />
-					{publishing ? 'Publishing' : 'Publish'}
+					{#if publishing}
+						<span
+							in:fade={{ duration: dur(120) }}
+							class="inline-flex items-center gap-1.5"
+						>
+							<LoaderCircle size={12} class="animate-spin" />
+							Publishing
+						</span>
+					{:else if saveFlash === 'published'}
+						<span
+							in:fly={{ y: 6, duration: dur(200), easing: cubicOut }}
+							class="inline-flex items-center gap-1.5"
+						>
+							<Check size={12} />
+							Published
+						</span>
+					{:else}
+						<span
+							in:fade={{ duration: dur(120) }}
+							class="inline-flex items-center gap-1.5"
+						>
+							<Send size={11} />
+							Publish
+						</span>
+					{/if}
 				</button>
 			</div>
 		</header>
