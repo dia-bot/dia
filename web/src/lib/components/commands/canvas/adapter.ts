@@ -384,7 +384,7 @@ export function treeToGraph(
 
 			if (prevId !== '') {
 				edges.push({
-					id: `${prevId}__${edgeHandle ?? 'out'}__${step.id}`,
+					id: `e-${step.id}`,
 					source: prevId,
 					sourceHandle: edgeHandle,
 					target: step.id,
@@ -485,7 +485,7 @@ export function treeToGraph(
 					data: { step, kind: 'error_router', stepPath, ownerId: step.id }
 				});
 				edges.push({
-					id: `${step.id}__on_error__${rid}`,
+					id: `e-${rid}`,
 					source: step.id,
 					sourceHandle: 'on_error',
 					target: rid,

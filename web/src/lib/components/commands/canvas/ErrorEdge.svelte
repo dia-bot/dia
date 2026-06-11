@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { BaseEdge, EdgeLabel, getBezierPath, type EdgeProps } from '@xyflow/svelte';
+	import { tweenedCoords } from './path-tween.svelte';
 
 	let {
 		id,
@@ -13,8 +14,19 @@
 		style
 	}: EdgeProps = $props();
 
+	const coords = tweenedCoords(
+		() => id,
+		() => ({ sx: sourceX, sy: sourceY, tx: targetX, ty: targetY })
+	);
 	const pathInfo = $derived(
-		getBezierPath({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition })
+		getBezierPath({
+			sourceX: coords.current.sx,
+			sourceY: coords.current.sy,
+			targetX: coords.current.tx,
+			targetY: coords.current.ty,
+			sourcePosition,
+			targetPosition
+		})
 	);
 	const path = $derived(pathInfo[0]);
 	const labelX = $derived(pathInfo[1]);
