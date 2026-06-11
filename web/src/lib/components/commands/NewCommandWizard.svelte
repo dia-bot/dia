@@ -15,7 +15,7 @@
 		type Step
 	} from '$lib/commands/types';
 	import SlashCommandPreview from './SlashCommandPreview.svelte';
-	import PropertiesEditor from './PropertiesEditor.svelte';
+	import PropertiesStudio from './PropertiesStudio.svelte';
 	import Toggle from '$lib/components/Toggle.svelte';
 	import { Dialog } from '$lib/components/ui';
 	import { fly } from 'svelte/transition';
@@ -56,7 +56,7 @@
 	let creating = $state(false);
 	let createError = $state('');
 
-	let propsEditor = $state<PropertiesEditor | null>(null);
+	let propsEditor = $state<PropertiesStudio | null>(null);
 
 	const NAME_RE = /^[a-z0-9_-]{1,32}$/;
 	const nameValid = $derived(NAME_RE.test(name));
@@ -253,20 +253,11 @@
 					<SlashCommandPreview {name} {description} {options} />
 				</div>
 			{:else if step === 1}
-				<div class="space-y-4">
-					<p class="text-[12px] leading-relaxed text-muted">
-						Properties are the inputs members fill in after typing
-						<code class="rounded bg-surface px-1 font-mono text-[11px] text-ink"
-							>/{name || 'command'}</code
-						>
-						— each one is a typed field Discord renders natively. Read them in steps as
-						<code class="rounded bg-surface px-1 font-mono text-[11px] text-ink"
-							>{'{input.name}'}</code
-						>.
-					</p>
-					<SlashCommandPreview {name} {description} {options} />
-					<PropertiesEditor
+				<div class="h-[520px] max-h-[54vh] overflow-hidden rounded-xl border border-line">
+					<PropertiesStudio
 						bind:this={propsEditor}
+						{name}
+						{description}
 						{options}
 						onChange={(next) => (options = next)}
 					/>
