@@ -51,6 +51,7 @@ export type NodeData = {
 	category?: string; // step category label ("Reply", "Discord", "Flow", etc.)
 	endsHere?: boolean; // step.kind is 'exit' or 'fail' (terminates this branch)
 	ownerId?: string; // error-router nodes: the step the handlers belong to
+	clickTarget?: boolean; // reached via a button's on-click line (enters left)
 };
 
 export type Slot =
@@ -405,6 +406,11 @@ export function treeToGraph(
 						targetStepPath: stepPath
 					}
 				});
+				if (clickWait) {
+					// The line enters from the left — the node swaps its entry
+					// dot so no free-floating dot sits on top.
+					(nodes[nodes.length - 1].data as Record<string, unknown>).clickTarget = true;
+				}
 			}
 
 			// Recurse into branches. Each branch produces an independent chain

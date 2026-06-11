@@ -39,14 +39,18 @@
 		type="target"
 		position={Position.Top}
 		id="in"
-		class="!size-2.5 !border-2 !border-card !bg-muted-foreground/70 hover:!bg-foreground"
+		class="!size-2.5 !border-2 !border-card !bg-muted-foreground/70 hover:!bg-foreground {data.clickTarget
+			? '!opacity-0'
+			: ''}"
 	/>
 	<Handle
 		type="target"
 		position={Position.Left}
 		id="in-left"
 		style="top: 18px"
-		class="!size-1.5 !border !border-card !bg-muted-foreground/40 !opacity-0"
+		class="!size-2 !border-2 !border-card !bg-muted-foreground/70 {data.clickTarget
+			? ''
+			: '!opacity-0'}"
 	/>
 
 	<div
