@@ -156,7 +156,7 @@
 			const all: string[] = [];
 			for (const r of rows) for (const c of r.components ?? []) if (c.custom_id_suffix) all.push(c.custom_id_suffix);
 			const idx = Math.max(0, all.indexOf(sfx));
-			return { x: x + 360, y: y + 60 + idx * 180 };
+			return { x: x + 400, y: y + idx * 180 };
 		}
 		if (h.startsWith('arm-')) {
 			// Error-router arms fan out to the right, staggered per arm.

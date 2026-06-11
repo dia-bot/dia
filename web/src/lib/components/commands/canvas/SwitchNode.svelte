@@ -49,6 +49,13 @@
 		id="in"
 		class="!size-2.5 !border-2 !border-card !bg-muted-foreground/70 hover:!bg-foreground"
 	/>
+	<Handle
+		type="target"
+		position={Position.Left}
+		id="in-left"
+		style="top: 18px"
+		class="!size-1.5 !border !border-card !bg-muted-foreground/40 !opacity-0"
+	/>
 
 	<div
 		class="flex items-center gap-2 rounded-t-xl border-b border-border/50 bg-gradient-to-r from-foreground/[0.05] to-transparent px-2.5 py-1.5"

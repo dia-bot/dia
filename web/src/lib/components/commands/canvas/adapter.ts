@@ -387,6 +387,9 @@ export function treeToGraph(
 					source: prevId,
 					sourceHandle: edgeHandle,
 					target: step.id,
+					// Click paths run left-to-right: enter the action card from
+					// its left edge so the line and label never hide behind it.
+					targetHandle: clickWait ? 'in-left' : undefined,
 					type: edgeType,
 					label: edgeLabel,
 					data: {
