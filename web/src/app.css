@@ -1,4 +1,5 @@
 @import 'tailwindcss';
+@import '@xyflow/svelte/dist/style.css';
 
 /* ─────────────────────────────────────────────────────────────
    Dia design system — clean, dark, near-monochrome (Cursor /
@@ -44,6 +45,56 @@
 	/* Page container width — the one knob for overall site width.
 	   Used via `max-w-page` on every section/nav/footer wrapper. */
 	--container-page: 96rem; /* 1536px */
+
+	/* ── shadcn-svelte semantic tokens (zinc dark) ─────────────────
+	   These power the content-area UI primitives in lib/components/ui/.
+	   They sit alongside the legacy charcoal/rose tokens above; the
+	   sidebar + header still use those. Anything inside the work surface
+	   uses these shadcn semantic ones for a consistent neutral look —
+	   no color accent in content, near-monochrome with hairlines.
+	   Values are HSL triplets so they compose with `hsl(var(--...))`. */
+	--background: 240 6% 4%;
+	--foreground: 0 0% 98%;
+	--card: 240 5% 6%;
+	--card-foreground: 0 0% 98%;
+	--popover: 240 6% 7%;
+	--popover-foreground: 0 0% 98%;
+	--primary: 0 0% 98%;
+	--primary-foreground: 240 6% 6%;
+	--secondary: 240 4% 13%;
+	--secondary-foreground: 0 0% 98%;
+	--muted: 240 4% 13%;
+	--muted-foreground: 240 5% 64%;
+	--accent: 240 4% 13%;
+	--accent-foreground: 0 0% 98%;
+	--destructive: 0 75% 55%;
+	--destructive-foreground: 0 0% 98%;
+	--border: 240 5% 14%;
+	--input: 240 5% 14%;
+	--ring: 240 5% 64%;
+	--radius: 0.5rem;
+
+	/* Tailwind utility class colors — `bg-background`, `text-foreground`,
+	   `border-border` etc. resolve via these. */
+	--color-background: hsl(var(--background));
+	--color-foreground: hsl(var(--foreground));
+	--color-card: hsl(var(--card));
+	--color-card-foreground: hsl(var(--card-foreground));
+	--color-popover: hsl(var(--popover));
+	--color-popover-foreground: hsl(var(--popover-foreground));
+	--color-primary: hsl(var(--primary));
+	--color-primary-foreground: hsl(var(--primary-foreground));
+	--color-secondary: hsl(var(--secondary));
+	--color-secondary-foreground: hsl(var(--secondary-foreground));
+	--color-muted-bg: hsl(var(--muted));
+	--color-muted-foreground: hsl(var(--muted-foreground));
+	--color-accent-bg: hsl(var(--accent));
+	--color-accent-foreground: hsl(var(--accent-foreground));
+	--color-destructive: hsl(var(--destructive));
+	--color-destructive-foreground: hsl(var(--destructive-foreground));
+	--color-border: hsl(var(--border));
+	--color-input: hsl(var(--input));
+	--color-ring: hsl(var(--ring));
 }
 
 * {
@@ -241,9 +292,62 @@ body {
 		);
 		animation: skeleton-sweep 1.5s ease-in-out infinite;
 	}
+	/* Shadcn-flavored shimmer used by the editor loading state. */
+	.shimmer {
+		position: relative;
+		overflow: hidden;
+		background: hsl(var(--secondary));
+		border-radius: 6px;
+	}
+	.shimmer::after {
+		content: '';
+		position: absolute;
+		inset: 0;
+		transform: translateX(-100%);
+		background: linear-gradient(
+			90deg,
+			transparent,
+			hsl(var(--foreground) / 0.07),
+			transparent
+		);
+		animation: skeleton-sweep 1.6s ease-in-out infinite;
+	}
+	/* Tiny three-dot bouncing loader (Linear-style). */
+	.dots-loader {
+		display: inline-flex;
+		gap: 4px;
+		align-items: center;
+	}
+	.dots-loader > span {
+		width: 4px;
+		height: 4px;
+		border-radius: 9999px;
+		background: hsl(var(--foreground) / 0.55);
+		animation: dots-bounce 1.1s ease-in-out infinite;
+	}
+	.dots-loader > span:nth-child(2) {
+		animation-delay: 0.15s;
+	}
+	.dots-loader > span:nth-child(3) {
+		animation-delay: 0.3s;
+	}
+}
+@keyframes dots-bounce {
+	0%, 80%, 100% {
+		opacity: 0.3;
+		transform: translateY(0);
+	}
+	40% {
+		opacity: 1;
+		transform: translateY(-3px);
+	}
 }
 @media (prefers-reduced-motion: reduce) {
-	.skeleton::after {
+	.skeleton::after,
+	.shimmer::after {
+		animation: none;
+	}
+	.dots-loader > span {
 		animation: none;
 	}
 }
@@ -337,6 +441,12 @@ body {
 	}
 	.dialog-content {
 		will-change: transform, opacity;
+		/* Centering lives on `transform` — the same property panel-in/out
+		   animate — NEVER on translate-x/y utilities: Tailwind v4 compiles
+		   those to the independent `translate` property, which would stack
+		   with the animation's translate(-50%,-50%) and shove the panel to
+		   the top-left for the duration of the animation. */
+		transform: translate(-50%, -50%);
 	}
 	.dialog-content[data-state='open'] {
 		animation: panel-in 220ms cubic-bezier(0.16, 1, 0.3, 1);
@@ -364,6 +474,18 @@ body.is-scrubbing * {
 	user-select: none !important;
 }
 
+/* Native number-input spinners are never shown — every numeric field renders
+   its own steppers (NumberField) or scrub affordance (studio fields). */
+input[type='number']::-webkit-outer-spin-button,
+input[type='number']::-webkit-inner-spin-button {
+	-webkit-appearance: none;
+	margin: 0;
+}
+input[type='number'] {
+	-moz-appearance: textfield;
+	appearance: textfield;
+}
+
 /* Thin, unobtrusive scrollbars */
 ::-webkit-scrollbar {
 	width: 10px;
@@ -373,4 +495,63 @@ body.is-scrubbing * {
 	background: var(--color-line-strong);
 	border-radius: 999px;
 	border: 3px solid var(--color-bg);
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Canvas motion tokens — used by the flow editor's nodes/edges.
+   ───────────────────────────────────────────────────────────── */
+:root {
+	--canvas-ease: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes canvas-node-enter {
+	from {
+		opacity: 0;
+		transform: translateY(4px) scale(0.985);
+	}
+	to {
+		opacity: 1;
+		transform: none;
+	}
+}
+
+@keyframes canvas-select-pulse {
+	from {
+		box-shadow: 0 0 0 0 hsl(var(--foreground) / 0.4);
+	}
+	to {
+		box-shadow: 0 0 0 6px hsl(var(--foreground) / 0);
+	}
+}
+
+@keyframes connect-dash {
+	to {
+		stroke-dashoffset: -16;
+	}
+}
+
+@keyframes drop-breathe {
+	0%,
+	100% {
+		opacity: 0.6;
+	}
+	50% {
+		opacity: 1;
+	}
+}
+
+/* While the user is mid-drag, kill node position transitions so the cursor
+   stays 1:1. FlowInner toggles `.rf-dragging` on the canvas root via
+   onnodedragstart/onnodedragstop. */
+:where(.canvas-root.rf-dragging) .svelte-flow__node {
+	transition: none !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.svelte-flow__node,
+	.svelte-flow__edge .svelte-flow__edge-path,
+	.svelte-flow__connectionline {
+		animation: none !important;
+		transition: none !important;
+	}
 }
