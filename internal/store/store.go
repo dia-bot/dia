@@ -27,6 +27,9 @@ type Store struct {
 	Moderation     *ModRepo
 	ReactionRoles  *ReactionRoleRepo
 	CustomCommands *CustomCommandRepo
+	CommandRuns    *CommandRunRepo
+	FeatureKV      *FeatureKVRepo
+	ImageTemplates *CommandImageTemplateRepo
 	Audit          *AuditRepo
 	Uploads        *GuildUploadRepo
 	Subscriptions  *SubscriptionRepo
@@ -63,6 +66,9 @@ func Open(ctx context.Context, cfg config.PostgresConfig, log *slog.Logger) (*St
 	s.Moderation = &ModRepo{pool: pool}
 	s.ReactionRoles = &ReactionRoleRepo{pool: pool}
 	s.CustomCommands = &CustomCommandRepo{pool: pool}
+	s.CommandRuns = &CommandRunRepo{pool: pool}
+	s.FeatureKV = &FeatureKVRepo{pool: pool}
+	s.ImageTemplates = &CommandImageTemplateRepo{pool: pool}
 	s.Audit = &AuditRepo{pool: pool}
 	s.Uploads = &GuildUploadRepo{pool: pool}
 	s.Subscriptions = &SubscriptionRepo{pool: pool}
@@ -73,10 +79,30 @@ func Open(ctx context.Context, cfg config.PostgresConfig, log *slog.Logger) (*St
 
 // Migrate applies all pending migrations using goose. It opens a transient
 // database/sql handle from the pool (goose requires one) and takes a Postgres
-// advisory lock so only one instance migrates in a multi-replica deploy.
+// session-level advisory lock so only one instance migrates at a time — the
+// worker and api both call this on startup, and without the lock concurrent
+// CREATE TABLE statements race in the pg_type catalog.
 func (s *Store) Migrate(ctx context.Context, log *slog.Logger) error {
 	db := stdlib.OpenDBFromPool(s.Pool)
 	defer db.Close()
+
+	// Pin a single connection for the advisory lock — pg_advisory_lock is
+	// session-scoped, so the unlock has to land on the same connection that
+	// took it.
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("acquire migration conn: %w", err)
+	}
+	defer conn.Close()
+
+	// Arbitrary but stable key (high+low halves of bigint("DIA-MIGR")).
+	const migrationLockKey int64 = 0x4449414d49475200
+	if _, err := conn.ExecContext(ctx, "SELECT pg_advisory_lock($1)", migrationLockKey); err != nil {
+		return fmt.Errorf("take migration lock: %w", err)
+	}
+	defer func() {
+		_, _ = conn.ExecContext(context.Background(), "SELECT pg_advisory_unlock($1)", migrationLockKey)
+	}()
 
 	if err := goose.SetDialect("postgres"); err != nil {
 		return fmt.Errorf("goose dialect: %w", err)
