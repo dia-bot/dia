@@ -502,7 +502,6 @@ export function newStep(kind: string): Step {
 			step.spec = { action: 'note', detail: { lang: 'tmpl', src: '' } };
 			break;
 		case 'defer_reply':
-		case 'modal_open':
 		default:
 			step.spec = {};
 	}
