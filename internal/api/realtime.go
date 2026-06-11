@@ -23,11 +23,13 @@ func (s *Server) handleRealtime(c *gin.Context) {
 		fail(c, http.StatusForbidden, "forbidden")
 		return
 	}
-	if idInt, ok := event.ParseID(gid); ok {
-		if _, err := s.store.Guilds.Get(c.Request.Context(), idInt); err != nil {
-			fail(c, http.StatusNotFound, "Dia is not in this server")
-			return
-		}
+	if _, ok := event.ParseID(gid); !ok {
+		fail(c, http.StatusBadRequest, "invalid guild id")
+		return
+	}
+	if !s.botInGuild(c.Request.Context(), gid) {
+		fail(c, http.StatusNotFound, "Dia is not in this server")
+		return
 	}
 	conn, err := s.upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {

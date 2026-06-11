@@ -8,6 +8,7 @@ import (
 	"strconv"
 
 	"github.com/dia-bot/dia/internal/event"
+	cc "github.com/dia-bot/dia/internal/features/customcommands"
 	"github.com/dia-bot/dia/internal/store"
 	"github.com/dia-bot/dia/pkg/discordgo"
 	"github.com/gin-gonic/gin"
@@ -89,7 +90,7 @@ func (s *Server) handleDeleteReward(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
-// ── Custom commands ──────────────────────────────────────────
+// ── Custom commands (v2 — programmable Step[] tree) ─────────
 
 var commandNameRe = regexp.MustCompile(`^[a-z0-9_-]{1,32}$`)
 
@@ -102,19 +103,33 @@ func (s *Server) handleListCommands(c *gin.Context) {
 	}
 	out := make([]gin.H, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, gin.H{
-			"id": r.ID, "name": r.Name, "description": r.Description,
-			"enabled": r.Enabled, "response": json.RawMessage(r.Response),
-		})
+		out = append(out, summarizeCommand(r))
 	}
 	c.JSON(http.StatusOK, gin.H{"commands": out})
 }
 
+func (s *Server) handleGetCommand(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("cid"), 10, 64)
+	if err != nil {
+		fail(c, http.StatusBadRequest, "invalid id")
+		return
+	}
+	gidInt, _ := event.ParseID(guildID(c))
+	cmd, err := s.store.CustomCommands.Get(c.Request.Context(), gidInt, id)
+	if err != nil {
+		fail(c, http.StatusNotFound, "not found")
+		return
+	}
+	c.JSON(http.StatusOK, fullCommand(cmd))
+}
+
 type upsertCommandReq struct {
+	ID          int64           `json:"id,omitempty"`
 	Name        string          `json:"name"`
 	Description string          `json:"description"`
 	Enabled     bool            `json:"enabled"`
-	Response    json.RawMessage `json:"response"`
+	Status      string          `json:"status,omitempty"`
+	Definition  json.RawMessage `json:"definition"`
 }
 
 func (s *Server) handleUpsertCommand(c *gin.Context) {
@@ -130,18 +145,74 @@ func (s *Server) handleUpsertCommand(c *gin.Context) {
 	if req.Description == "" {
 		req.Description = "Custom command"
 	}
+	var def cc.Definition
+	if len(req.Definition) > 0 {
+		if err := json.Unmarshal(req.Definition, &def); err != nil {
+			fail(c, http.StatusBadRequest, "invalid definition json")
+			return
+		}
+	}
+	result := cc.Validate(req.Name, def)
+	if !result.OK {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "validation failed", "validation": result})
+		return
+	}
+
 	gid := guildID(c)
 	gidInt, _ := event.ParseID(gid)
-	if _, err := s.store.CustomCommands.Upsert(c.Request.Context(), store.CustomCommand{
-		GuildID: gidInt, Name: req.Name, Description: req.Description,
-		Response: req.Response, Enabled: req.Enabled,
-	}); err != nil {
+	row := store.CustomCommand{
+		ID:            req.ID,
+		GuildID:       gidInt,
+		Name:          req.Name,
+		Description:   req.Description,
+		Enabled:       req.Enabled,
+		Status:        firstNonEmpty(req.Status, string(cc.StatusDraft)),
+		Version:       1,
+		RequiresDefer: result.RequiresDefer,
+		Definition:    req.Definition,
+	}
+	// If the row already exists keep its version and bump on publish only.
+	if req.ID != 0 {
+		if existing, err := s.store.CustomCommands.Get(c.Request.Context(), gidInt, req.ID); err == nil {
+			row.Version = existing.Version
+			if row.Status == string(cc.StatusPublished) && existing.Status != string(cc.StatusPublished) {
+				row.Version = existing.Version + 1
+			}
+		}
+	}
+	saved, err := s.store.CustomCommands.Upsert(c.Request.Context(), row)
+	if err != nil {
 		fail(c, http.StatusInternalServerError, "could not save command")
 		return
 	}
+	if saved.Status == string(cc.StatusPublished) {
+		if err := s.store.CustomCommands.PublishVersion(c.Request.Context(), store.CustomCommandVersion{
+			CommandID:  saved.ID,
+			Version:    saved.Version,
+			Definition: saved.Definition,
+		}); err != nil {
+			s.log.Warn("publish version", "err", err)
+		}
+	}
 	s.syncGuildCommands(c.Request.Context(), gid, gidInt)
-	s.audit(c, gidInt, "command.upsert", gin.H{"name": req.Name})
-	c.JSON(http.StatusOK, gin.H{"ok": true})
+	s.audit(c, gidInt, "command.upsert", gin.H{"name": req.Name, "id": saved.ID, "status": saved.Status})
+	c.JSON(http.StatusOK, gin.H{"id": saved.ID, "validation": result})
+}
+
+func (s *Server) handleValidateCommand(c *gin.Context) {
+	var req upsertCommandReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		fail(c, http.StatusBadRequest, "invalid body")
+		return
+	}
+	var def cc.Definition
+	if len(req.Definition) > 0 {
+		if err := json.Unmarshal(req.Definition, &def); err != nil {
+			fail(c, http.StatusBadRequest, "invalid definition json")
+			return
+		}
+	}
+	c.JSON(http.StatusOK, gin.H{"validation": cc.Validate(req.Name, def)})
 }
 
 func (s *Server) handleDeleteCommand(c *gin.Context) {
@@ -161,6 +232,25 @@ func (s *Server) handleDeleteCommand(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
+func summarizeCommand(r store.CustomCommand) gin.H {
+	return gin.H{
+		"id":             r.ID,
+		"name":           r.Name,
+		"description":    r.Description,
+		"enabled":        r.Enabled,
+		"status":         r.Status,
+		"version":        r.Version,
+		"requires_defer": r.RequiresDefer,
+		"updated_at":     r.UpdatedAt,
+	}
+}
+
+func fullCommand(r store.CustomCommand) gin.H {
+	out := summarizeCommand(r)
+	out["definition"] = json.RawMessage(r.Definition)
+	return out
+}
+
 // syncGuildCommands rebuilds the guild's slash-command set from all enabled
 // custom commands and registers it with Discord. Dia's built-in commands are
 // registered globally, so a guild's command slots hold only custom commands.
@@ -175,15 +265,82 @@ func (s *Server) syncGuildCommands(ctx context.Context, gid string, gidInt int64
 		if !r.Enabled {
 			continue
 		}
+		var d cc.Definition
+		_ = json.Unmarshal(r.Definition, &d)
 		defs = append(defs, &discordgo.ApplicationCommand{
 			Type:        discordgo.ChatApplicationCommand,
 			Name:        r.Name,
 			Description: r.Description,
+			Options:     buildSlashOptions(d.Options),
 		})
 	}
 	if _, err := s.discord.BulkOverwriteGuildCommands(gid, defs); err != nil {
 		s.log.Warn("custom command sync: register failed", "guild", gid, "err", err)
 	}
+}
+
+func buildSlashOptions(opts []cc.CommandOption) []*discordgo.ApplicationCommandOption {
+	out := make([]*discordgo.ApplicationCommandOption, 0, len(opts))
+	for _, o := range opts {
+		opt := &discordgo.ApplicationCommandOption{
+			Type:         slashOptKind(o.Kind),
+			Name:         o.Name,
+			Description:  o.Description,
+			Required:     o.Required,
+			Autocomplete: o.Autocomplete,
+			MinValue:     o.MinValue,
+		}
+		if o.MaxValue != nil {
+			opt.MaxValue = *o.MaxValue
+		}
+		if o.MinLength != nil {
+			opt.MinLength = o.MinLength
+		}
+		if o.MaxLength != nil {
+			opt.MaxLength = *o.MaxLength
+		}
+		if len(o.ChannelTypes) > 0 {
+			cts := make([]discordgo.ChannelType, 0, len(o.ChannelTypes))
+			for _, ct := range o.ChannelTypes {
+				cts = append(cts, discordgo.ChannelType(ct))
+			}
+			opt.ChannelTypes = cts
+		}
+		if len(o.Choices) > 0 {
+			for _, c := range o.Choices {
+				var v interface{}
+				_ = json.Unmarshal(c.Value, &v)
+				opt.Choices = append(opt.Choices, &discordgo.ApplicationCommandOptionChoice{
+					Name:  c.Name,
+					Value: v,
+				})
+			}
+		}
+		out = append(out, opt)
+	}
+	return out
+}
+
+func slashOptKind(k string) discordgo.ApplicationCommandOptionType {
+	switch k {
+	case "int", "integer":
+		return discordgo.ApplicationCommandOptionInteger
+	case "bool", "boolean":
+		return discordgo.ApplicationCommandOptionBoolean
+	case "user":
+		return discordgo.ApplicationCommandOptionUser
+	case "role":
+		return discordgo.ApplicationCommandOptionRole
+	case "channel":
+		return discordgo.ApplicationCommandOptionChannel
+	case "mentionable":
+		return discordgo.ApplicationCommandOptionMentionable
+	case "number":
+		return discordgo.ApplicationCommandOptionNumber
+	case "attachment":
+		return discordgo.ApplicationCommandOptionAttachment
+	}
+	return discordgo.ApplicationCommandOptionString
 }
 
 // ── Reaction role menus ──────────────────────────────────────

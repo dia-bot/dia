@@ -1,12 +1,14 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
 
 	"github.com/dia-bot/dia/internal/event"
+	"github.com/dia-bot/dia/internal/store"
 	"github.com/dia-bot/dia/pkg/discordgo"
 	"github.com/gin-gonic/gin"
 )
@@ -69,17 +71,47 @@ func (s *Server) requireGuild() gin.HandlerFunc {
 			fail(c, http.StatusForbidden, "you don't manage this server")
 			return
 		}
-		idInt, ok := event.ParseID(gid)
+		gidInt, ok := event.ParseID(gid)
 		if !ok {
 			fail(c, http.StatusBadRequest, "invalid guild id")
 			return
 		}
-		if _, err := s.store.Guilds.Get(c.Request.Context(), idInt); err != nil {
+		if !s.botInGuild(c.Request.Context(), gid) {
 			fail(c, http.StatusNotFound, "Dia is not in this server")
 			return
 		}
+		// Ensure a guilds row exists for downstream FK-constrained writes
+		// (custom_commands, guild_feature_configs, etc.). botInGuild may have
+		// passed via the live bot-list signal alone, before the worker has
+		// processed GUILD_CREATE for this guild — without this step the next
+		// INSERT would fail with a foreign-key violation. Cheap: a no-op
+		// upsert when the row already exists.
+		s.ensureGuildRow(c.Request.Context(), gidInt, gid, sess)
 		c.Set(ctxGuildID, gid)
 		c.Next()
+	}
+}
+
+// ensureGuildRow synthesises a minimal guilds row from session data when the
+// gateway hasn't populated one yet. Name/icon are taken from the user's OAuth
+// guild list; member_count stays 0 until the worker processes a real event.
+func (s *Server) ensureGuildRow(ctx context.Context, gidInt int64, gid string, sess *Session) {
+	if _, err := s.store.Guilds.Get(ctx, gidInt); err == nil {
+		return
+	}
+	g := store.Guild{ID: gidInt}
+	if sess != nil {
+		for _, ug := range sess.Guilds {
+			if ug.ID != gid {
+				continue
+			}
+			g.Name = ug.Name
+			g.Icon = ug.Icon
+			break
+		}
+	}
+	if err := s.store.Guilds.Upsert(ctx, g); err != nil {
+		s.log.Warn("ensure guild row", "guild", gid, "err", err)
 	}
 }
 

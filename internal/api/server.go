@@ -135,6 +135,7 @@ func (s *Server) Handler() http.Handler {
 	g.DELETE("/fonts/:family", s.handleDeleteFont)
 	g.GET("/assets", s.handleListAssets)
 	g.DELETE("/assets/:aid", s.handleDeleteAsset)
+	g.GET("/emojis", s.handleListEmojis)
 	g.GET("/billing", s.handleBillingStatus)
 	g.POST("/billing/checkout", s.handleCheckout)
 	g.POST("/billing/portal", s.handlePortal)
@@ -153,8 +154,15 @@ func (s *Server) Handler() http.Handler {
 	g.DELETE("/level-rewards/:level", s.handleDeleteReward)
 
 	g.GET("/commands", s.handleListCommands)
+	g.GET("/commands/:cid", s.handleGetCommand)
 	g.PUT("/commands", s.handleUpsertCommand)
+	g.POST("/commands/validate", s.handleValidateCommand)
 	g.DELETE("/commands/:cid", s.handleDeleteCommand)
+	g.GET("/command-runs", s.handleListCommandRuns)
+	g.GET("/command-runs/:rid", s.handleGetCommandRun)
+	g.GET("/command-templates", s.handleListImageTemplates)
+	g.PUT("/command-templates", s.handleUpsertImageTemplate)
+	g.DELETE("/command-templates/:tid", s.handleDeleteImageTemplate)
 
 	g.GET("/reaction-roles", s.handleListMenus)
 	g.PUT("/reaction-roles", s.handleUpsertMenu)

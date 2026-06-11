@@ -16,6 +16,11 @@ import (
 
 var oauthHTTP = &http.Client{Timeout: 10 * time.Second}
 
+// botListHTTP is a tighter-budget client used only for the live bot-guild
+// listing — that call is on the dashboard's hot path so we'd rather fall
+// back to the DB than block a page render waiting for Discord.
+var botListHTTP = &http.Client{Timeout: 3 * time.Second}
+
 // handleLogin starts the Discord OAuth2 (Authorization Code + PKCE) flow,
 // redirecting the browser to Discord. The PKCE verifier is stashed server-side
 // keyed by state; Discord returns to the web origin's callback
