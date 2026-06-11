@@ -1,5 +1,5 @@
 <script lang="ts">
-	// The properties studio: every slash property visible at once. Three zones —
+	// The properties studio: every slash property visible at once. Three zones:
 	// a rail listing all properties (click to edit, hover to reorder), a faithful
 	// Discord preview of the member filling the command in (the selected property
 	// is highlighted exactly where Discord highlights it), and a full editor pane
@@ -228,7 +228,7 @@
 		options.map((o, i) => ({ o, i })).sort((a, b) => Number(!!b.o.required) - Number(!!a.o.required))
 	);
 
-	// What Discord shows under the focused property — bounds, pickers, hints.
+	// What Discord shows under the focused property (bounds, pickers, hints).
 	function kindHint(o: CommandOption): string {
 		switch (o.kind) {
 			case 'string': {
@@ -268,7 +268,7 @@
 		}
 	}
 
-	// ── "Use it" chip — copy the token that reads the selected property ──────
+	// ── "Use it" chip: copy the token that reads the selected property ───────
 	let copied = $state(false);
 	let copiedTimer: ReturnType<typeof setTimeout> | null = null;
 	function copyToken() {
@@ -286,10 +286,10 @@
 			class="flex shrink-0 flex-row gap-1.5 overflow-x-auto border-b border-line p-2.5 @3xl:w-[252px] @3xl:flex-col @3xl:overflow-y-auto @3xl:overflow-x-hidden @3xl:border-b-0 @3xl:border-r"
 		>
 			<div class="hidden items-baseline justify-between px-1 pb-1 @3xl:flex">
-				<span class="font-mono text-[9.5px] font-medium uppercase tracking-[0.14em] text-faint">
+				<span class="font-mono text-[10px] font-medium uppercase tracking-[0.14em] text-faint">
 					Properties
 				</span>
-				<span class="font-mono text-[9.5px] tabular-nums text-faint">
+				<span class="font-mono text-[10px] tabular-nums text-faint">
 					{options.length}/{MAX_OPTIONS}
 				</span>
 			</div>
@@ -309,7 +309,7 @@
 								: 'border-line hover:border-line-strong/70'}"
 						onclick={() => select(i)}
 					>
-						<span class="w-3.5 shrink-0 text-right font-mono text-[9.5px] tabular-nums text-faint">
+						<span class="w-3.5 shrink-0 text-right font-mono text-[10px] tabular-nums text-faint">
 							{i + 1}
 						</span>
 						<span
@@ -374,7 +374,7 @@
 					type="button"
 					onclick={fixOrder}
 					class="flex w-48 shrink-0 items-center gap-2 rounded-lg border border-line bg-ink-2/60 px-2.5 py-1.5 text-left transition-colors hover:border-line-strong @3xl:w-full"
-					title="Discord lists required properties before optional ones — yours are out of order."
+					title="Discord lists required properties before optional ones, yours are out of order."
 				>
 					<ArrowUpDown size={11} class="shrink-0 text-muted" />
 					<span class="min-w-0 flex-1 truncate text-[10.5px] text-muted">required first</span>
@@ -392,7 +392,7 @@
 			>
 				<Plus size={11} />
 				Add property
-				<span class="font-mono text-[9.5px] tabular-nums text-faint @3xl:hidden">
+				<span class="font-mono text-[10px] tabular-nums text-faint @3xl:hidden">
 					{options.length}/{MAX_OPTIONS}
 				</span>
 			</button>
@@ -403,10 +403,10 @@
 			<!-- The command, exactly as a member fills it in -->
 			<div class="shrink-0 border-b border-line bg-[#313338] px-4 pb-3.5 pt-3 @3xl:px-5">
 				<div class="mb-2 flex items-baseline justify-between">
-					<span class="font-mono text-[9.5px] font-medium uppercase tracking-[0.14em] text-[#87898c]">
+					<span class="font-mono text-[10px] font-medium uppercase tracking-[0.14em] text-[#87898c]">
 						What members see
 					</span>
-					<span class="font-mono text-[9.5px] text-[#87898c]">click a property to edit it</span>
+					<span class="font-mono text-[10px] text-[#87898c]">click a property to edit it</span>
 				</div>
 
 				<!-- The floating option panel Discord shows above the box -->
@@ -425,7 +425,7 @@
 
 					{#if options.length === 0}
 						<div class="px-3 py-2.5 text-[11.5px] italic text-[#87898c]">
-							No properties yet — the command runs right away.
+							No properties yet, the command runs right away.
 						</div>
 					{:else}
 						<div class="max-h-44 overflow-y-auto py-1 @max-3xl:max-h-28">
@@ -521,7 +521,7 @@
 								: 'bg-[#26282c] text-[#b5bac1] hover:bg-[#2f3136]'} {entry.o.required || active
 								? ''
 								: 'opacity-60'}"
-							title={entry.o.required ? 'Required' : 'Optional — offered in a picker'}
+							title={entry.o.required ? 'Required' : 'Optional, offered in a picker'}
 							onclick={() => select(entry.i)}
 						>
 							{entry.o.name || 'property'}{entry.o.required ? '' : '?'}
@@ -615,6 +615,7 @@
 								<span class="text-[11.5px] text-muted">Required</span>
 								<Toggle
 									checked={!!sel.required}
+									label="Required"
 									onchange={(v) => patch(selected, { required: v })}
 								/>
 							</label>
@@ -669,12 +670,12 @@
 							/>
 						</div>
 
-						<!-- How to read what the member typed — copy-paste into any step -->
+						<!-- How to read what the member typed: copy-paste into any step -->
 						<div
 							class="flex items-center gap-2 overflow-hidden rounded-md border border-line bg-ink-2/60 px-2.5 py-1.5"
 						>
 							<span
-								class="shrink-0 font-mono text-[9.5px] font-medium uppercase tracking-[0.14em] text-faint"
+								class="shrink-0 font-mono text-[10px] font-medium uppercase tracking-[0.14em] text-faint"
 							>
 								Use it
 							</span>
@@ -828,6 +829,10 @@
 																(e.currentTarget as HTMLInputElement).value
 															)
 														})}
+													onblur={(e) => {
+														const el = e.currentTarget as HTMLInputElement;
+														el.value = String(sel?.choices?.[ci]?.value ?? '');
+													}}
 												/>
 												<button
 													type="button"
@@ -851,7 +856,7 @@
 									Add choice
 								</button>
 								<p class="mt-1 font-mono text-[10px] text-faint">
-									with choices, members must pick one — free input is off
+									with choices, members must pick one (free input is off)
 								</p>
 							</div>
 						{/if}
@@ -871,6 +876,7 @@
 								<Toggle
 									checked={!!sel.autocomplete}
 									disabled={hasChoices}
+									label="Autocomplete"
 									onchange={(v) => patch(selected, { autocomplete: v || undefined })}
 								/>
 							</label>
