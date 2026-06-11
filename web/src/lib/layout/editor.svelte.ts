@@ -12,6 +12,11 @@ import {
 	hasHandles,
 	shapeInBox,
 	newEffect,
+	paintsOf,
+	strokePaintsOf,
+	textPaintsOf,
+	bgPaintsOf,
+	stackPrimary,
 	MAX_LAYERS,
 	type Layout,
 	type Layer,
@@ -30,7 +35,10 @@ import {
 	type StrokeSide,
 	type WidthProfile,
 	type ArrowCap,
-	type BrushDirection
+	type BrushDirection,
+	type Paint,
+	type PaintType,
+	type GradientStop
 } from './schema';
 import { brushDef, DEFAULT_BRUSH, type BrushKind } from './brushes';
 
@@ -41,6 +49,11 @@ export const EDITOR_CTX = Symbol('dia-layout-editor');
 export type Tool = 'select' | 'scale' | 'rect' | 'ellipse' | 'text' | 'image' | 'pen' | 'pencil' | 'shape' | 'bend';
 
 export type AlignEdge = 'left' | 'hcenter' | 'right' | 'top' | 'vcenter' | 'bottom';
+
+// Which paint slot a paint operation edits — a layer's fill, its stroke, or the
+// canvas background. All three carry the same Figma paint-stack model, so the
+// inspector reuses one UI (and one set of store ops) for every colour control.
+export type PaintTarget = 'fill' | 'stroke' | 'bg';
 
 // A row in the layers panel's derived tree (one level of nesting). A 'group' row
 // is a group / mask-group header; a 'leaf' row is a single layer at depth 0
@@ -280,7 +293,6 @@ export class EditorStore {
 		l.type = 'path';
 		l.nodes = nodes;
 		l.closed = true;
-		if (!l.fill) l.fill = '#FFFFFF';
 		this.fitPath(l);
 	}
 
@@ -300,7 +312,7 @@ export class EditorStore {
 		} else {
 			layer.fill = '';
 			layer.stroke_color = '#FFFFFF';
-			layer.stroke_width = 6;
+			layer.stroke_width = 1; // Figma seeds 1px strokes
 		}
 		this.layout.layers.push(layer);
 		this.fitPath(layer);
@@ -436,6 +448,9 @@ export class EditorStore {
 	cut() {
 		this.copy();
 		this.removeSelected();
+	}
+	get canPasteInternal(): boolean {
+		return this.#clipboard.length > 0;
 	}
 	paste() {
 		if (!this.#clipboard.length) return;
@@ -980,23 +995,110 @@ export class EditorStore {
 		this.fitPath(l);
 	}
 
-	// setClosed opens/closes a path. Closing gives it a sensible default fill so a
-	// freshly closed shape is actually filled (the old default '' rendered nothing).
+	// setClosed opens/closes a path's geometry. Like Figma, closing does NOT add a
+	// fill — the shape stays stroke-only until a fill is added in the Fill section.
 	setClosed(v: boolean) {
 		const l = this.editPath ?? this.selected;
 		if (l?.type !== 'path') return;
 		l.closed = v;
-		if (v && !l.fill) l.fill = l.stroke_color || '#FFFFFF';
 	}
-	// setFillEnabled toggles whether a path paints a fill ('' = no fill).
-	setFillEnabled(on: boolean) {
-		const l = this.selected;
-		if (l?.type !== 'path') return;
-		l.fill = on ? l.fill || l.stroke_color || '#FFFFFF' : '';
+
+	// ── paint stacks (Figma's paints: solid / gradients / image, stacked) ───────
+	// ONE generic engine drives every paint slot, so a layer's FILL, its STROKE
+	// and the canvas BACKGROUND all edit through the same PaintPicker UI:
+	//   'fill'   — the selected layers' fill stack (shapes, paths and TEXT, where
+	//              it supersedes the legacy `color`)
+	//   'stroke' — the selected layers' stroke stack (supersedes `stroke_color`)
+	//   'bg'     — the document background's stack (supersedes the legacy
+	//              type/color/from/to/image_url fields)
+	// The panel edits the ACTIVE layer's stack; every mutation applies to all
+	// selected paintable layers at the same index, so multi-select edits work.
+	#fillable(l: Layer): boolean {
+		return l.type === 'rect' || l.type === 'ellipse' || l.type === 'path' || l.type === 'text';
 	}
-	get fillEnabled(): boolean {
+	#clonePaints(ps: Paint[]): Paint[] {
+		return ps.map((p) => ({ ...p, stops: p.stops?.map((st) => ({ ...st })) }));
+	}
+	#layerPaints(l: Layer, target: 'fill' | 'stroke'): Paint[] {
+		if (target === 'stroke') return strokePaintsOf(l);
+		return l.type === 'text' ? textPaintsOf(l) : paintsOf(l);
+	}
+	// #mutatePaints migrates the slot's legacy field(s) into its paint stack and
+	// applies fn. The legacy single colours stay synced to the stack's primary so
+	// old consumers (boolean text colour, brush tints) keep working.
+	#mutatePaints(target: PaintTarget, fn: (ps: Paint[]) => void) {
+		if (target === 'bg') {
+			const ps = this.#clonePaints(bgPaintsOf(this.layout.background));
+			fn(ps);
+			this.layout.background.fills = ps;
+			return;
+		}
+		this.setAll((l) => {
+			if (target === 'fill' && !this.#fillable(l)) return;
+			const ps = this.#clonePaints(this.#layerPaints(l, target));
+			fn(ps);
+			if (target === 'fill') {
+				l.fills = ps;
+				l.fill = undefined;
+				if (l.type === 'text') l.color = stackPrimary(ps) || l.color;
+			} else {
+				l.strokes = ps;
+				l.stroke_color = stackPrimary(ps) || l.stroke_color;
+			}
+		});
+	}
+	// paints returns the slot's stack for the inspector list (primary selection).
+	paints(target: PaintTarget): Paint[] {
+		if (target === 'bg') return bgPaintsOf(this.layout.background);
 		const l = this.selected;
-		return l?.type === 'path' ? !!l.fill : false;
+		if (!l) return [];
+		if (target === 'fill' && !this.#fillable(l)) return [];
+		return this.#layerPaints(l, target);
+	}
+	get hasFill(): boolean {
+		return this.selectedLayers.some((l) => this.#fillable(l) && paintsOf(l).length > 0);
+	}
+	addPaint(target: PaintTarget) {
+		this.#mutatePaints(target, (ps) => ps.push({ type: 'solid', color: '#D9D9D9' }));
+	}
+	removePaint(target: PaintTarget, i: number) {
+		// Deleting a stroke's LAST paint removes the stroke itself (Figma's "−").
+		if (target === 'stroke' && this.paints('stroke').length <= 1) {
+			this.removeStroke();
+			return;
+		}
+		this.#mutatePaints(target, (ps) => ps.splice(i, 1));
+	}
+	setPaint(target: PaintTarget, i: number, patch: Partial<Paint>) {
+		this.#mutatePaints(target, (ps) => {
+			if (ps[i]) ps[i] = { ...ps[i], ...patch };
+		});
+	}
+	togglePaintHidden(target: PaintTarget, i: number) {
+		const cur = this.paints(target)[i]?.hidden ?? false;
+		this.setPaint(target, i, { hidden: !cur });
+	}
+	setPaintStops(target: PaintTarget, i: number, stops: GradientStop[]) {
+		this.setPaint(target, i, { stops: stops.slice().sort((a, b) => a.pos - b.pos) });
+	}
+	// convertPaint switches a paint's type, seeding sensible Figma-style defaults:
+	// solid → gradient keeps the colour (fading to transparent); gradient → solid
+	// keeps the first stop; → image starts empty for the picker.
+	convertPaint(target: PaintTarget, i: number, type: PaintType) {
+		const p = this.paints(target)[i];
+		if (!p || p.type === type) return;
+		const base = p.type === 'solid' ? (p.color ?? '#D9D9D9') : (p.stops?.[0]?.color ?? '#D9D9D9');
+		const patch: Partial<Paint> = { type };
+		if (type === 'solid') {
+			patch.color = base;
+		} else if (type !== 'image' && !(p.stops?.length ?? 0)) {
+			patch.stops = [
+				{ pos: 0, color: base },
+				{ pos: 1, color: base, alpha: 0 }
+			];
+			if (type === 'linear' && p.angle === undefined) patch.angle = 180;
+		}
+		this.setPaint(target, i, patch);
 	}
 
 	// ── stroke (border, Figma-style: a "+" adds it, then position/weight/colour) ──
@@ -1138,6 +1240,8 @@ export class EditorStore {
 			l.scatter_gap = undefined;
 			l.scatter_wiggle = undefined;
 			l.scatter_size = undefined;
+			l.scatter_rotation = undefined;
+			l.scatter_angular = undefined;
 		});
 	}
 	get brushKind(): BrushKind {
@@ -1160,6 +1264,18 @@ export class EditorStore {
 	}
 	setScatterSize(n: number) {
 		this.setAll((l) => (l.scatter_size = Math.min(100, Math.max(0, Math.round(n)))));
+	}
+	get scatterRotation(): number {
+		return this.common((l) => l.scatter_rotation ?? 0) ?? 0;
+	}
+	setScatterRotation(n: number) {
+		this.setAll((l) => (l.scatter_rotation = Math.min(180, Math.max(-180, Math.round(n))) || undefined));
+	}
+	get scatterAngular(): number {
+		return this.common((l) => l.scatter_angular ?? 0) ?? 0;
+	}
+	setScatterAngular(n: number) {
+		this.setAll((l) => (l.scatter_angular = Math.min(180, Math.max(0, Math.round(n))) || undefined));
 	}
 	get brushDirection(): BrushDirection {
 		return this.common((l) => (l.brush_direction ?? 'forward') as BrushDirection) ?? 'forward';
@@ -1471,19 +1587,32 @@ export class EditorStore {
 	}
 
 	// ── "edit object" (Figma's Enter) ────────────────────────────────────────────
-	// canEditObject: deep-edit is meaningful for a single vector/text/primitive — a
-	// path/text edits inline; a rect/ellipse flips to an editable vector first.
+	// editTarget: the layer "Edit object" acts on — the single selected editable
+	// layer (a path/text edits inline; a rect/ellipse flips to a vector first), or,
+	// when a whole group is selected (e.g. a boolean combine), its single text
+	// member — so the text inside a combined shape stays editable from the panel.
+	get editTarget(): Layer | null {
+		if (this.selectedIds.length === 1) {
+			const l = this.selected;
+			return l &&
+				(l.type === 'path' || l.type === 'text' || l.type === 'rect' || l.type === 'ellipse')
+				? l
+				: null;
+		}
+		const sel = this.selectedLayers;
+		const gid = sel[0]?.group;
+		if (gid && sel.length > 1 && sel.every((l) => l.group === gid)) {
+			const texts = sel.filter((l) => l.type === 'text');
+			if (texts.length === 1) return texts[0];
+		}
+		return null;
+	}
 	get canEditObject(): boolean {
-		const l = this.selected;
-		return (
-			this.selectedIds.length === 1 &&
-			!!l &&
-			(l.type === 'path' || l.type === 'text' || l.type === 'rect' || l.type === 'ellipse')
-		);
+		return !!this.editTarget;
 	}
 	editSelected() {
-		const l = this.selected;
-		if (l && this.selectedIds.length === 1) this.enterEdit(l.id);
+		const t = this.editTarget;
+		if (t) this.enterEdit(t.id);
 	}
 
 	// ── multi-selection editing (Figma: one inspector, "Mixed" when values differ) ──
