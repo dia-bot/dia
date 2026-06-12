@@ -62,11 +62,16 @@
 	let dockErrorAction = $state<'save' | 'publish'>('save');
 	let dockTimer: ReturnType<typeof setTimeout> | null = null;
 	let validating = $state(false);
-	// Bumped when Cmd/Ctrl+S lands on a clean editor — the dock answers with
+	// Raised when Cmd/Ctrl+S lands on a clean editor; the dock answers with
 	// an "Everything is saved" pill so the shortcut never feels dead.
-	let savedPing = $state(0);
+	let pillVisible = $state(false);
+	let pillTimer: ReturnType<typeof setTimeout> | null = null;
 	let capsuleFlash = $state(false);
 	let capsuleTimer: ReturnType<typeof setTimeout> | null = null;
+	// Generation token: navigations and re-loads bump it, so a response that
+	// raced a navigation can never clobber the newer command's state.
+	let loadGen = 0;
+	let validateGen = 0;
 	let selectedId = $state('');
 	let validation = $state<ValidationResult | null>(null);
 	let runs = $state<
@@ -105,7 +110,7 @@
 	});
 	const inFlight = $derived(phase === 'saving' || phase === 'publishing');
 
-	// The enabled flag as last saved — the power key's "on save" tag and the
+	// The enabled flag as last saved; the power key's "on save" tag and the
 	// off-veil copy both hang off the delta against this.
 	const baseEnabled = $derived.by(() => {
 		if (!baseline) return cmd?.enabled ?? true;
@@ -161,13 +166,17 @@
 	}
 
 	// stepIdAtPath resolves a validation path to the deepest step it crosses,
-	// so preflight rows can select the offending card on the canvas.
+	// so preflight rows can select the offending card on the canvas. Hidden
+	// click-router steps (the listener and its switch) never render as cards,
+	// so an issue landing on one surfaces the message that owns the cluster.
 	function stepIdAtPath(path: string): string {
 		if (!cmd) return '';
 		const segs = normalisePath(path);
 		let arr: Step[] | undefined;
 		let cur: Step | undefined;
 		let lastId = '';
+		let lastArr: Step[] | undefined;
+		let lastIdx = -1;
 		let i = 0;
 		if (segs[0] === 'steps') {
 			arr = cmd.definition.steps ?? [];
@@ -181,7 +190,9 @@
 		while (i < segs.length) {
 			const s = segs[i];
 			if (arr && /^\d+$/.test(s)) {
-				cur = arr[Number(s)];
+				lastArr = arr;
+				lastIdx = Number(s);
+				cur = arr[lastIdx];
 				arr = undefined;
 				if (cur?.id) lastId = cur.id;
 				i++;
@@ -222,6 +233,23 @@
 			}
 			break; // .spec.cond and friends: stop at the step we already hold
 		}
+		// Step back out of the hidden click cluster to its message.
+		if (lastArr && lastIdx >= 0) {
+			const st = lastArr[lastIdx];
+			if (st && st.id === lastId) {
+				if (isClickWait(st) && lastIdx >= 1) {
+					return lastArr[lastIdx - 1]?.id ?? lastId;
+				}
+				if (
+					st.kind === 'switch' &&
+					lastIdx >= 2 &&
+					isClickWait(lastArr[lastIdx - 1]) &&
+					isClickSwitch(st, lastArr[lastIdx - 1])
+				) {
+					return lastArr[lastIdx - 2]?.id ?? lastId;
+				}
+			}
+		}
 		return lastId;
 	}
 
@@ -245,6 +273,7 @@
 	// Load (and re-load on in-place navigation to another command id).
 	$effect(() => {
 		void cmdId;
+		const gen = ++loadGen;
 		loaded = false;
 		loadError = '';
 		cmd = null;
@@ -255,6 +284,8 @@
 		clearDockTimer();
 		phase = 'idle';
 		dockError = '';
+		pillVisible = false;
+		if (pillTimer) clearTimeout(pillTimer);
 		(async () => {
 			const t0 = performance.now();
 			loadStartMs = t0;
@@ -264,11 +295,12 @@
 			try {
 				await reload();
 			} catch (e) {
+				if (gen !== loadGen) return;
 				loadError = e instanceof Error ? e.message : String(e);
 				console.error('[editor] reload failed', e);
 			}
 			try {
-				await loadRuns();
+				if (gen === loadGen) await loadRuns();
 			} catch (e) {
 				console.warn('[editor] loadRuns failed', e);
 			}
@@ -276,13 +308,22 @@
 				clearInterval(loadTimer);
 				loadTimer = null;
 			}
+			if (gen !== loadGen) return; // a newer navigation took over
 			loaded = true;
 		})();
+		return () => {
+			if (loadTimer) {
+				clearInterval(loadTimer);
+				loadTimer = null;
+			}
+		};
 	});
 
-	async function reload() {
+	// fetchCmd maps the server row to editor state without touching it; reload
+	// adopts the result unless a newer navigation raced the request.
+	async function fetchCmd(): Promise<EditCommand> {
 		const c = await api.command(store.id, cmdId);
-		cmd = {
+		return {
 			id: c.id,
 			name: c.name,
 			description: c.description,
@@ -292,7 +333,14 @@
 			requires_defer: c.requires_defer,
 			definition: normaliseDefinition(c.definition ?? {})
 		};
-		baseline = JSON.stringify(cmd);
+	}
+
+	async function reload() {
+		const gen = loadGen;
+		const fresh = await fetchCmd();
+		if (gen !== loadGen) return;
+		cmd = fresh;
+		baseline = JSON.stringify(fresh);
 		void validate();
 	}
 
@@ -374,18 +422,24 @@
 			validating = false;
 			return;
 		}
+		// Only the newest request may apply: out-of-order responses would
+		// otherwise flash stale issues, and a response that raced a
+		// navigation would annotate the wrong command.
+		const gen = ++validateGen;
+		const forGen = loadGen;
 		try {
 			const r = await api.validateCommand(store.id, {
 				name: cmd.name,
 				description: cmd.description,
 				definition: cmd.definition
 			});
+			if (gen !== validateGen || forGen !== loadGen || !cmd) return;
 			validation = r.validation;
-			if (cmd) cmd.requires_defer = r.validation.requires_defer;
+			cmd.requires_defer = r.validation.requires_defer;
 		} catch {
 			/* ignore */
 		} finally {
-			validating = false;
+			if (gen === validateGen) validating = false;
 		}
 	}
 
@@ -394,7 +448,7 @@
 		if (!cmd || !loaded) return;
 		void JSON.stringify(cmd.definition);
 		clearTimeout(validateTimer);
-		// The dock's Publish slot shows "Checking" until this settles — a
+		// The dock's Publish slot shows "Checking" until this settles; a
 		// stale validation.ok must never let a broken draft through.
 		validating = true;
 		validateTimer = setTimeout(validate, 400);
@@ -412,6 +466,8 @@
 		clearDockTimer();
 		phase = thenPublish ? 'publishing' : 'saving';
 		dockError = '';
+		const sent = JSON.stringify(cmd);
+		const gen = loadGen;
 		try {
 			const r = await api.upsertCommand(store.id, {
 				id: cmd.id,
@@ -421,8 +477,23 @@
 				status: thenPublish ? 'published' : cmd.status,
 				definition: cmd.definition
 			});
+			if (gen !== loadGen) return; // navigated away mid-save
 			validation = r.validation;
-			await reload();
+			const fresh = await fetchCmd();
+			if (gen !== loadGen) return;
+			baseline = JSON.stringify(fresh);
+			if (cmd && JSON.stringify(cmd) === sent) {
+				// Nothing raced the request: adopt the server row wholesale.
+				cmd = fresh;
+				void validate();
+			} else if (cmd) {
+				// Edits arrived while the save was in flight: keep them and
+				// sync only the server-owned fields, so the editor lands
+				// dirty with the newer work instead of silently losing it.
+				cmd.version = fresh.version;
+				cmd.status = fresh.status;
+				cmd.requires_defer = fresh.requires_defer;
+			}
 			phase = thenPublish ? 'published' : 'saved';
 			if (thenPublish) {
 				// Header capsule flashes its border as draft flips to published.
@@ -432,6 +503,7 @@
 			}
 			dockTimer = setTimeout(() => (phase = 'idle'), thenPublish ? 1600 : 1400);
 		} catch (e) {
+			if (gen !== loadGen) return;
 			dockErrorAction = thenPublish ? 'publish' : 'save';
 			dockError = e instanceof Error ? e.message : 'Request failed';
 			phase = 'error';
@@ -455,8 +527,13 @@
 		if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
 			e.preventDefault();
 			if (inFlight) return;
-			if (dirty) void save(false);
-			else savedPing++;
+			if (dirty) {
+				void save(false);
+			} else {
+				pillVisible = true;
+				if (pillTimer) clearTimeout(pillTimer);
+				pillTimer = setTimeout(() => (pillVisible = false), 1200);
+			}
 		}
 	}
 
@@ -465,10 +542,12 @@
 	}
 
 	// Preflight rows route to the thing they complain about: a step on the
-	// canvas when the path names one, the settings dialog otherwise.
+	// canvas when the path names one, the Properties studio for slash
+	// properties, the settings dialog for everything else.
 	function jumpToIssue(iss: ValidationIssue) {
 		const stepId = stepIdAtPath(iss.path);
 		if (stepId) selectedId = stepId;
+		else if (iss.path.startsWith('options')) propertiesOpen = true;
 		else settingsOpen = true;
 	}
 
@@ -951,7 +1030,7 @@
 				<ChevronLeft size={14} />
 			</button>
 
-			<!-- Power key — enabled is what controls Discord visibility, so it
+			<!-- Power key: enabled is what controls Discord visibility, so it
 			     sits fused to the command's identity, not parked in a corner. -->
 			<button
 				type="button"
@@ -960,9 +1039,8 @@
 				aria-label="Command enabled"
 				class="grid size-7 shrink-0 place-items-center rounded-[7px] border transition-colors duration-200 {cmd.enabled
 					? 'border-success/40 bg-success/[0.08] text-success hover:border-success/70'
-					: 'border-line text-faint hover:border-line-strong hover:text-muted'} {inFlight
-					? 'pointer-events-none opacity-60'
-					: ''}"
+					: 'border-line text-faint hover:border-line-strong hover:text-muted'} disabled:opacity-60"
+				disabled={inFlight}
 				onclick={() => cmd && (cmd.enabled = !cmd.enabled)}
 				title={cmd.enabled
 					? `On. Members can use /${cmd.name}. Click to turn off; applies on save.`
@@ -1039,11 +1117,17 @@
 
 			<!-- Issues chip: opens the same preflight list the dock gates on. -->
 			{#if validation && issueCount > 0}
+				{@const issueLabel =
+					errorCount > 0
+						? `${errorCount} validation ${errorCount === 1 ? 'error' : 'errors'}`
+						: `${issueCount} ${issueCount === 1 ? 'warning' : 'warnings'}`}
 				<Popover.Root>
 					<Popover.Trigger
 						class="inline-flex h-[22px] shrink-0 items-center gap-1 rounded border px-1.5 font-mono text-[10px] transition-colors {errorCount > 0
 							? 'border-danger/30 bg-danger/5 text-danger hover:border-danger/50'
 							: 'border-line-strong bg-surface/40 text-muted hover:border-line-strong hover:text-ink'}"
+						title={issueLabel}
+						aria-label={issueLabel}
 					>
 						<CircleAlert size={10} />
 						{errorCount > 0 ? errorCount : issueCount}
@@ -1100,7 +1184,7 @@
 					commandId={cmd.id}
 					bind:selectedId
 					{errorPaths}
-					showLegend={dockState === 'hidden'}
+					showLegend={dockState === 'hidden' && !pillVisible}
 					onAddAtRoot={addAtRoot}
 					onAddFromHandle={addFromHandle}
 					onDeleteStep={deleteStep}
@@ -1137,7 +1221,7 @@
 				requiresDefer={cmd.requires_defer}
 				error={dockError}
 				errorAction={dockErrorAction}
-				{savedPing}
+				{pillVisible}
 				{drawerOpen}
 				{drawerWide}
 				onSave={() => save(false)}
