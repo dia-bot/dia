@@ -223,8 +223,11 @@
 		const cur = rowList[ri].components[ci];
 		const patch: AnySpec = { style };
 		// Link buttons carry a URL instead of a custom id; swap cleanly.
+		// A stale on_click would put a custom_id back on the link button,
+		// which Discord rejects.
 		if (style === 'link') {
 			patch.custom_id_suffix = undefined;
+			patch.on_click = undefined;
 			patch.url = cur.url ?? '';
 		} else {
 			patch.url = undefined;
@@ -544,9 +547,11 @@
 														<span class="font-mono text-[9.5px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
 															On click
 														</span>
-														<div class="flex rounded-md border border-input p-0.5">
+														<div class="flex rounded-md border border-input p-0.5" role="radiogroup" aria-label="On click">
 															<button
 																type="button"
+																role="radio"
+																aria-checked={c.on_click !== 'none'}
 																class="rounded px-2 py-0.5 text-[10px] font-medium transition-colors {c.on_click !== 'none'
 																	? 'bg-secondary text-foreground'
 																	: 'text-muted-foreground hover:text-foreground'}"
@@ -556,6 +561,8 @@
 															</button>
 															<button
 																type="button"
+																role="radio"
+																aria-checked={c.on_click === 'none'}
 																class="rounded px-2 py-0.5 text-[10px] font-medium transition-colors {c.on_click === 'none'
 																	? 'bg-secondary text-foreground'
 																	: 'text-muted-foreground hover:text-foreground'}"
