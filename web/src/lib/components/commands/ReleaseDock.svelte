@@ -11,7 +11,7 @@
 </script>
 
 <script lang="ts">
-	// The release dock — every way a command leaves the editor (save, publish,
+	// The release dock: every way a command leaves the editor (save, publish,
 	// discard) lives in this floating capsule over the canvas. One element
 	// morphs through the whole lifecycle: resting draft, unsaved changes,
 	// in-flight with a progress beam, a settled check, or a shaken error.
@@ -41,7 +41,7 @@
 		requiresDefer = false,
 		error = '',
 		errorAction = 'save',
-		savedPing = 0,
+		pillVisible = false,
 		drawerOpen = false,
 		drawerWide = false,
 		onSave,
@@ -62,9 +62,9 @@
 		requiresDefer?: boolean;
 		error?: string;
 		errorAction?: 'save' | 'publish';
-		// Bumped by the page when Cmd/Ctrl+S lands on a clean editor — the
+		// Raised by the page when Cmd/Ctrl+S lands on a clean editor; the
 		// shortcut always answers, even when there is nothing to save.
-		savedPing?: number;
+		pillVisible?: boolean;
 		drawerOpen?: boolean;
 		drawerWide?: boolean;
 		onSave: () => void;
@@ -82,21 +82,20 @@
 	const inFlight = $derived(dock === 'saving' || dock === 'publishing');
 	const settled = $derived(dock === 'saved' || dock === 'published');
 
-	// "Everything is saved" pill: shown briefly when the shortcut fires on a
-	// clean editor. It borrows the dock's spot, so the dock content yields.
-	let savedPill = $state(false);
-	let pillTimer: ReturnType<typeof setTimeout> | null = null;
-	$effect(() => {
-		if (savedPing <= 0) return;
-		savedPill = true;
-		if (pillTimer) clearTimeout(pillTimer);
-		pillTimer = setTimeout(() => (savedPill = false), 1200);
-		return () => {
-			if (pillTimer) clearTimeout(pillTimer);
-		};
-	});
+	const visible = $derived(dock !== 'hidden' || pillVisible);
 
-	const visible = $derived(dock !== 'hidden' || savedPill);
+	// Status announcements live in persistent sr-only regions below: a live
+	// region must already exist in the accessibility tree when its text
+	// changes, so the visual spans (recreated per state) cannot carry
+	// aria-live themselves.
+	const liveMessage = $derived.by(() => {
+		if (dock === 'saving') return 'Saving';
+		if (dock === 'publishing') return 'Publishing to Discord';
+		if (dock === 'published') return `Published version ${version} on Discord`;
+		if (dock === 'saved') return enabled ? 'Saved, changes are live' : 'Saved';
+		if (pillVisible) return 'Everything is saved';
+		return '';
+	});
 
 	// Width morph: the capsule physically resizes between states. The active
 	// content row reports its natural width through an action; the shell
@@ -126,11 +125,15 @@
 	});
 
 	// Settle beam: on saved/published the in-flight sweep becomes a full
-	// fill that fades right out.
+	// fill that fades right out. Leaving the settled state by any route (a
+	// new edit, navigation) clears the fill so it can't stick around.
 	let beamDone = $state(false);
 	let beamTimer: ReturnType<typeof setTimeout> | null = null;
 	$effect(() => {
-		if (!settled) return;
+		if (!settled) {
+			beamDone = false;
+			return;
+		}
 		beamDone = true;
 		if (beamTimer) clearTimeout(beamTimer);
 		beamTimer = setTimeout(() => (beamDone = false), 450);
@@ -153,18 +156,22 @@
 	}
 </script>
 
+<span class="sr-only" role="status">{liveMessage}</span>
+<span class="sr-only" role="alert">
+	{dock === 'error' ? `${errorAction === 'publish' ? 'Publish' : 'Save'} failed: ${error}` : ''}
+</span>
+
 {#if visible}
 	<div
 		class="pointer-events-none absolute inset-x-4 bottom-4 z-40 flex justify-center @container {drawerOpen
 			? `max-md:hidden ${drawerWide ? 'md:pr-[36rem] xl:pr-[42rem]' : 'md:pr-[28rem]'}`
 			: ''}"
 	>
-		{#if savedPill && (dock === 'hidden' || dock === 'resting')}
+		{#if pillVisible && (dock === 'hidden' || dock === 'resting')}
 			<div
-				in:fly={{ y: 8, duration: dur(200), easing: cubicOut }}
-				out:fade={{ duration: dur(150) }}
-				class="pointer-events-auto flex h-8 items-center gap-1.5 rounded-full border border-line bg-surface/95 px-3 font-mono text-[11px] text-muted shadow-[0_12px_32px_-12px_rgba(0,0,0,0.7)] backdrop-blur-md"
-				role="status"
+				in:fly|global={{ y: 8, duration: dur(200), easing: cubicOut }}
+				out:fade|global={{ duration: dur(150) }}
+				class="pointer-events-auto flex h-8 items-center gap-1.5 rounded-full border border-line bg-surface/95 px-3 font-mono text-[11px] text-muted shadow-[0_12px_32px_-12px_rgba(0,0,0,0.7)] backdrop-blur-md @max-[340px]:hidden"
 			>
 				<svg viewBox="0 0 24 24" class="size-3 text-success" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
 					<path d="M4 12l5 5L20 7" />
@@ -173,9 +180,9 @@
 			</div>
 		{:else}
 			<div
-				in:fly={{ y: 12, duration: dur(260), easing: cubicOut }}
-				out:fly={{ y: 8, duration: dur(180), easing: cubicOut }}
-				class="pointer-events-auto relative max-w-full overflow-hidden rounded-[14px] border bg-surface/95 shadow-[0_16px_40px_-12px_rgba(0,0,0,0.7)] backdrop-blur-md transition-[border-color] duration-150 {dock ===
+				in:fly|global={{ y: 12, duration: dur(260), easing: cubicOut }}
+				out:fly|global={{ y: 8, duration: dur(180), easing: cubicOut }}
+				class="pointer-events-auto relative max-w-full overflow-hidden rounded-[14px] border bg-surface/95 shadow-[0_16px_40px_-12px_rgba(0,0,0,0.7)] backdrop-blur-md transition-[border-color] duration-150 @max-[340px]:hidden {dock ===
 				'error'
 					? 'dock-shake border-danger/40'
 					: 'border-line'}"
@@ -187,9 +194,7 @@
 						{#if beamDone}
 							<div
 								out:fade={{ duration: dur(240) }}
-								class="h-full w-full {dock === 'published' || (settled && errorAction === 'publish')
-									? 'bg-accent'
-									: 'bg-ink/60'}"
+								class="h-full w-full {dock === 'published' ? 'bg-accent' : 'bg-ink/60'}"
 							></div>
 						{:else}
 							<div
@@ -210,7 +215,7 @@
 							class="col-start-1 row-start-1 flex h-11 w-max max-w-full items-center gap-2.5 justify-self-start whitespace-nowrap px-3.5"
 						>
 							{#if dock === 'resting'}
-								<span class="flex items-center gap-2" role="status" aria-live="polite">
+								<span class="flex items-center gap-2">
 									<span class="size-1.5 rounded-full border border-faint"></span>
 									<span class="font-mono text-[10px] font-medium uppercase tracking-[0.14em] text-muted">
 										Draft
@@ -218,7 +223,7 @@
 								</span>
 								{@render publishArea()}
 							{:else if dock === 'dirty'}
-								<span class="flex items-center gap-2" role="status" aria-live="polite">
+								<span class="flex items-center gap-2">
 									<span class="size-1.5 animate-pulse rounded-full bg-ink/70"></span>
 									<span class="text-[12px] font-medium text-ink">Unsaved changes</span>
 								</span>
@@ -256,14 +261,14 @@
 									{/if}
 								</div>
 							{:else if dock === 'saving' || dock === 'publishing'}
-								<span class="flex items-center gap-2.5" role="status" aria-live="polite">
+								<span class="flex items-center gap-2.5">
 									<span class="dots-loader" aria-hidden="true"><span></span><span></span><span></span></span>
 									<span class="text-[12.5px] font-medium text-ink">
 										{dock === 'saving' ? 'Saving' : 'Publishing to Discord'}
 									</span>
 								</span>
 							{:else if dock === 'saved' || dock === 'published'}
-								<span class="flex items-center gap-2" role="status" aria-live="polite">
+								<span class="flex items-center gap-2">
 									<svg viewBox="0 0 24 24" class="size-3.5 text-success" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
 										<path in:draw={{ duration: dur(280), easing: cubicOut }} d="M4 12l5 5L20 7" />
 									</svg>
@@ -278,7 +283,7 @@
 									</span>
 								</span>
 							{:else if dock === 'error'}
-								<span class="flex min-w-0 items-center gap-2" aria-live="assertive">
+								<span class="flex min-w-0 items-center gap-2">
 									<CircleAlert size={13} class="shrink-0 text-danger" />
 									<span class="max-w-64 truncate text-[12.5px] font-medium text-danger" title="{errorAction === 'publish' ? 'Publish' : 'Save'} failed: {error}">
 										{errorAction === 'publish' ? 'Publish' : 'Save'} failed: {error}
@@ -323,6 +328,7 @@
 		<Popover.Root bind:open={preflightOpen}>
 			<Popover.Trigger
 				class="inline-flex h-8 items-center gap-1.5 rounded-md border border-danger/30 bg-danger/5 px-3 font-mono text-[11px] text-danger transition-colors hover:border-danger/50"
+				title="{errorCount} validation {errorCount === 1 ? 'error blocks' : 'errors block'} publishing"
 			>
 				<CircleAlert size={12} />
 				{errorCount}
