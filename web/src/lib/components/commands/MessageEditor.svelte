@@ -339,6 +339,7 @@
 			{/if}
 			<EmojiPicker
 				value=""
+				returnFocusOnPick={false}
 				onChange={(t) => t && insertEmoji(contentEmoji(t))}
 				class="grid h-6 w-7 shrink-0 place-items-center rounded border border-line text-faint transition-colors hover:border-line-strong hover:text-muted data-[state=open]:border-line-strong"
 			/>

@@ -16,10 +16,16 @@
 	let {
 		value = '',
 		onChange,
+		returnFocusOnPick = true,
 		class: cls = ''
 	}: {
 		value?: string;
 		onChange: (v: string) => void;
+		// Inserter usages (the composer toolbar) keep the caret in the text
+		// surface they insert into: after a pick the popover must NOT pull
+		// focus back to its trigger button. Dismissing without picking still
+		// returns focus to the trigger.
+		returnFocusOnPick?: boolean;
 		class?: string;
 	} = $props();
 
@@ -111,11 +117,19 @@
 		return activeTab >= 0 ? (groups[activeTab]?.emojis ?? []) : [];
 	});
 
+	let justPicked = false;
+
 	function pick(emoji: string) {
+		justPicked = true;
 		onChange(emoji);
 		open = false;
 		query = '';
 		custom = '';
+	}
+
+	function onCloseAutoFocus(e: Event) {
+		if (!returnFocusOnPick && justPicked) e.preventDefault();
+		justPicked = false;
 	}
 </script>
 
@@ -133,7 +147,7 @@
 		{/if}
 	</Popover.Trigger>
 
-	<Popover.Content class="w-[324px] p-0" align="start">
+	<Popover.Content class="w-[324px] p-0" align="start" {onCloseAutoFocus}>
 		<!-- Search -->
 		<div class="flex items-center gap-2 border-b border-border/60 px-2.5">
 			<Search class="size-3.5 shrink-0 text-muted-foreground" />
