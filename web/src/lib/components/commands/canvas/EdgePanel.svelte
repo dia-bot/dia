@@ -89,7 +89,7 @@
 		{
 			value: 'silent',
 			label: 'Just acknowledges',
-			hint: 'Nothing visible. The flow runs quietly in the background.'
+			hint: 'Nothing shows at the click. Any later Message step posts a fresh, separate message.'
 		}
 	];
 	const clickSuffix = $derived.by(() => {
