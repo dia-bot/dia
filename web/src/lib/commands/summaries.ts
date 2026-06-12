@@ -11,7 +11,8 @@ const exprSrc = (v: unknown): string =>
 		: '';
 
 const trunc = (v: unknown, n = 44): string => {
-	const x = String(v ?? '');
+	// Custom-emoji markup reads as :name: in one-line summaries.
+	const x = String(v ?? '').replace(/<a?:([\w~-]+):\d{15,21}>/g, ':$1:');
 	return x.length > n ? x.slice(0, n - 1) + '…' : x;
 };
 
