@@ -498,10 +498,10 @@ func renderComponent(ctx context.Context, h *Halt, c cc.Component) discordgo.Mes
 		// inside a loop; the run id already isolates concurrent users.
 		cid = "ccmd:" + h.Run.ID + ":" + templated(ctx, h, c.CustomIDSuffix)
 	}
-	if c.OnClick == "none" {
+	if c.OnClick == "none" && !strings.EqualFold(c.Style, "link") {
 		// Decorative: the custom_id references no run, so clicks resolve to a
 		// bare silent acknowledgement forever (suffix only keeps ids unique
-		// within the message).
+		// within the message). Link buttons never carry a custom_id.
 		cid = cc.NoopCustomIDPrefix + templated(ctx, h, c.CustomIDSuffix)
 	}
 	switch c.Type {
@@ -513,6 +513,13 @@ func renderComponent(ctx context.Context, h *Halt, c cc.Component) discordgo.Mes
 			Style:    style,
 			Disabled: c.Disabled,
 			URL:      templated(ctx, h, c.URL),
+		}
+		// Discord rejects the whole message when a button carries both: a
+		// link button is its URL, everything else is its custom_id.
+		if style == discordgo.LinkButton {
+			btn.CustomID = ""
+		} else {
+			btn.URL = ""
 		}
 		if c.Emoji != "" {
 			btn.Emoji = componentEmoji(c.Emoji)
