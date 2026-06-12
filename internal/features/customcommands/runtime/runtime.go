@@ -214,12 +214,39 @@ func (p *Plugin) resume(c *interactions.Context, kind string) error {
 		_ = json.Unmarshal(run.Cursor, &cursor)
 	}
 
-	_ = c.Defer(false)
-	scope.MarkDeferred(true)
-	// A component click is a FRESH interaction: it gets its own single
-	// response (the defer above), so the first reply after a resume edits
-	// it and later ones follow up.
-	scope.MarkReplied(false)
+	// A component click is a FRESH interaction with its own single response.
+	// The awaiting wait_for says HOW to acknowledge it (per clicked button):
+	//
+	//   reply (default) — defer visibly; the first reply edits the
+	//   "thinking" message and later ones follow up.
+	//   update — defer silently; the first reply EDITS the clicked message
+	//   in place (a deferred-update's @original is the component's message).
+	//   silent — defer silently and mark replied, so nothing shows unless a
+	//   later step posts a follow-up.
+	mode := cc.ClickResponseReply
+	if kind == "component" {
+		if st := exec.StepAtCursor(def.Steps, cursor); st != nil && st.Kind == cc.KindWaitFor {
+			var ws cc.SpecWaitFor
+			if json.Unmarshal(st.Spec, &ws) == nil {
+				suffix, _ := payload["id"].(string)
+				mode = ws.ResponseFor(suffix)
+			}
+		}
+	}
+	switch mode {
+	case cc.ClickResponseSilent:
+		_ = c.DeferUpdate()
+		scope.MarkDeferred(true)
+		scope.MarkReplied(true)
+	case cc.ClickResponseUpdate:
+		_ = c.DeferUpdate()
+		scope.MarkDeferred(true)
+		scope.MarkReplied(false)
+	default:
+		_ = c.Defer(false)
+		scope.MarkDeferred(true)
+		scope.MarkReplied(false)
+	}
 
 	resumeRun := &exec.RunState{
 		ID:                 run.ID,

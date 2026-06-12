@@ -504,6 +504,21 @@ type SpecWait struct {
 	Duration string `json:"duration"` // parsed by time.ParseDuration
 }
 
+// Click-response modes: how the bot acknowledges the component interaction
+// that resumes a wait_for, before any steps run.
+//
+//   - reply (default): deferred channel message — Discord shows the bot
+//     thinking until the flow's first Message step replies.
+//   - update: deferred update — nothing shows at the click; the flow's first
+//     Message step rewrites the clicked message in place.
+//   - silent: deferred update, marked replied — nothing shows at the click
+//     and any later Message step posts a fresh follow-up.
+const (
+	ClickResponseReply  = "reply"
+	ClickResponseUpdate = "update"
+	ClickResponseSilent = "silent"
+)
+
 // SpecWaitFor parks the run until a Discord event matches.
 type SpecWaitFor struct {
 	Trigger        string `json:"trigger"` // component | modal | message | reaction
@@ -513,6 +528,25 @@ type SpecWaitFor struct {
 	Timeout        string `json:"timeout"`             // parsed by time.ParseDuration
 	Into           string `json:"into,omitempty"`
 	OnTimeout      []Step `json:"on_timeout,omitempty"`
+
+	// Response is the click-response mode for this listener; Responses
+	// overrides it per clicked button suffix (the click-router shares one
+	// listener across a message's buttons, but each button keeps its own
+	// behaviour). Templated suffixes can't be matched here and fall back to
+	// Response.
+	Response  string            `json:"response,omitempty"`
+	Responses map[string]string `json:"responses,omitempty"`
+}
+
+// ResponseFor resolves the click-response mode for a clicked button suffix.
+func (s *SpecWaitFor) ResponseFor(suffix string) string {
+	if m, ok := s.Responses[suffix]; ok && m != "" {
+		return m
+	}
+	if s.Response != "" {
+		return s.Response
+	}
+	return ClickResponseReply
 }
 
 // SpecExit / SpecFail terminate the run.

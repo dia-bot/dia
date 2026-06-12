@@ -72,6 +72,15 @@ func (c *Client) Defer(ref InteractionRef, ephemeral bool) error {
 	})
 }
 
+// DeferUpdate acknowledges a component interaction with no visible response
+// (DEFERRED_UPDATE_MESSAGE): the click stops spinning, the message stays as
+// is, and the token remains usable for follow-ups or an @original edit.
+func (c *Client) DeferUpdate(ref InteractionRef) error {
+	return c.s.InteractionRespond(ref.dg(), &discordgo.InteractionResponse{
+		Type: discordgo.InteractionResponseDeferredMessageUpdate,
+	})
+}
+
 // Followup posts a follow-up message to a (deferred) interaction.
 func (c *Client) Followup(ref InteractionRef, params *discordgo.WebhookParams) (*discordgo.Message, error) {
 	return c.s.FollowupMessageCreate(ref.dg(), true, params)

@@ -562,6 +562,16 @@ func validateSpec(s Step, path string, r *ValidationResult) {
 		if spec.Trigger == "" {
 			r.fail(path+".spec.trigger", "trigger_required", "wait_for needs a trigger kind")
 		}
+		if !validClickResponse(spec.Response) {
+			r.fail(path+".spec.response", "response_invalid",
+				"click response must be reply, update or silent")
+		}
+		for sfx, m := range spec.Responses {
+			if !validClickResponse(m) {
+				r.fail(path+".spec.responses."+sfx, "response_invalid",
+					"click response must be reply, update or silent")
+			}
+		}
 	case KindIf:
 		var spec SpecIf
 		if err := decodeSpec(s.Spec, &spec); err != nil {
@@ -957,3 +967,13 @@ func (s *stackDepth) enter() bool {
 	return s.depth > s.max
 }
 func (s *stackDepth) leave() { s.depth-- }
+
+// validClickResponse accepts the wait_for click-response modes ("" means the
+// default, reply).
+func validClickResponse(m string) bool {
+	switch m {
+	case "", ClickResponseReply, ClickResponseUpdate, ClickResponseSilent:
+		return true
+	}
+	return false
+}
