@@ -85,6 +85,15 @@
 		}
 	}
 
+	// Message content wants Discord's emoji syntax: custom emoji tokens
+	// ("name:id", "a:name:id") become <:name:id> / <a:name:id>; unicode
+	// passes through untouched.
+	function contentEmoji(token: string): string {
+		const m = /^(a:)?([\w~-]+):(\d{15,21})$/.exec(token.trim());
+		if (!m) return token;
+		return m[1] ? `<a:${m[2]}:${m[3]}>` : `<:${m[2]}:${m[3]}>`;
+	}
+
 	function insertToken(token: string) {
 		const el = lastInput && rootEl?.contains(lastInput) ? lastInput : null;
 		if (!el) {
@@ -308,6 +317,11 @@
 					ephemeral
 				</button>
 			{/if}
+			<EmojiPicker
+				value=""
+				onChange={(t) => t && insertToken(contentEmoji(t))}
+				class="grid h-6 w-7 shrink-0 place-items-center rounded border border-line text-faint transition-colors hover:border-line-strong hover:text-muted data-[state=open]:border-line-strong"
+			/>
 			<VarMenu onPick={insertToken} />
 		</div>
 	</div>
