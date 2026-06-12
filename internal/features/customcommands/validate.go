@@ -159,7 +159,14 @@ func Validate(name string, def Definition) ValidationResult {
 	}
 
 	r.OK = len(r.Issues) == 0
-	sort.SliceStable(r.Issues, func(i, j int) bool { return r.Issues[i].Path < r.Issues[j].Path })
+	// Errors first, then by path: every consumer that truncates the list
+	// (dock popover, settings dialog) must show the publish blockers.
+	sort.SliceStable(r.Issues, func(i, j int) bool {
+		if r.Issues[i].Severity != r.Issues[j].Severity {
+			return r.Issues[i].Severity == "error"
+		}
+		return r.Issues[i].Path < r.Issues[j].Path
+	})
 	return r
 }
 
