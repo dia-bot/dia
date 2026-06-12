@@ -70,7 +70,11 @@
 	const wait = $derived(info.clickWait ?? null);
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
 	const waitSpec = $derived((wait?.spec ?? {}) as any);
-	const invokerOnly = $derived((waitSpec.from_user?.src ?? '') === '{user.id}');
+	// Legacy definitions stored the brace shorthand; the editor only writes
+	// Go template syntax now.
+	const invokerOnly = $derived(
+		['{{ .User.ID }}', '{user.id}'].includes((waitSpec.from_user?.src ?? '').trim())
+	);
 
 	// How the bot answers THIS button's click on Discord. One listener serves
 	// the whole message, so per-button modes live in a suffix-keyed map on the
@@ -388,7 +392,7 @@
 			</span>
 			<Toggle
 				checked={invokerOnly}
-				onchange={(v) => patchWait('from_user', v ? { lang: 'tmpl', src: '{user.id}' } : undefined)}
+				onchange={(v) => patchWait('from_user', v ? { lang: 'tmpl', src: '{{ .User.ID }}' } : undefined)}
 			/>
 		</label>
 		<div class="mb-2 grid grid-cols-2 gap-1.5">

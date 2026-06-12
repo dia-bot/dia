@@ -370,7 +370,7 @@
 				<!-- Content — typed straight into the bubble, emoji drawn inline -->
 				<EmojiText
 					class="w-full text-[13px] leading-[1.45] text-[#dbdee1]"
-					placeholder={'Say something… {user.mention}, properties, markdown — all templates work'}
+					placeholder={'Say something… {{ .User.Mention }}, properties, markdown — all templates work'}
 					value={s.content ?? ''}
 					onChange={(v) => set('content', v)}
 				/>

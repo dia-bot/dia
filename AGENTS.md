@@ -105,8 +105,15 @@ Values in scope inside any template:
   `{{ .Member.* }}` (`Nick`, `Roles`, `JoinedAt`), `{{ .Guild.* }}` (`ID`,
   `Name`, `MemberCount`), `{{ .Channel.ID }}`, `{{ .Now }}`, `{{ .Last }}`.
 - `{{ .Error.* }}` — only inside `on_error` subtrees.
-- Brace shorthands expand too: `{user.mention}`, `{user.id}`, `{server}`,
-  `{channel}`, `{input.<name>}`, `{vars.<name>}`.
+
+**Go template syntax is the only syntax, everywhere.** Every placeholder,
+picker token, step default, hint, fixture and doc example must be a Go
+template (`{{ .User.Mention }}`, `{{ .Input.amount }}`), with no exceptions.
+The brace shorthands (`{user.mention}`, `{server}`, `{input.<name>}`, …) are
+legacy input sugar: the runtime still expands them so old saved definitions
+keep working, but nothing may display, insert, generate or document them.
+Read-side compatibility (recognising a legacy value in a stored spec) is the
+single allowed appearance.
 
 Keep these mirrors in lockstep when touching either side:
 

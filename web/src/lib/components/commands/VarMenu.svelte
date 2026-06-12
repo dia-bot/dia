@@ -41,10 +41,7 @@
 		}
 		out.push({
 			label: 'Context',
-			items: [
-				{ token: '{user.mention}', short: 'mention the invoker' },
-				...TMPL_STATIC_VARS.map((v) => ({ token: `{{ ${v.path} }}`, short: v.short }))
-			]
+			items: TMPL_STATIC_VARS.map((v) => ({ token: `{{ ${v.path} }}`, short: v.short }))
 		});
 		return out;
 	});

@@ -92,7 +92,7 @@
 					<input class="input" value={spec.into ?? ''} oninput={(e) => set('into', (e.currentTarget as HTMLInputElement).value)} />
 				</Field>
 			{:else if step.kind === 'send_dm'}
-				<Field label="User"><ExprField {...exprBind('user')} placeholder={'{user.id}'} /></Field>
+				<Field label="User"><ExprField {...exprBind('user')} placeholder={'{{ .User.ID }}'} /></Field>
 				<MessageEditor {step} embeds components attachments />
 			{:else if step.kind === 'embed_send'}
 				<Field label="Channel"><ChannelExprField {...exprBind('channel')} /></Field>
@@ -201,13 +201,13 @@
 					</Field>
 				{/if}
 			{:else if step.kind === 'role_add' || step.kind === 'role_remove'}
-				<Field label="User"><ExprField {...exprBind('user')} placeholder={'{user.id}'} /></Field>
+				<Field label="User"><ExprField {...exprBind('user')} placeholder={'{{ .User.ID }}'} /></Field>
 				<Field label="Role id"><ExprField {...exprBind('role')} /></Field>
 				<Field label="Reason">
 					<input class="input" value={spec.reason ?? ''} oninput={(e) => set('reason', (e.currentTarget as HTMLInputElement).value)} />
 				</Field>
 			{:else if step.kind === 'member_nickname'}
-				<Field label="User"><ExprField {...exprBind('user')} placeholder={'{user.id}'} /></Field>
+				<Field label="User"><ExprField {...exprBind('user')} placeholder={'{{ .User.ID }}'} /></Field>
 				<Field label="Nickname">
 					<input class="input" value={spec.nickname ?? ''} oninput={(e) => set('nickname', (e.currentTarget as HTMLInputElement).value)} />
 				</Field>
@@ -215,7 +215,7 @@
 					<input class="input" value={spec.reason ?? ''} oninput={(e) => set('reason', (e.currentTarget as HTMLInputElement).value)} />
 				</Field>
 			{:else if step.kind === 'member_kick' || step.kind === 'member_unban'}
-				<Field label="User"><ExprField {...exprBind('user')} placeholder={'{user.id}'} /></Field>
+				<Field label="User"><ExprField {...exprBind('user')} placeholder={'{{ .User.ID }}'} /></Field>
 				<Field label="Reason">
 					<input class="input" value={spec.reason ?? ''} oninput={(e) => set('reason', (e.currentTarget as HTMLInputElement).value)} />
 				</Field>
@@ -225,7 +225,7 @@
 					<input class="input" value={spec.into ?? ''} oninput={(e) => set('into', (e.currentTarget as HTMLInputElement).value)} />
 				</Field>
 			{:else if step.kind === 'voice_set'}
-				<Field label="User"><ExprField {...exprBind('user')} placeholder={'{user.id}'} /></Field>
+				<Field label="User"><ExprField {...exprBind('user')} placeholder={'{{ .User.ID }}'} /></Field>
 				<label class="flex items-center justify-between gap-3">
 					<span class="text-sm">Server-mute</span>
 					<Toggle checked={!!spec.mute} onchange={(v) => set('mute', v)} />
@@ -239,7 +239,7 @@
 				</Field>
 			{:else if step.kind === 'thread_member'}
 				<Field label="Thread"><ExprField {...exprBind('thread')} placeholder={'{{ .Vars.thread.id }}'} /></Field>
-				<Field label="User"><ExprField {...exprBind('user')} placeholder={'{user.id}'} /></Field>
+				<Field label="User"><ExprField {...exprBind('user')} placeholder={'{{ .User.ID }}'} /></Field>
 				<Field label="Action">
 					<FieldSelect
 						value={spec.action ?? 'add'}
@@ -266,7 +266,7 @@
 					<input class="input" value={spec.into ?? ''} oninput={(e) => set('into', (e.currentTarget as HTMLInputElement).value)} />
 				</Field>
 			{:else if step.kind === 'member_ban'}
-				<Field label="User"><ExprField {...exprBind('user')} placeholder={'{user.id}'} /></Field>
+				<Field label="User"><ExprField {...exprBind('user')} placeholder={'{{ .User.ID }}'} /></Field>
 				<Field label="Delete recent messages (days, 0-7)">
 					<NumberField
 						min={0}
@@ -280,7 +280,7 @@
 					<input class="input" value={spec.reason ?? ''} oninput={(e) => set('reason', (e.currentTarget as HTMLInputElement).value)} />
 				</Field>
 			{:else if step.kind === 'member_timeout'}
-				<Field label="User"><ExprField {...exprBind('user')} placeholder={'{user.id}'} /></Field>
+				<Field label="User"><ExprField {...exprBind('user')} placeholder={'{{ .User.ID }}'} /></Field>
 				<Field label="Duration" hint="Go duration string: 30s, 5m, 1h, max 28 days (672h)">
 					<input class="input" placeholder="10m" value={spec.duration ?? ''} oninput={(e) => set('duration', (e.currentTarget as HTMLInputElement).value)} />
 				</Field>
@@ -353,7 +353,7 @@
 					<Toggle checked={!!spec.locked} onchange={(v) => set('locked', v)} />
 				</label>
 			{:else if step.kind === 'voice_move'}
-				<Field label="User"><ExprField {...exprBind('user')} placeholder={'{user.id}'} /></Field>
+				<Field label="User"><ExprField {...exprBind('user')} placeholder={'{{ .User.ID }}'} /></Field>
 				<Field label="Target channel" hint="Empty = disconnect them"><ExprField {...exprBind('channel')} /></Field>
 			{:else if step.kind === 'image_render'}
 				<Field label="Template id" hint="Studio template — manage them on the index page.">
@@ -442,7 +442,7 @@
 					/>
 				</Field>
 				{#if spec.scope === 'member'}
-					<Field label="Owner id" hint="Defaults to the invoker"><ExprField {...exprBind('owner_id')} placeholder={'{user.id}'} /></Field>
+					<Field label="Owner id" hint="Defaults to the invoker"><ExprField {...exprBind('owner_id')} placeholder={'{{ .User.ID }}'} /></Field>
 				{/if}
 				{#if step.kind === 'kv_set'}
 					<Field label="Value"><ExprField {...exprBind('value')} /></Field>

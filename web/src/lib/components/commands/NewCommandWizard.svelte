@@ -51,7 +51,7 @@
 	let name = $state('');
 	let description = $state('');
 	let options = $state<CommandOption[]>([]);
-	let replyContent = $state('Hello {user.mention}!');
+	let replyContent = $state('Hello {{ .User.Mention }}!');
 	let ephemeral = $state(false);
 	let creating = $state(false);
 	let createError = $state('');
@@ -69,7 +69,7 @@
 		name = '';
 		description = '';
 		options = [];
-		replyContent = 'Hello {user.mention}!';
+		replyContent = 'Hello {{ .User.Mention }}!';
 		ephemeral = false;
 		creating = false;
 		createError = '';
@@ -88,8 +88,8 @@
 
 	// Token chips members can click to seed the reply with template values.
 	const tokens = $derived.by(() => {
-		const base = ['{user.mention}', '{user.name}', '{server}', '{channel}'];
-		return [...options.filter((o) => o.name).map((o) => `{input.${o.name}}`), ...base];
+		const base = ['{{ .User.Mention }}', '{{ .User.Username }}', '{{ .Guild.Name }}', '<#{{ .Channel.ID }}>'];
+		return [...options.filter((o) => o.name).map((o) => `{{ .Input.${o.name} }}`), ...base];
 	});
 
 	let replyEl = $state<HTMLTextAreaElement | null>(null);
@@ -121,7 +121,7 @@
 				id: newStepID(),
 				kind: 'reply',
 				spec: {
-					content: replyContent.trim() || 'Hello {user.mention}!',
+					content: replyContent.trim() || 'Hello {{ .User.Mention }}!',
 					...(ephemeral ? { ephemeral: true } : {})
 				}
 			};
@@ -274,7 +274,7 @@
 							bind:this={replyEl}
 							class="w-full rounded-lg border border-line bg-bg px-3 py-2 text-[13px] leading-relaxed text-ink placeholder:text-faint focus:border-line-strong focus:outline-none"
 							rows="4"
-							placeholder="Hello {'{user.mention}'}!"
+							placeholder={'Hello {{ .User.Mention }}!'}
 							bind:value={replyContent}
 						></textarea>
 						<div class="mt-1.5 flex flex-wrap items-center gap-1">

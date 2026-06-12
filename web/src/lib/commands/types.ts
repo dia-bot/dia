@@ -340,7 +340,7 @@ export function newStep(kind: string): Step {
 	const step: Step = { id: newStepID(), kind };
 	switch (kind) {
 		case 'reply':
-			step.spec = { content: 'Hello {user.mention}!' };
+			step.spec = { content: 'Hello {{ .User.Mention }}!' };
 			break;
 		case 'edit_reply':
 			step.spec = { content: '' };
@@ -349,7 +349,7 @@ export function newStep(kind: string): Step {
 			step.spec = { channel: { src: '{channel.id}' }, content: '' };
 			break;
 		case 'send_dm':
-			step.spec = { user: { src: '{user.id}' }, content: '' };
+			step.spec = { user: { src: '{{ .User.ID }}' }, content: '' };
 			break;
 		case 'embed_send':
 			step.spec = { channel: { src: '{channel.id}' }, embed: { title: '', description: '' } };
@@ -387,13 +387,13 @@ export function newStep(kind: string): Step {
 			step.spec = { channel: { src: '{channel.id}' }, message: { src: '' } };
 			break;
 		case 'member_fetch':
-			step.spec = { user: { src: '{user.id}' }, into: 'member' };
+			step.spec = { user: { src: '{{ .User.ID }}' }, into: 'member' };
 			break;
 		case 'voice_set':
-			step.spec = { user: { src: '{user.id}' }, mute: true };
+			step.spec = { user: { src: '{{ .User.ID }}' }, mute: true };
 			break;
 		case 'thread_member':
-			step.spec = { thread: { src: '' }, user: { src: '{user.id}' }, action: 'add' };
+			step.spec = { thread: { src: '' }, user: { src: '{{ .User.ID }}' }, action: 'add' };
 			break;
 		case 'invite_create':
 			step.spec = { channel: { src: '{channel.id}' }, max_age: '24h', max_uses: 1, into: 'invite' };
@@ -406,20 +406,20 @@ export function newStep(kind: string): Step {
 			break;
 		case 'role_add':
 		case 'role_remove':
-			step.spec = { user: { src: '{user.id}' }, role: { src: '' } };
+			step.spec = { user: { src: '{{ .User.ID }}' }, role: { src: '' } };
 			break;
 		case 'member_timeout':
-			step.spec = { user: { src: '{user.id}' }, duration: '10m', reason: '' };
+			step.spec = { user: { src: '{{ .User.ID }}' }, duration: '10m', reason: '' };
 			break;
 		case 'member_ban':
-			step.spec = { user: { src: '{user.id}' }, reason: '', delete_message_days: 0 };
+			step.spec = { user: { src: '{{ .User.ID }}' }, reason: '', delete_message_days: 0 };
 			break;
 		case 'member_kick':
 		case 'member_unban':
-			step.spec = { user: { src: '{user.id}' }, reason: '' };
+			step.spec = { user: { src: '{{ .User.ID }}' }, reason: '' };
 			break;
 		case 'member_nickname':
-			step.spec = { user: { src: '{user.id}' }, nickname: '', reason: '' };
+			step.spec = { user: { src: '{{ .User.ID }}' }, nickname: '', reason: '' };
 			break;
 		case 'channel_create':
 			step.spec = { name: 'new-channel', type: 'text', into: 'created_channel' };
@@ -437,7 +437,7 @@ export function newStep(kind: string): Step {
 			step.spec = { thread: { src: '' } };
 			break;
 		case 'voice_move':
-			step.spec = { user: { src: '{user.id}' }, channel: { src: '' } };
+			step.spec = { user: { src: '{{ .User.ID }}' }, channel: { src: '' } };
 			break;
 		case 'image_render':
 			step.spec = { template_id: 0, into: 'card_png', vars: {} };
