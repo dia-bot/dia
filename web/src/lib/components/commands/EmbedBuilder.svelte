@@ -5,6 +5,7 @@
 	// clickable slots with real picture upload. Mirrors EmbedSpec (kinds.go) —
 	// every text value is a Go template rendered at runtime.
 	import ImagePicker from './ImagePicker.svelte';
+	import EmojiText from './EmojiText.svelte';
 
 	import Link2 from 'lucide-svelte/icons/link-2';
 	import Plus from 'lucide-svelte/icons/plus';
@@ -60,15 +61,6 @@
 	let urlOpen = $state(false);
 
 	// Grow textareas with their content so the embed reads like the real thing.
-	function autogrow(el: HTMLTextAreaElement) {
-		const fit = () => {
-			el.style.height = '0';
-			el.style.height = `${el.scrollHeight}px`;
-		};
-		fit();
-		el.addEventListener('input', fit);
-		return { destroy: () => el.removeEventListener('input', fit) };
-	}
 </script>
 
 <div class="dc-embed group/embed relative flex overflow-hidden rounded-[4px] bg-[#2b2d31]">
@@ -108,15 +100,14 @@
 
 				<!-- Title + link -->
 				<div class="flex items-center gap-1.5">
-					<input
-						class="dc-input min-w-0 flex-1 py-0.5 text-[15px] font-semibold {embed?.url
+					<EmojiText
+						class="min-w-0 flex-1 py-0.5 text-[15px] font-semibold {embed?.url
 							? 'text-[#00a8fc]'
 							: 'text-[#f2f3f5]'}"
 						placeholder="Title"
-						maxlength="256"
+						multiline={false}
 						value={embed?.title ?? ''}
-						data-emoji-ok
-						oninput={(e) => set('title', (e.currentTarget as HTMLInputElement).value)}
+						onChange={(v) => set('title', v)}
 					/>
 					<button
 						type="button"
@@ -139,16 +130,12 @@
 				{/if}
 
 				<!-- Description -->
-				<textarea
-					use:autogrow
-					rows="1"
-					class="dc-input w-full resize-none py-0.5 text-[12.5px] leading-[1.4] text-[#dbdee1]"
+				<EmojiText
+					class="w-full py-0.5 text-[12.5px] leading-[1.4] text-[#dbdee1]"
 					placeholder="Description — Go templates and markdown work here"
-					maxlength="4096"
 					value={embed?.description ?? ''}
-					data-emoji-ok
-						oninput={(e) => set('description', (e.currentTarget as HTMLTextAreaElement).value)}
-				></textarea>
+					onChange={(v) => set('description', v)}
+				/>
 
 				<!-- Fields — laid out like Discord lays them out -->
 				{#if fields.length > 0}
@@ -183,17 +170,13 @@
 										<X size={9} />
 									</button>
 								</div>
-								<textarea
-									use:autogrow
-									rows="1"
-									class="dc-input w-full resize-none text-[12px] leading-[1.4] text-[#dbdee1]"
+								<EmojiText
+									class="w-full text-[12px] leading-[1.4] text-[#dbdee1]"
 									placeholder="Value"
-									maxlength="1024"
+									emojiSize={16}
 									value={f.value}
-										data-emoji-ok
-									oninput={(e) =>
-										setField(i, { value: (e.currentTarget as HTMLTextAreaElement).value })}
-								></textarea>
+									onChange={(v) => setField(i, { value: v })}
+								/>
 							</div>
 						{/each}
 					</div>

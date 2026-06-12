@@ -13,6 +13,7 @@
 	import VarMenu from './VarMenu.svelte';
 	import FieldSelect from './FieldSelect.svelte';
 	import EmojiPicker from './EmojiPicker.svelte';
+	import EmojiText from './EmojiText.svelte';
 	import EmojiGlyph from './EmojiGlyph.svelte';
 	import Logo from '$lib/components/Logo.svelte';
 	import { Popover } from '$lib/components/ui';
@@ -76,12 +77,15 @@
 
 	// ── templated-value insertion at the cursor ──────────────────────────────
 	let rootEl = $state<HTMLDivElement | null>(null);
-	let lastInput: HTMLInputElement | HTMLTextAreaElement | null = null;
+	type RichHost = HTMLElement & { __insertToken?: (token: string) => void };
+	let lastInput: HTMLInputElement | HTMLTextAreaElement | RichHost | null = null;
 
 	function onFocusIn(e: FocusEvent) {
 		const el = e.target as HTMLElement;
 		if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
 			if (el.type !== 'color' && el.type !== 'number' && el.type !== 'file') lastInput = el;
+		} else if (el.isContentEditable && '__insertToken' in el) {
+			lastInput = el as RichHost;
 		}
 	}
 
@@ -110,9 +114,16 @@
 		spliceToken(el, token);
 	}
 
-	function spliceToken(el: HTMLInputElement | HTMLTextAreaElement | null, token: string) {
+	function spliceToken(
+		el: HTMLInputElement | HTMLTextAreaElement | RichHost | null,
+		token: string
+	) {
 		if (!el) {
 			set('content', `${s.content ?? ''}${token}`);
+			return;
+		}
+		if (!(el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement)) {
+			el.__insertToken?.(token);
 			return;
 		}
 		const start = el.selectionStart ?? el.value.length;
@@ -123,15 +134,6 @@
 		el.selectionStart = el.selectionEnd = start + token.length;
 	}
 
-	function autogrow(el: HTMLTextAreaElement) {
-		const fit = () => {
-			el.style.height = '0';
-			el.style.height = `${el.scrollHeight}px`;
-		};
-		fit();
-		el.addEventListener('input', fit);
-		return { destroy: () => el.removeEventListener('input', fit) };
-	}
 
 	// ── embeds ───────────────────────────────────────────────────────────────
 	function addEmbed() {
@@ -364,17 +366,13 @@
 					<span class="text-[10px] text-[#949ba4]">today at 4:20 PM</span>
 				</div>
 
-				<!-- Content — typed straight into the bubble -->
-				<textarea
-					use:autogrow
-					rows="1"
-					data-emoji-ok
-					class="dc-content w-full resize-none text-[13px] leading-[1.45] text-[#dbdee1]"
-					maxlength="2000"
+				<!-- Content — typed straight into the bubble, emoji drawn inline -->
+				<EmojiText
+					class="w-full text-[13px] leading-[1.45] text-[#dbdee1]"
 					placeholder={'Say something… {user.mention}, properties, markdown — all templates work'}
 					value={s.content ?? ''}
-					oninput={(e) => set('content', (e.currentTarget as HTMLTextAreaElement).value)}
-				></textarea>
+					onChange={(v) => set('content', v)}
+				/>
 
 				<!-- Attachments -->
 				{#if attachments && attachList.length > 0}
