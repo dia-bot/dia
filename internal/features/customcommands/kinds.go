@@ -210,6 +210,11 @@ type ComponentRow struct {
 	Components []Component `json:"components"`
 }
 
+// NoopCustomIDPrefix marks components whose clicks the worker acknowledges
+// silently and statelessly (DEFERRED_UPDATE_MESSAGE): no run lookup, no
+// steps, no expiry. The segment can never collide with a run id.
+const NoopCustomIDPrefix = "ccmd:noop:"
+
 // Component is one button or select inside a row.
 type Component struct {
 	Type           string         `json:"type"`            // button | select_string | select_user | select_role | select_channel
@@ -223,6 +228,11 @@ type Component struct {
 	Options        []SelectOption `json:"options,omitempty"` // string select
 	MinValues      *int           `json:"min_values,omitempty"`
 	MaxValues      *int           `json:"max_values,omitempty"`
+
+	// OnClick "none" makes a button decorative: every click is acknowledged
+	// silently and nothing ever runs. Such buttons keep working long after
+	// the run is gone (the custom_id carries no run reference).
+	OnClick string `json:"on_click,omitempty"` // "" (routed) | "none"
 }
 
 // SelectOption is one option in a string-select component.

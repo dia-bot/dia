@@ -492,6 +492,12 @@ func renderComponent(ctx context.Context, h *Halt, c cc.Component) discordgo.Mes
 		// inside a loop; the run id already isolates concurrent users.
 		cid = "ccmd:" + h.Run.ID + ":" + templated(ctx, h, c.CustomIDSuffix)
 	}
+	if c.OnClick == "none" {
+		// Decorative: the custom_id references no run, so clicks resolve to a
+		// bare silent acknowledgement forever (suffix only keeps ids unique
+		// within the message).
+		cid = cc.NoopCustomIDPrefix + templated(ctx, h, c.CustomIDSuffix)
+	}
 	switch c.Type {
 	case "button":
 		style := buttonStyle(c.Style)

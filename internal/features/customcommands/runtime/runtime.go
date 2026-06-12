@@ -151,6 +151,11 @@ func (p *Plugin) handleResumeModal(c *interactions.Context) error {
 
 func (p *Plugin) resume(c *interactions.Context, kind string) error {
 	cid := c.CustomID()
+	// Decorative components: acknowledged silently, statelessly, forever.
+	// Their custom_id references no run, so there is nothing to look up.
+	if strings.HasPrefix(cid, cc.NoopCustomIDPrefix) {
+		return c.DeferUpdate()
+	}
 	run, err := p.deps.Store.CommandRuns.FindWaitingForComponent(c.Ctx, cid)
 	if errors.Is(err, store.ErrNotFound) {
 		return c.RespondEphemeral("This interaction is no longer active.")
