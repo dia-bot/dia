@@ -10,24 +10,24 @@
 	import PropertiesStudio from '$lib/components/commands/PropertiesStudio.svelte';
 	import FieldSelect from '$lib/components/commands/FieldSelect.svelte';
 	import NumberField from '$lib/components/commands/NumberField.svelte';
+	import ReleaseDock, { type DockState } from '$lib/components/commands/ReleaseDock.svelte';
+	import PreflightIssues from '$lib/components/commands/PreflightIssues.svelte';
 	import type { Definition, Step, ValidationResult, ValidationIssue } from '$lib/commands/types';
 	import { newStep } from '$lib/commands/types';
 	import { EXPR_SCOPE_CTX, type ExprScope } from '$lib/commands/expr-meta';
 
-	import { Dialog } from '$lib/components/ui';
+	import { Dialog, Popover } from '$lib/components/ui';
 	import { fade, fly } from 'svelte/transition';
 	import { cubicOut } from 'svelte/easing';
 	import { dur } from '$lib/motion';
 
 	import ChevronLeft from 'lucide-svelte/icons/chevron-left';
-	import Send from 'lucide-svelte/icons/send';
 	import Settings from 'lucide-svelte/icons/settings';
 	import CircleAlert from 'lucide-svelte/icons/circle-alert';
 	import Braces from 'lucide-svelte/icons/braces';
 	import Plus from 'lucide-svelte/icons/plus';
 	import Trash2 from 'lucide-svelte/icons/trash-2';
-	import Check from 'lucide-svelte/icons/check';
-	import LoaderCircle from 'lucide-svelte/icons/loader-circle';
+	import Power from 'lucide-svelte/icons/power';
 
 	const store = getContext<GuildStore>(GUILD_CTX);
 	// Reactive: SvelteKit reuses this component on param-only navigations
@@ -53,14 +53,20 @@
 	let elapsedSec = $state(0);
 	let loadTimer: ReturnType<typeof setInterval> | null = null;
 	let loadStartMs = $state(0);
-	let saving = $state(false);
-	let publishing = $state(false);
-	// Post-save feedback: the button flashes its success state, errors surface
-	// as a chip beside the actions instead of vanishing into the console.
-	let saveFlash = $state<'' | 'saved' | 'published'>('');
-	let saveError = $state('');
-	let flashTimer: ReturnType<typeof setTimeout> | null = null;
-	let errorTimer: ReturnType<typeof setTimeout> | null = null;
+	// The release dock's lifecycle. 'idle' defers to dirty/status for the
+	// resting presentation; everything else is an explicit moment (in flight,
+	// settled, failed) that overrides it until its timer hands back.
+	type DockPhase = 'idle' | 'saving' | 'publishing' | 'saved' | 'published' | 'error';
+	let phase = $state<DockPhase>('idle');
+	let dockError = $state('');
+	let dockErrorAction = $state<'save' | 'publish'>('save');
+	let dockTimer: ReturnType<typeof setTimeout> | null = null;
+	let validating = $state(false);
+	// Bumped when Cmd/Ctrl+S lands on a clean editor — the dock answers with
+	// an "Everything is saved" pill so the shortcut never feels dead.
+	let savedPing = $state(0);
+	let capsuleFlash = $state(false);
+	let capsuleTimer: ReturnType<typeof setTimeout> | null = null;
 	let selectedId = $state('');
 	let validation = $state<ValidationResult | null>(null);
 	let runs = $state<
@@ -87,6 +93,35 @@
 	const errorCount = $derived(
 		validation?.issues?.filter((i) => i.severity === 'error').length ?? 0
 	);
+
+	// What the dock shows right now. Phase wins; otherwise dirty, then a
+	// resting capsule while the command is still a draft.
+	const dockState = $derived.by<DockState>(() => {
+		if (!cmd) return 'hidden';
+		if (phase !== 'idle') return phase;
+		if (dirty) return 'dirty';
+		if (cmd.status === 'draft') return 'resting';
+		return 'hidden';
+	});
+	const inFlight = $derived(phase === 'saving' || phase === 'publishing');
+
+	// The enabled flag as last saved — the power key's "on save" tag and the
+	// off-veil copy both hang off the delta against this.
+	const baseEnabled = $derived.by(() => {
+		if (!baseline) return cmd?.enabled ?? true;
+		try {
+			return !!JSON.parse(baseline).enabled;
+		} catch {
+			return cmd?.enabled ?? true;
+		}
+	});
+
+	// The dock re-centers in the space left of the step drawer (md+), and
+	// yields entirely below md while a drawer is open. Width mirror of
+	// StepDrawer's isMessageKind sizing.
+	const MESSAGE_KINDS = ['reply', 'edit_reply', 'send_message', 'send_dm', 'embed_send'];
+	const drawerOpen = $derived(!!selectedStep);
+	const drawerWide = $derived(!!selectedStep && MESSAGE_KINDS.includes(selectedStep.kind));
 
 	// Editor-wide expression scope — every <ExprField> reads this through
 	// context to populate the in-scope variable picker.
@@ -141,6 +176,9 @@
 		selectedId = '';
 		validation = null;
 		runs = [];
+		clearDockTimer();
+		phase = 'idle';
+		dockError = '';
 		(async () => {
 			const t0 = performance.now();
 			loadStartMs = t0;
@@ -256,7 +294,10 @@
 	}
 
 	async function validate() {
-		if (!cmd) return;
+		if (!cmd) {
+			validating = false;
+			return;
+		}
 		try {
 			const r = await api.validateCommand(store.id, {
 				name: cmd.name,
@@ -267,6 +308,8 @@
 			if (cmd) cmd.requires_defer = r.validation.requires_defer;
 		} catch {
 			/* ignore */
+		} finally {
+			validating = false;
 		}
 	}
 
@@ -275,14 +318,24 @@
 		if (!cmd || !loaded) return;
 		void JSON.stringify(cmd.definition);
 		clearTimeout(validateTimer);
+		// The dock's Publish slot shows "Checking" until this settles — a
+		// stale validation.ok must never let a broken draft through.
+		validating = true;
 		validateTimer = setTimeout(validate, 400);
 	});
 
+	function clearDockTimer() {
+		if (dockTimer) {
+			clearTimeout(dockTimer);
+			dockTimer = null;
+		}
+	}
+
 	async function save(thenPublish = false) {
-		if (!cmd || saving || publishing) return;
-		if (thenPublish) publishing = true;
-		else saving = true;
-		saveError = '';
+		if (!cmd || inFlight) return;
+		clearDockTimer();
+		phase = thenPublish ? 'publishing' : 'saving';
+		dockError = '';
 		try {
 			const r = await api.upsertCommand(store.id, {
 				id: cmd.id,
@@ -294,28 +347,57 @@
 			});
 			validation = r.validation;
 			await reload();
-			saveFlash = thenPublish ? 'published' : 'saved';
-			if (flashTimer) clearTimeout(flashTimer);
-			flashTimer = setTimeout(() => (saveFlash = ''), 1800);
+			phase = thenPublish ? 'published' : 'saved';
+			if (thenPublish) {
+				// Header capsule flashes its border as draft flips to published.
+				capsuleFlash = true;
+				if (capsuleTimer) clearTimeout(capsuleTimer);
+				capsuleTimer = setTimeout(() => (capsuleFlash = false), 600);
+			}
+			dockTimer = setTimeout(() => (phase = 'idle'), thenPublish ? 1600 : 1400);
 		} catch (e) {
-			saveError = e instanceof Error ? e.message : 'Save failed';
-			if (errorTimer) clearTimeout(errorTimer);
-			errorTimer = setTimeout(() => (saveError = ''), 5000);
-		} finally {
-			saving = false;
-			publishing = false;
+			dockErrorAction = thenPublish ? 'publish' : 'save';
+			dockError = e instanceof Error ? e.message : 'Request failed';
+			phase = 'error';
+			dockTimer = setTimeout(() => {
+				phase = 'idle';
+				dockError = '';
+			}, 6000);
 		}
 	}
+
+	// A fresh edit during a settled flash hands the dock straight back to its
+	// dirty state instead of finishing the hold.
+	$effect(() => {
+		if (dirty && (phase === 'saved' || phase === 'published')) {
+			clearDockTimer();
+			phase = 'idle';
+		}
+	});
 
 	function onShortcut(e: KeyboardEvent) {
 		if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
 			e.preventDefault();
-			if (dirty && !saving && !publishing) void save(false);
+			if (inFlight) return;
+			if (dirty) void save(false);
+			else savedPing++;
 		}
 	}
 
 	function reset() {
 		if (baseline) cmd = JSON.parse(baseline);
+	}
+
+	// Preflight rows route to the thing they complain about: a step on the
+	// canvas when the path names one, the settings dialog otherwise.
+	function jumpToIssue(iss: ValidationIssue) {
+		const parts = iss.path.split('.');
+		let stepId = '';
+		for (let i = 0; i < parts.length - 1; i++) {
+			if (parts[i] === 'steps') stepId = parts[i + 1];
+		}
+		if (stepId) selectedId = stepId;
+		else settingsOpen = true;
 	}
 
 	function addAtRoot(kind: string) {
@@ -695,13 +777,6 @@
 		return () => window.removeEventListener('keydown', onKey);
 	});
 
-	function statusPipColor(): string {
-		if (!cmd) return 'bg-faint';
-		if (!cmd.enabled) return 'bg-faint/50';
-		if (cmd.status === 'published') return 'bg-success';
-		return 'bg-ink/60'; // draft — neutral white, no amber
-	}
-
 	function relTime(iso: string): string {
 		const d = new Date(iso).getTime();
 		const diff = (Date.now() - d) / 1000;
@@ -804,17 +879,81 @@
 				<ChevronLeft size={14} />
 			</button>
 
-			<!-- Status pip + name -->
-			<span class="size-1.5 shrink-0 rounded-full {statusPipColor()}" title={cmd.status}></span>
+			<!-- Power key — enabled is what controls Discord visibility, so it
+			     sits fused to the command's identity, not parked in a corner. -->
+			<button
+				type="button"
+				role="switch"
+				aria-checked={cmd.enabled}
+				aria-label="Command enabled"
+				class="grid size-7 shrink-0 place-items-center rounded-[7px] border transition-colors duration-200 {cmd.enabled
+					? 'border-success/40 bg-success/[0.08] text-success hover:border-success/70'
+					: 'border-line text-faint hover:border-line-strong hover:text-muted'} {inFlight
+					? 'pointer-events-none opacity-60'
+					: ''}"
+				onclick={() => cmd && (cmd.enabled = !cmd.enabled)}
+				title={cmd.enabled
+					? `On. Members can use /${cmd.name}. Click to turn off; applies on save.`
+					: `Off. Hidden from members. Click to turn on; applies on save.`}
+			>
+				{#key cmd.enabled}
+					<span class="power-flip grid place-items-center">
+						<Power size={13} />
+					</span>
+				{/key}
+			</button>
+
+			{#if cmd.enabled !== baseEnabled}
+				<span
+					in:fly={{ x: -4, duration: dur(160), easing: cubicOut }}
+					out:fade={{ duration: dur(120) }}
+					class="inline-flex shrink-0 items-center gap-1 font-mono text-[9px] font-medium uppercase tracking-[0.14em] text-faint"
+				>
+					<span class="size-1 animate-pulse rounded-full bg-ink/70"></span> on save
+				</span>
+			{/if}
+
 			<span class="select-none text-[13px] text-faint">/</span>
 			<input
-				class="min-w-0 rounded border border-transparent bg-transparent px-1 py-0.5 font-mono text-[13px] font-medium text-ink focus:border-line focus:outline-none"
+				class="min-w-0 rounded border border-transparent bg-transparent px-1 py-0.5 font-mono text-[13px] font-medium focus:border-line focus:outline-none {cmd.enabled
+					? 'text-ink'
+					: 'text-muted'}"
 				style="width: {Math.max(6, (cmd.name?.length ?? 0) + 2)}ch"
 				bind:value={cmd.name}
 			/>
-			<span class="shrink-0 font-mono text-[10px] tabular-nums text-faint">v{cmd.version}</span>
-			<span class="shrink-0 font-mono text-[10px] uppercase tracking-[0.12em] text-faint">
-				{cmd.status}
+
+			<!-- Status capsule: where this command stands, in one mono chip. -->
+			<span
+				class="inline-flex h-[22px] shrink-0 items-center rounded border px-1.5 font-mono text-[10px] uppercase tracking-[0.12em] text-faint transition-colors duration-500 {capsuleFlash
+					? 'border-success/40'
+					: 'border-line'}"
+			>
+				<span class="inline-grid overflow-hidden">
+					{#key cmd.status + (baseEnabled ? '' : ':off')}
+						<span
+							class="col-start-1 row-start-1 inline-flex items-center gap-1 whitespace-pre"
+							in:fly={{ y: 6, duration: dur(200), easing: cubicOut }}
+							out:fade={{ duration: dur(120) }}
+						>
+							{#if cmd.status === 'published'}
+								<span class="inline-grid overflow-hidden tabular-nums">
+									{#key cmd.version}
+										<span
+											class="col-start-1 row-start-1"
+											in:fly={{ y: 8, duration: dur(220), easing: cubicOut }}
+											out:fly={{ y: -8, duration: dur(160) }}
+										>
+											v{cmd.version}
+										</span>
+									{/key}
+								</span>
+								<span>· published{baseEnabled ? '' : ' · off'}</span>
+							{:else}
+								draft{baseEnabled ? '' : ' · off'}
+							{/if}
+						</span>
+					{/key}
+				</span>
 			</span>
 
 			{#if cmd.requires_defer}
@@ -826,33 +965,25 @@
 				</span>
 			{/if}
 
-			<!-- Validation indicator -->
-			{#if validation}
-				{#if errorCount > 0}
-					<span
-						class="inline-flex shrink-0 items-center gap-1 rounded border border-danger/30 bg-danger/5 px-1.5 font-mono text-[10px] text-danger"
-						title="{errorCount} {errorCount === 1 ? 'error' : 'errors'}"
+			<!-- Issues chip: opens the same preflight list the dock gates on. -->
+			{#if validation && issueCount > 0}
+				<Popover.Root>
+					<Popover.Trigger
+						class="inline-flex h-[22px] shrink-0 items-center gap-1 rounded border px-1.5 font-mono text-[10px] transition-colors {errorCount > 0
+							? 'border-danger/30 bg-danger/5 text-danger hover:border-danger/50'
+							: 'border-line-strong bg-surface/40 text-muted hover:border-line-strong hover:text-ink'}"
 					>
 						<CircleAlert size={10} />
-						{errorCount}
-					</span>
-				{:else if issueCount > 0}
-					<span
-						class="inline-flex shrink-0 items-center gap-1 rounded border border-line-strong bg-surface/40 px-1.5 font-mono text-[10px] text-muted"
-						title="{issueCount} warnings"
-					>
-						{issueCount}
-					</span>
-				{/if}
-			{/if}
-
-			{#if dirty}
-				<span
-					transition:fade={{ duration: dur(150) }}
-					class="inline-flex shrink-0 items-center gap-1 font-mono text-[10px] uppercase tracking-[0.12em] text-muted"
-				>
-					<span class="size-1 animate-pulse rounded-full bg-ink/70"></span> unsaved
-				</span>
+						{errorCount > 0 ? errorCount : issueCount}
+					</Popover.Trigger>
+					<Popover.Content class="w-[340px] p-1.5" side="bottom" align="start" sideOffset={8}>
+						<PreflightIssues
+							issues={validation.issues}
+							requiresDefer={cmd.requires_defer}
+							onJump={jumpToIssue}
+						/>
+					</Popover.Content>
+				</Popover.Root>
 			{/if}
 
 			<div class="ml-auto flex items-center gap-1">
@@ -879,167 +1010,74 @@
 				>
 					<Settings size={13} />
 				</button>
-
-				<div class="mx-1 h-3.5 w-px bg-line"></div>
-
-				{#if saveError}
-					<span
-						transition:fade={{ duration: dur(150) }}
-						class="inline-flex h-6 max-w-52 items-center gap-1 truncate rounded border border-danger/30 bg-danger/5 px-1.5 font-mono text-[10px] text-danger"
-						title={saveError}
-					>
-						<CircleAlert size={10} class="shrink-0" />
-						<span class="truncate">{saveError}</span>
-					</span>
-				{/if}
-
-				<!-- On/Off — a real switch: knob slides, the label rolls over -->
-				<button
-					type="button"
-					role="switch"
-					aria-checked={cmd.enabled}
-					aria-label="Command enabled"
-					class="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-full border py-0 pl-1.5 pr-2 transition-colors duration-200 {cmd.enabled
-						? 'border-success/35 bg-success/[0.06] hover:border-success/60'
-						: 'border-line bg-bg/40 hover:border-line-strong'}"
-					onclick={() => cmd && (cmd.enabled = !cmd.enabled)}
-					title={cmd.enabled
-						? 'Members can run this command'
-						: 'Hidden from members until turned on'}
-				>
-					<span
-						class="relative h-4 w-7 shrink-0 rounded-full transition-colors duration-200 {cmd.enabled
-							? 'bg-success/80'
-							: 'bg-line-strong'}"
-					>
-						<span
-							class="absolute left-0.5 top-0.5 size-3 rounded-full bg-white shadow-sm transition-transform duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none {cmd.enabled
-								? 'translate-x-3'
-								: ''}"
-						></span>
-					</span>
-					<span
-						class="relative h-3 w-[22px] overflow-hidden text-left font-mono text-[10px] font-medium uppercase leading-3 tracking-[0.12em]"
-					>
-						<span
-							class="absolute inset-0 transition-[opacity,transform] duration-200 motion-reduce:transition-none {cmd.enabled
-								? 'translate-y-0 text-success opacity-100'
-								: '-translate-y-2 opacity-0'}"
-						>
-							On
-						</span>
-						<span
-							class="absolute inset-0 transition-[opacity,transform] duration-200 motion-reduce:transition-none {cmd.enabled
-								? 'translate-y-2 opacity-0'
-								: 'translate-y-0 text-faint opacity-100'}"
-						>
-							Off
-						</span>
-					</span>
-				</button>
-
-				{#if dirty}
-					<button
-						type="button"
-						in:fly={{ x: 8, duration: dur(180), easing: cubicOut }}
-						out:fade={{ duration: dur(120) }}
-						class="inline-flex h-7 items-center rounded-md px-2 text-[13px] font-medium text-muted transition-colors hover:text-ink"
-						onclick={reset}
-						disabled={saving || publishing}
-					>
-						Reset
-					</button>
-				{/if}
-
-				<!-- Save morphs through its states: idle, spinner, saved flash -->
-				<button
-					type="button"
-					class="inline-flex h-7 w-[76px] items-center justify-center rounded-md border px-2 text-[13px] font-medium transition-[border-color,background,color,opacity] duration-200 {saveFlash ===
-						'saved' && !dirty
-						? 'border-success/40 bg-success/10 text-success'
-						: 'border-line bg-bg text-ink hover:border-line-strong disabled:opacity-50'}"
-					onclick={() => save(false)}
-					disabled={saving || publishing || !dirty}
-				>
-					{#if saving}
-						<span
-							in:fade={{ duration: dur(120) }}
-							class="inline-flex items-center gap-1.5"
-						>
-							<LoaderCircle size={12} class="animate-spin" />
-							Saving
-						</span>
-					{:else if saveFlash === 'saved' && !dirty}
-						<span
-							in:fly={{ y: 6, duration: dur(200), easing: cubicOut }}
-							class="inline-flex items-center gap-1.5"
-						>
-							<Check size={12} />
-							Saved
-						</span>
-					{:else}
-						<span in:fade={{ duration: dur(120) }}>Save</span>
-					{/if}
-				</button>
-
-				<button
-					type="button"
-					class="inline-flex h-7 w-[100px] items-center justify-center rounded-md px-2 text-[13px] font-medium transition-[background,color,opacity] duration-200 {saveFlash ===
-						'published'
-						? 'bg-success/15 text-success'
-						: 'bg-ink text-bg hover:opacity-90 disabled:opacity-40'}"
-					onclick={() => save(true)}
-					disabled={publishing || (validation && !validation.ok) || false}
-				>
-					{#if publishing}
-						<span
-							in:fade={{ duration: dur(120) }}
-							class="inline-flex items-center gap-1.5"
-						>
-							<LoaderCircle size={12} class="animate-spin" />
-							Publishing
-						</span>
-					{:else if saveFlash === 'published'}
-						<span
-							in:fly={{ y: 6, duration: dur(200), easing: cubicOut }}
-							class="inline-flex items-center gap-1.5"
-						>
-							<Check size={12} />
-							Published
-						</span>
-					{:else}
-						<span
-							in:fade={{ duration: dur(120) }}
-							class="inline-flex items-center gap-1.5"
-						>
-							<Send size={11} />
-							Publish
-						</span>
-					{/if}
-				</button>
 			</div>
 		</header>
 
 		<!-- ── The canvas, full-bleed. Click a step → drawer. ── -->
 		<div class="relative min-h-0 flex-1 overflow-hidden bg-bg">
-			<FlowCanvas
-				steps={cmd.definition.steps as Step[]}
-				scratch={cmd.definition.scratch ?? []}
-				commandName={cmd.name}
-				commandId={cmd.id}
-				bind:selectedId
-				{errorPaths}
-				onAddAtRoot={addAtRoot}
-				onAddFromHandle={addFromHandle}
-				onDeleteStep={deleteStep}
-				onDetach={detachToScratch}
-				onAttachScratch={attachScratch}
-				onAddErrorRouter={addErrorRouter}
-				onRemoveErrorRouter={removeErrorRouter}
-				onTruncateChain={truncateChain}
-				onAbsorbAfter={absorbAfterInto}
-				onAddCase={addCase}
-				onAddParallelBranch={addParallelBranchSlot}
+			<!-- Off-veil: a disabled command's canvas dims but stays editable. -->
+			<div
+				class="absolute inset-0 transition-[filter] duration-300 motion-reduce:transition-none {cmd.enabled
+					? ''
+					: 'brightness-[0.85] saturate-[0.85]'}"
+			>
+				<FlowCanvas
+					steps={cmd.definition.steps as Step[]}
+					scratch={cmd.definition.scratch ?? []}
+					commandName={cmd.name}
+					commandId={cmd.id}
+					bind:selectedId
+					{errorPaths}
+					showLegend={dockState === 'hidden'}
+					onAddAtRoot={addAtRoot}
+					onAddFromHandle={addFromHandle}
+					onDeleteStep={deleteStep}
+					onDetach={detachToScratch}
+					onAttachScratch={attachScratch}
+					onAddErrorRouter={addErrorRouter}
+					onRemoveErrorRouter={removeErrorRouter}
+					onTruncateChain={truncateChain}
+					onAbsorbAfter={absorbAfterInto}
+					onAddCase={addCase}
+					onAddParallelBranch={addParallelBranchSlot}
+				/>
+			</div>
+
+			{#if !cmd.enabled}
+				<div
+					in:fly={{ y: -8, duration: dur(200), easing: cubicOut }}
+					out:fade={{ duration: dur(150) }}
+					class="pointer-events-none absolute left-1/2 top-3 z-30 -translate-x-1/2 whitespace-nowrap rounded-full border border-line bg-surface/90 px-3 py-1 font-mono text-[10px] uppercase tracking-[0.12em] text-muted backdrop-blur"
+				>
+					Off · hidden from members{cmd.enabled !== baseEnabled ? ' · applies on save' : ''}
+				</div>
+			{/if}
+
+			<ReleaseDock
+				dock={dockState}
+				status={cmd.status}
+				enabled={cmd.enabled}
+				version={cmd.version}
+				{validating}
+				hasValidation={validation !== null}
+				{errorCount}
+				issues={validation?.issues ?? []}
+				requiresDefer={cmd.requires_defer}
+				error={dockError}
+				errorAction={dockErrorAction}
+				{savedPing}
+				{drawerOpen}
+				{drawerWide}
+				onSave={() => save(false)}
+				onPublish={() => save(true)}
+				onDiscard={reset}
+				onRetry={() => save(dockErrorAction === 'publish')}
+				onDismissError={() => {
+					clearDockTimer();
+					phase = 'idle';
+					dockError = '';
+				}}
+				onJumpToIssue={jumpToIssue}
 			/>
 
 			{#if selectedStep}
@@ -1368,8 +1406,23 @@
 	.fade-in {
 		animation: editor-fade-in 240ms cubic-bezier(0.16, 1, 0.3, 1);
 	}
+	/* The power key's glyph swings in as the switch flips. */
+	@keyframes power-flip-in {
+		from {
+			transform: rotate(-90deg) scale(0.85);
+			opacity: 0.6;
+		}
+		to {
+			transform: none;
+			opacity: 1;
+		}
+	}
+	.power-flip {
+		animation: power-flip-in 180ms cubic-bezier(0.22, 1, 0.36, 1);
+	}
 	@media (prefers-reduced-motion: reduce) {
-		.fade-in {
+		.fade-in,
+		.power-flip {
 			animation: none;
 		}
 	}
