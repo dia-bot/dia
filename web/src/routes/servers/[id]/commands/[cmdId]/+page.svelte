@@ -134,19 +134,95 @@
 		exprScope.steps = cmd?.definition.steps ?? [];
 	});
 
+	// Validation paths are bracket-indexed ("steps[0].then[1].spec.cond");
+	// the canvas keys its nodes by dot paths ("steps.0.then.1"). normalisePath
+	// converts between the two, also restoring the "spec." the backend omits
+	// before parallel branches.
+	function normalisePath(path: string): string[] {
+		return path
+			.replace(/\[(\d+)\]/g, '.$1')
+			.replace(/(^|\.)(?:spec\.)?branches\./g, '$1spec.branches.')
+			.split('.');
+	}
+
 	function buildErrorPaths(issues: ValidationIssue[]): Set<string> {
 		const set = new Set<string>();
 		for (const iss of issues) {
-			const parts = iss.path.split('.');
+			const parts = normalisePath(iss.path);
 			let acc = '';
-			for (let i = 0; i < parts.length; i++) {
-				acc = i === 0 ? parts[0] : `${acc}.${parts[i]}`;
-				if (parts[i] === 'steps' && i + 1 < parts.length) {
-					set.add(`${acc}.${parts[i + 1]}`);
-				}
+			for (const part of parts) {
+				acc = acc ? `${acc}.${part}` : part;
+				// Every numeric segment closes a step (or container) prefix;
+				// extra non-step entries never collide with node paths.
+				if (/^\d+$/.test(part)) set.add(acc);
 			}
 		}
 		return set;
+	}
+
+	// stepIdAtPath resolves a validation path to the deepest step it crosses,
+	// so preflight rows can select the offending card on the canvas.
+	function stepIdAtPath(path: string): string {
+		if (!cmd) return '';
+		const segs = normalisePath(path);
+		let arr: Step[] | undefined;
+		let cur: Step | undefined;
+		let lastId = '';
+		let i = 0;
+		if (segs[0] === 'steps') {
+			arr = cmd.definition.steps ?? [];
+			i = 1;
+		} else if (segs[0] === 'scratch' && /^\d+$/.test(segs[1] ?? '')) {
+			arr = (cmd.definition.scratch ?? [])[Number(segs[1])];
+			i = 2;
+		} else {
+			return '';
+		}
+		while (i < segs.length) {
+			const s = segs[i];
+			if (arr && /^\d+$/.test(s)) {
+				cur = arr[Number(s)];
+				arr = undefined;
+				if (cur?.id) lastId = cur.id;
+				i++;
+				continue;
+			}
+			if (!cur) break;
+			if (s === 'then' || s === 'else' || s === 'default' || s === 'on_error') {
+				arr = cur[s] ?? [];
+				cur = undefined;
+				i++;
+				continue;
+			}
+			if (s === 'cases' && /^\d+$/.test(segs[i + 1] ?? '') && segs[i + 2] === 'do') {
+				arr = cur.cases?.[Number(segs[i + 1])]?.do ?? [];
+				cur = undefined;
+				i += 3;
+				continue;
+			}
+			if (s === 'on_error_cases' && /^\d+$/.test(segs[i + 1] ?? '') && segs[i + 2] === 'do') {
+				arr = cur.on_error_cases?.[Number(segs[i + 1])]?.do ?? [];
+				cur = undefined;
+				i += 3;
+				continue;
+			}
+			if (s === 'spec' && segs[i + 1] === 'branches' && /^\d+$/.test(segs[i + 2] ?? '')) {
+				// eslint-disable-next-line @typescript-eslint/no-explicit-any
+				arr = ((cur.spec as any)?.branches ?? [])[Number(segs[i + 2])];
+				cur = undefined;
+				i += 3;
+				continue;
+			}
+			if (s === 'spec' && segs[i + 1] === 'on_timeout') {
+				// eslint-disable-next-line @typescript-eslint/no-explicit-any
+				arr = ((cur.spec as any)?.on_timeout ?? []) as Step[];
+				cur = undefined;
+				i += 2;
+				continue;
+			}
+			break; // .spec.cond and friends: stop at the step we already hold
+		}
+		return lastId;
 	}
 
 	function findStep(steps: Step[], id: string): Step | null {
@@ -391,11 +467,7 @@
 	// Preflight rows route to the thing they complain about: a step on the
 	// canvas when the path names one, the settings dialog otherwise.
 	function jumpToIssue(iss: ValidationIssue) {
-		const parts = iss.path.split('.');
-		let stepId = '';
-		for (let i = 0; i < parts.length - 1; i++) {
-			if (parts[i] === 'steps') stepId = parts[i + 1];
-		}
+		const stepId = stepIdAtPath(iss.path);
 		if (stepId) selectedId = stepId;
 		else settingsOpen = true;
 	}
