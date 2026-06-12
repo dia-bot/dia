@@ -115,6 +115,7 @@
 						placeholder="Title"
 						maxlength="256"
 						value={embed?.title ?? ''}
+						data-emoji-ok
 						oninput={(e) => set('title', (e.currentTarget as HTMLInputElement).value)}
 					/>
 					<button
@@ -145,7 +146,8 @@
 					placeholder="Description — Go templates and markdown work here"
 					maxlength="4096"
 					value={embed?.description ?? ''}
-					oninput={(e) => set('description', (e.currentTarget as HTMLTextAreaElement).value)}
+					data-emoji-ok
+						oninput={(e) => set('description', (e.currentTarget as HTMLTextAreaElement).value)}
 				></textarea>
 
 				<!-- Fields — laid out like Discord lays them out -->
@@ -188,6 +190,7 @@
 									placeholder="Value"
 									maxlength="1024"
 									value={f.value}
+										data-emoji-ok
 									oninput={(e) =>
 										setField(i, { value: (e.currentTarget as HTMLTextAreaElement).value })}
 								></textarea>

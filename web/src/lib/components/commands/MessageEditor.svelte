@@ -94,8 +94,23 @@
 		return m[1] ? `<a:${m[2]}:${m[3]}>` : `<:${m[2]}:${m[3]}>`;
 	}
 
+	// Emoji markup only renders in message content and embed text; other
+	// fields (URLs, filenames, ids) get the picker's token appended to the
+	// content instead of garbled in place.
+	function insertEmoji(token: string) {
+		const el =
+			lastInput && rootEl?.contains(lastInput) && lastInput.matches('[data-emoji-ok]')
+				? lastInput
+				: null;
+		spliceToken(el, token);
+	}
+
 	function insertToken(token: string) {
 		const el = lastInput && rootEl?.contains(lastInput) ? lastInput : null;
+		spliceToken(el, token);
+	}
+
+	function spliceToken(el: HTMLInputElement | HTMLTextAreaElement | null, token: string) {
 		if (!el) {
 			set('content', `${s.content ?? ''}${token}`);
 			return;
@@ -322,7 +337,7 @@
 			{/if}
 			<EmojiPicker
 				value=""
-				onChange={(t) => t && insertToken(contentEmoji(t))}
+				onChange={(t) => t && insertEmoji(contentEmoji(t))}
 				class="grid h-6 w-7 shrink-0 place-items-center rounded border border-line text-faint transition-colors hover:border-line-strong hover:text-muted data-[state=open]:border-line-strong"
 			/>
 			<VarMenu onPick={insertToken} />
@@ -353,6 +368,7 @@
 				<textarea
 					use:autogrow
 					rows="1"
+					data-emoji-ok
 					class="dc-content w-full resize-none text-[13px] leading-[1.45] text-[#dbdee1]"
 					maxlength="2000"
 					placeholder={'Say something… {user.mention}, properties, markdown — all templates work'}
