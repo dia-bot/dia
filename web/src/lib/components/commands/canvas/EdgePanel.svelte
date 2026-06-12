@@ -72,6 +72,56 @@
 	const waitSpec = $derived((wait?.spec ?? {}) as any);
 	const invokerOnly = $derived((waitSpec.from_user?.src ?? '') === '{user.id}');
 
+	// How the bot answers THIS button's click on Discord. One listener serves
+	// the whole message, so per-button modes live in a suffix-keyed map on the
+	// wait spec; the plain `response` field is the listener-wide default.
+	const RESPONSE_MODES = [
+		{
+			value: 'reply',
+			label: 'Replies',
+			hint: "Shows the bot thinking until the flow's first Message step answers."
+		},
+		{
+			value: 'update',
+			label: 'Updates this message',
+			hint: "The flow's first Message step rewrites the clicked message in place."
+		},
+		{
+			value: 'silent',
+			label: 'Just acknowledges',
+			hint: 'Nothing visible. The flow runs quietly in the background.'
+		}
+	];
+	const clickSuffix = $derived.by(() => {
+		if (info.clickSwitch && info.caseIndex !== undefined) {
+			return info.clickSwitch.cases?.[info.caseIndex]?.when?.src ?? '';
+		}
+		return '';
+	});
+	const clickResponse = $derived.by(() => {
+		if (clickSuffix && waitSpec.responses?.[clickSuffix]) return waitSpec.responses[clickSuffix];
+		return waitSpec.response || 'reply';
+	});
+	function setClickResponse(mode: string) {
+		if (!wait) return;
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		const sp = { ...((wait.spec ?? {}) as any) };
+		if (clickSuffix) {
+			const rs = { ...(sp.responses ?? {}) };
+			// Dropping back to the default only works when no listener-wide
+			// override would shadow it.
+			if (mode === 'reply' && !sp.response) delete rs[clickSuffix];
+			else rs[clickSuffix] = mode;
+			if (Object.keys(rs).length === 0) delete sp.responses;
+			else sp.responses = rs;
+		} else if (mode === 'reply') {
+			delete sp.response;
+		} else {
+			sp.response = mode;
+		}
+		wait.spec = sp;
+	}
+
 	// Removing a click path: routed (switch) arms drop their case; the
 	// listener + switch are deleted once the last case goes.
 	function removeClickArm(keepSteps: boolean) {
@@ -296,6 +346,34 @@
 			Runs when the button is clicked. The run pauses on this line until
 			someone presses it (or the timeout passes).
 		</p>
+		<span class="mb-1 block font-mono text-[9.5px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
+			On click, the bot
+		</span>
+		<div class="mb-2 flex flex-col gap-1" role="radiogroup" aria-label="Click response">
+			{#each RESPONSE_MODES as m (m.value)}
+				<button
+					type="button"
+					role="radio"
+					aria-checked={clickResponse === m.value}
+					class="rounded-md border px-2 py-1.5 text-left transition-colors {clickResponse === m.value
+						? 'border-foreground/40 bg-secondary/60'
+						: 'border-input hover:border-foreground/25'}"
+					onclick={() => setClickResponse(m.value)}
+				>
+					<span class="flex items-center gap-1.5">
+						<span
+							class="size-1.5 rounded-full {clickResponse === m.value
+								? 'bg-foreground'
+								: 'border border-muted-foreground/60'}"
+						></span>
+						<span class="text-[11.5px] font-medium text-foreground">{m.label}</span>
+					</span>
+					<span class="mt-0.5 block pl-3 text-[10.5px] leading-snug text-muted-foreground">
+						{m.hint}
+					</span>
+				</button>
+			{/each}
+		</div>
 		<label class="mb-2 flex items-center justify-between gap-2">
 			<span class="text-[11.5px] text-muted-foreground">
 				Only the <span class="font-medium text-foreground">command's invoker</span> can click
