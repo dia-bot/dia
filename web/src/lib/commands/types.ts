@@ -198,6 +198,15 @@ export interface Definition {
 	ui_hints?: Record<string, unknown>;
 }
 
+// ShapeNode is the compact structural sketch of a step the list API derives
+// for the overview's flow thumbnails: kind, non-empty control branches in
+// display order, and whether an on-error router hangs off it.
+export interface ShapeNode {
+	k: string;
+	c?: ShapeNode[][];
+	e?: boolean;
+}
+
 export interface CommandSummary {
 	id: number;
 	name: string;
@@ -207,6 +216,13 @@ export interface CommandSummary {
 	version: number;
 	requires_defer: boolean;
 	updated_at: string;
+	// Optional enrichments (older APIs may omit them; the overview degrades).
+	step_count?: number;
+	option_count?: number;
+	flow_shape?: ShapeNode[];
+	shape_more?: number;
+	runs_24h?: number;
+	last_run_at?: string | null;
 }
 
 export interface ValidationIssue {
