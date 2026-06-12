@@ -20,7 +20,8 @@
 		onDetach,
 		onAttachScratch,
 		onAddCase,
-		onAddParallelBranch
+		onAddParallelBranch,
+		showLegend = true
 	}: {
 		steps: Step[];
 		scratch?: Step[][];
@@ -28,6 +29,7 @@
 		commandId?: number;
 		selectedId: string;
 		errorPaths?: Set<string>;
+		showLegend?: boolean;
 		onAddAtRoot?: (kind: string, position?: { x: number; y: number }) => void;
 		onAddFromHandle?: (
 			sourceNodeId: string,
@@ -66,5 +68,6 @@
 		{onAttachScratch}
 		{onAddCase}
 		{onAddParallelBranch}
+		{showLegend}
 	/>
 </SvelteFlowProvider>

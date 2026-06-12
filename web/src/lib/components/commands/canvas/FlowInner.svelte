@@ -69,7 +69,8 @@
 		onDetach,
 		onAttachScratch,
 		onAddCase,
-		onAddParallelBranch
+		onAddParallelBranch,
+		showLegend = true
 	}: {
 		steps: Step[];
 		scratch?: Step[][];
@@ -77,6 +78,7 @@
 		commandId?: number;
 		selectedId: string;
 		errorPaths?: Set<string>;
+		showLegend?: boolean;
 		onAddAtRoot?: (kind: string, position?: { x: number; y: number }) => void;
 		onAddFromHandle?: (
 			sourceNodeId: string,
@@ -724,9 +726,12 @@
 			</div>
 		</Panel>
 
-		<!-- Legend — how the canvas works. -->
+		<!-- Legend — how the canvas works. Yields to the release dock. -->
+		{#if showLegend}
 		<Panel position="bottom-center">
 			<div
+				in:fade={{ duration: dur(160) }}
+				out:fade={{ duration: dur(120) }}
 				class="pointer-events-none hidden items-center gap-2 rounded-full border border-border/60 bg-card/90 px-3 py-1 font-mono text-[10px] text-muted-foreground/80 backdrop-blur-md md:flex"
 			>
 				<span>drag a dot → add a connected step</span>
@@ -739,6 +744,7 @@
 				</span>
 			</div>
 		</Panel>
+		{/if}
 	</SvelteFlow>
 
 	<!-- Connection editor — click a line to edit when that path runs. -->
