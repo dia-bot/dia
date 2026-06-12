@@ -210,7 +210,7 @@ func (p *Plugin) resume(c *interactions.Context, kind string) error {
 	// The awaiting step, located precisely via the cursor: it names where the
 	// payload lands (`into`) and how to acknowledge the click. The click
 	// router's hidden listener has NO custom_id suffix, so a suffix scan
-	// can't find it — only the cursor can.
+	// can't find it; only the cursor can.
 	awaitInto := ""
 	mode := cc.ClickResponseReply
 	if st := exec.StepAtCursor(def.Steps, cursor); st != nil && len(st.Spec) > 0 {
@@ -246,11 +246,11 @@ func (p *Plugin) resume(c *interactions.Context, kind string) error {
 	// A component click is a FRESH interaction with its own single response.
 	// The awaiting wait_for says HOW to acknowledge it (per clicked button):
 	//
-	//   reply (default) — defer visibly; the first reply edits the
+	//   reply (default): defer visibly; the first reply edits the
 	//   "thinking" message and later ones follow up.
-	//   update — defer silently; the first reply EDITS the clicked message
+	//   update: defer silently; the first reply EDITS the clicked message
 	//   in place (a deferred-update's @original is the component's message).
-	//   silent — defer silently and mark replied, so nothing shows unless a
+	//   silent: defer silently and mark replied, so nothing shows unless a
 	//   later step posts a follow-up.
 	switch mode {
 	case cc.ClickResponseSilent:
@@ -365,18 +365,35 @@ func (p *Plugin) resumeWait(ctx context.Context, r store.CommandRun) {
 	_ = json.Unmarshal(r.Cursor, &cursor)
 
 	run := &exec.RunState{
-		ID:                 r.ID,
-		CommandID:          r.CommandID,
-		CommandVersion:     r.CommandVersion,
-		GuildID:            event.FormatID(r.GuildID),
-		InvokerID:          event.FormatID(r.InvokerID),
-		ChannelID:          event.FormatID(r.ChannelID),
-		TriggerKind:        r.TriggerKind,
+		ID:             r.ID,
+		CommandID:      r.CommandID,
+		CommandVersion: r.CommandVersion,
+		GuildID:        event.FormatID(r.GuildID),
+		InvokerID:      event.FormatID(r.InvokerID),
+		ChannelID:      event.FormatID(r.ChannelID),
+		TriggerKind:    r.TriggerKind,
+		// The original interaction context: a wait_for is capped at 10
+		// minutes while the token lives ~15, so on_timeout steps can still
+		// reply or edit the original message.
+		InteractionID:      r.InteractionID,
+		InteractionToken:   r.InteractionToken,
+		InteractionExpires: r.InteractionExpires,
 		DefinitionSnapshot: r.DefinitionSnapshot,
 	}
 	run.SetCursor(cursor)
 
-	outcome, pause, runErr := p.eng.Resume(ctx, run, def, scope, cursor)
+	// A plain `wait` (sleep) resumes its continuation; an EVENT wait landing
+	// here means the deadline passed without the event, so the on_timeout
+	// branch runs and the continuation does not.
+	timedOut := r.AwaitingKind != ""
+	var outcome exec.Outcome
+	var pause *exec.PauseError
+	var runErr error
+	if timedOut {
+		outcome, pause, runErr = p.eng.ResumeTimedOut(ctx, run, def, scope, cursor)
+	} else {
+		outcome, pause, runErr = p.eng.Resume(ctx, run, def, scope, cursor)
+	}
 	if runErr != nil {
 		p.deps.Log.Warn("ccmd scheduler resume", "run", r.ID, "err", runErr)
 	}

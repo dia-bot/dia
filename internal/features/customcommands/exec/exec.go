@@ -223,10 +223,21 @@ func (e *Engine) Run(ctx context.Context, run *RunState, def cc.Definition, scop
 // Resume continues an in-flight run from a stored cursor. The caller must
 // have already injected the trigger payload into scope (e.g. via
 // ScopeData.Vars[into] = matched modal/component values).
-func (e *Engine) Resume(ctx context.Context, run *RunState, def cc.Definition, scope *cc.Scope, cursor []cc.CursorFrame) (out Outcome, pause *PauseError, err error) {
+func (e *Engine) Resume(ctx context.Context, run *RunState, def cc.Definition, scope *cc.Scope, cursor []cc.CursorFrame) (Outcome, *PauseError, error) {
+	return e.resumeWith(ctx, run, def, scope, cursor, false)
+}
+
+// ResumeTimedOut continues a run whose event wait expired: the wait's
+// on_timeout branch runs (if any) and the run drains, instead of executing
+// the post-trigger continuation as if the event had arrived.
+func (e *Engine) ResumeTimedOut(ctx context.Context, run *RunState, def cc.Definition, scope *cc.Scope, cursor []cc.CursorFrame) (Outcome, *PauseError, error) {
+	return e.resumeWith(ctx, run, def, scope, cursor, true)
+}
+
+func (e *Engine) resumeWith(ctx context.Context, run *RunState, def cc.Definition, scope *cc.Scope, cursor []cc.CursorFrame, timedOut bool) (out Outcome, pause *PauseError, err error) {
 	defer e.recoverPanic(run, &out, &pause, &err)
 	run.SetCursor(cursor)
-	werr := e.resumeAt(ctx, run, scope, def.Steps)
+	werr := e.resumeAt(ctx, run, scope, def.Steps, timedOut)
 	return e.classifyOutcome(werr)
 }
 
@@ -368,13 +379,20 @@ func (e *Engine) dispatch(ctx context.Context, run *RunState, scope *cc.Scope, s
 		scope.SetErrorInfo(info)
 		defer scope.ClearErrorInfo()
 
-		// Walk typed cases first — first match wins.
-		handler := pickErrorHandler(info.Kind, s.OnErrorCases)
+		// Walk typed cases first, first match wins. The cursor frame must
+		// say WHICH array the recovery steps live in, or a pause inside a
+		// typed case would resume against the default on_error chain.
+		handler, caseIdx := pickErrorHandler(info.Kind, s.OnErrorCases)
 		if handler == nil {
 			handler = s.OnError
+			caseIdx = -1
 		}
 		if len(handler) > 0 {
-			recover := e.walk(ctx, run, scope, handler, "on_error")
+			frame := cc.CursorFrame{Branch: "on_error"}
+			if caseIdx >= 0 {
+				frame = cc.CursorFrame{Branch: "on_error_case", Case: caseIdx}
+			}
+			recover := e.walkFrame(ctx, run, scope, handler, frame)
 			if recover != nil {
 				return recover
 			}
@@ -384,17 +402,18 @@ func (e *Engine) dispatch(ctx context.Context, run *RunState, scope *cc.Scope, s
 	return err
 }
 
-// pickErrorHandler returns the first OnErrorCases arm whose `When`
-// patterns match the given error kind, or nil for "no match — fall back".
-func pickErrorHandler(kind string, cases []cc.ErrorCase) []cc.Step {
-	for _, c := range cases {
+// pickErrorHandler returns the first OnErrorCases arm whose `When` patterns
+// match the given error kind plus its index, or (nil, -1) for "no match,
+// fall back".
+func pickErrorHandler(kind string, cases []cc.ErrorCase) ([]cc.Step, int) {
+	for ci, c := range cases {
 		for _, p := range c.When {
 			if MatchKind(kind, p) {
-				return c.Do
+				return c.Do, ci
 			}
 		}
 	}
-	return nil
+	return nil, -1
 }
 
 // ── Misc helpers ────────────────────────────────────────────────────────────
