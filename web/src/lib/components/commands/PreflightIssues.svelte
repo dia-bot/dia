@@ -1,5 +1,5 @@
 <script lang="ts">
-	// The preflight list — what stands between a draft and Discord. Shared by
+	// The preflight list: what stands between a draft and Discord. Shared by
 	// the release dock's blocked Publish chip and the header's issues chip.
 	// Clicking a row jumps to the offending step (or opens Settings when the
 	// issue isn't about a step).

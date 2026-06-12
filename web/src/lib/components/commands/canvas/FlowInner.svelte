@@ -726,7 +726,7 @@
 			</div>
 		</Panel>
 
-		<!-- Legend — how the canvas works. Yields to the release dock. -->
+		<!-- Legend: how the canvas works. Yields to the release dock. -->
 		{#if showLegend}
 		<Panel position="bottom-center">
 			<div

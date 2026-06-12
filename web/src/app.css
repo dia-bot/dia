@@ -557,7 +557,7 @@ input[type='number'] {
 }
 
 /* ─────────────────────────────────────────────────────────────
-   Release dock — the floating save/publish capsule on the
+   Release dock: the floating save/publish capsule on the
    command editor. Beam sweeps while a request is in flight;
    shake answers a failure.
    ───────────────────────────────────────────────────────────── */
