@@ -312,6 +312,7 @@ func validateSpec(s Step, path string, r *ValidationResult) {
 			return
 		}
 		requireExpr(spec.User, path, "user", s.Kind, r)
+		validateComponents(spec.Components, path, r)
 	case KindEmbedSend:
 		var spec SpecEmbedSend
 		if err := decodeSpec(s.Spec, &spec); err != nil {
@@ -332,6 +333,7 @@ func validateSpec(s Step, path string, r *ValidationResult) {
 			requireExpr(spec.Channel, path, "channel", s.Kind, r)
 			requireExpr(spec.Message, path, "message", s.Kind, r)
 		}
+		validateComponents(spec.Components, path, r)
 	case KindMessageFetch:
 		var spec SpecMessageFetch
 		if err := decodeSpec(s.Spec, &spec); err != nil {
@@ -678,11 +680,39 @@ func decodeSpec(raw json.RawMessage, v any) error {
 // validateComponents checks the per-component fields shared by every
 // message-shaped step.
 func validateComponents(rows []ComponentRow, path string, r *ValidationResult) {
+	// Static custom ids must be unique within the message or Discord rejects
+	// the whole send. Templated suffixes may render unique per item, so they
+	// are skipped.
+	seen := map[string]string{}
 	for ri, row := range rows {
 		for ci, c := range row.Components {
+			cpath := fmt.Sprintf("%s.spec.components[%d][%d]", path, ri, ci)
 			if c.OnClick != "" && c.OnClick != "none" {
-				r.fail(fmt.Sprintf("%s.spec.components[%d][%d].on_click", path, ri, ci),
-					"on_click_invalid", "on_click must be empty or none")
+				r.fail(cpath+".on_click", "on_click_invalid", "on_click must be empty or none")
+			}
+			isLink := c.Type == "button" && strings.EqualFold(c.Style, "link")
+			if c.OnClick == "none" && isLink {
+				r.fail(cpath+".on_click", "on_click_link_conflict",
+					"link buttons open a URL; an on-click behaviour does not apply")
+			}
+			if isLink {
+				continue // links carry no custom_id
+			}
+			sfx := c.CustomIDSuffix
+			if strings.Contains(sfx, "{") {
+				continue // templated: may render unique per item
+			}
+			key := "run:" + sfx
+			if c.OnClick == "none" {
+				key = "noop:" + sfx
+			} else if sfx == "" {
+				continue // routed without a suffix is a different problem
+			}
+			if _, dup := seen[key]; dup {
+				r.warn(cpath+".custom_id_suffix", "custom_id_duplicate",
+					"two components in this message render the same custom id; Discord rejects the message")
+			} else {
+				seen[key] = cpath
 			}
 		}
 	}
@@ -693,7 +723,7 @@ func validateComponents(rows []ComponentRow, path string, r *ValidationResult) {
 // never fire.
 func warnNoopClickConflicts(steps []Step, i int, path string, r *ValidationResult) {
 	switch steps[i].Kind {
-	case KindReply, KindEditReply, KindSendMessage, KindEmbedSend:
+	case KindReply, KindEditReply, KindSendMessage, KindSendDM, KindMessageEdit:
 	default:
 		return
 	}
