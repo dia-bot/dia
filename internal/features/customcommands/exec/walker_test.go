@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	cc "github.com/dia-bot/dia/internal/features/customcommands"
+	"github.com/dia-bot/dia/pkg/discordgo"
 )
 
 // testEngine returns an engine with a "probe" handler that records execution
@@ -250,6 +251,36 @@ func TestPauseAndResumeInsideTypedErrorCase(t *testing.T) {
 	}
 	if got := *ran; len(got) != 2 || got[0] != "r" || got[1] != "d" {
 		t.Fatalf("resume should run r then d, got %v", got)
+	}
+}
+
+// fakeDiscord satisfies DiscordClient via interface embedding; only the
+// methods a test exercises are implemented.
+type fakeDiscord struct{ DiscordClient }
+
+func (fakeDiscord) Respond(ref Interaction, resp *discordgo.InteractionResponse) error { return nil }
+
+// A modal shown on a component resume belongs to whoever clicked (the
+// actor), not the run's original invoker; the submit gate must await them.
+func TestModalOpenAwaitsTheActor(t *testing.T) {
+	e := New(Deps{Discord: fakeDiscord{}})
+	spec, _ := json.Marshal(cc.SpecModalOpen{Title: "Form", CustomIDSuffix: "f"})
+	def := cc.Definition{Steps: []cc.Step{{ID: "m", Kind: cc.KindModalOpen, Spec: spec}}}
+
+	run := &RunState{ID: "r10", InvokerID: "111", ActorID: "222", InteractionToken: "tok"}
+	_, pause, err := e.Run(context.Background(), run, def, newTestScope())
+	if err != nil || pause == nil {
+		t.Fatalf("want modal pause, err=%v", err)
+	}
+	if pause.AwaitingKind != "modal" || pause.AwaitingUserID != "222" {
+		t.Fatalf("modal must await the actor: %+v", pause)
+	}
+
+	// Slash-invoked runs have no separate actor; the invoker still gates.
+	run2 := &RunState{ID: "r11", InvokerID: "111", InteractionToken: "tok"}
+	_, pause2, err := e.Run(context.Background(), run2, def, newTestScope())
+	if err != nil || pause2 == nil || pause2.AwaitingUserID != "111" {
+		t.Fatalf("invoker fallback: %+v err=%v", pause2, err)
 	}
 }
 

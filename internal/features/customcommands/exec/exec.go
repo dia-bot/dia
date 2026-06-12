@@ -85,11 +85,16 @@ func (h *Halt) SetOutput(v any) {
 // RunState is the per-invocation state the walker mutates: cursor, scope,
 // pending logs, statistics. It is NOT shared between concurrent runs.
 type RunState struct {
-	ID                 string
-	CommandID          int64
-	CommandVersion     int
-	GuildID            string
-	InvokerID          string
+	ID             string
+	CommandID      int64
+	CommandVersion int
+	GuildID        string
+	InvokerID      string
+	// ActorID is who drives the CURRENT interaction: the invoker on a slash
+	// run, the clicker on a component resume. Steps that gate a follow-up
+	// interaction (a modal shown to whoever clicked) must await the actor,
+	// not the invoker.
+	ActorID            string
 	ChannelID          string
 	TriggerKind        string
 	InteractionID      string

@@ -249,11 +249,17 @@ func hModalOpen(ctx context.Context, h *Halt) error {
 	}
 	resume := time.Now().Add(timeout)
 	h.Run.markDurable()
+	// The modal was shown to whoever drove this interaction (the clicker on
+	// a component resume); only they can submit it.
+	actor := h.Run.ActorID
+	if actor == "" {
+		actor = h.Run.InvokerID
+	}
 	return &PauseError{
 		Kind:             "wait_for",
 		ResumeAt:         &resume,
 		AwaitingCustomID: customID,
-		AwaitingUserID:   h.Run.InvokerID,
+		AwaitingUserID:   actor,
 		AwaitingKind:     "modal",
 	}
 }
