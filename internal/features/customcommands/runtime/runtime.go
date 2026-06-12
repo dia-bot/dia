@@ -201,17 +201,46 @@ func (p *Plugin) resume(c *interactions.Context, kind string) error {
 		payload["fields"] = values
 	}
 	scope.Set("trigger", payload)
-	// Also land the payload under the awaiting step's `into` name, so flows
-	// reference {{ .Vars.<into>.user_id }} the way the editor promises.
-	if i := strings.LastIndex(cid, ":"); i >= 0 && i < len(cid)-1 {
-		if into := findAwaitInto(def.Steps, cid[i+1:]); into != "" {
-			scope.Set(into, payload)
-		}
-	}
 
 	var cursor []cc.CursorFrame
 	if len(run.Cursor) > 0 {
 		_ = json.Unmarshal(run.Cursor, &cursor)
+	}
+
+	// The awaiting step, located precisely via the cursor: it names where the
+	// payload lands (`into`) and how to acknowledge the click. The click
+	// router's hidden listener has NO custom_id suffix, so a suffix scan
+	// can't find it — only the cursor can.
+	awaitInto := ""
+	mode := cc.ClickResponseReply
+	if st := exec.StepAtCursor(def.Steps, cursor); st != nil && len(st.Spec) > 0 {
+		switch st.Kind {
+		case cc.KindWaitFor:
+			var ws cc.SpecWaitFor
+			if json.Unmarshal(st.Spec, &ws) == nil {
+				awaitInto = ws.Into
+				if kind == "component" {
+					suffix, _ := payload["id"].(string)
+					mode = ws.ResponseFor(suffix)
+				}
+			}
+		case cc.KindModalOpen:
+			var ms cc.SpecModalOpen
+			if json.Unmarshal(st.Spec, &ms) == nil {
+				awaitInto = ms.Into
+			}
+		}
+	}
+	// Land the payload under the awaiting step's `into` name, so flows
+	// reference {{ .Vars.<into>.id }} the way the editor promises. Runs
+	// persisted before cursors were captured fall back to a suffix scan.
+	if awaitInto == "" {
+		if i := strings.LastIndex(cid, ":"); i >= 0 && i < len(cid)-1 {
+			awaitInto = findAwaitInto(def.Steps, cid[i+1:])
+		}
+	}
+	if awaitInto != "" {
+		scope.Set(awaitInto, payload)
 	}
 
 	// A component click is a FRESH interaction with its own single response.
@@ -223,16 +252,6 @@ func (p *Plugin) resume(c *interactions.Context, kind string) error {
 	//   in place (a deferred-update's @original is the component's message).
 	//   silent — defer silently and mark replied, so nothing shows unless a
 	//   later step posts a follow-up.
-	mode := cc.ClickResponseReply
-	if kind == "component" {
-		if st := exec.StepAtCursor(def.Steps, cursor); st != nil && st.Kind == cc.KindWaitFor {
-			var ws cc.SpecWaitFor
-			if json.Unmarshal(st.Spec, &ws) == nil {
-				suffix, _ := payload["id"].(string)
-				mode = ws.ResponseFor(suffix)
-			}
-		}
-	}
 	switch mode {
 	case cc.ClickResponseSilent:
 		_ = c.DeferUpdate()
