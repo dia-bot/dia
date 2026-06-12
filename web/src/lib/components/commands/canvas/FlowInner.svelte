@@ -162,14 +162,16 @@
 			return { x: x + 400, y: y + idx * 180 };
 		}
 		if (h.startsWith('arm-')) {
-			// Error-router arms fan out to the right, staggered per arm.
+			// Error-router arms continue DOWN the router's own column (left of
+			// the spine), fanning further left per arm so recovery chains never
+			// land back on the main flow.
 			const i = Number(h.slice(4)) || 0;
-			return { x: x + 260, y: y + i * 110 };
+			return { x: x + 20 - i * 280, y: y + 170 };
 		}
 		if (h === 'default' && (src.data as NodeData | undefined)?.kind === 'error_router') {
-			// The router's else arm sits below its case arms.
+			// The router's else arm takes the slot after its case arms.
 			const arms = ((src.data as NodeData | undefined)?.step?.on_error_cases ?? []).length;
-			return { x: x + 260, y: y + arms * 110 };
+			return { x: x + 20 - arms * 280, y: y + 170 };
 		}
 		return { x, y: y + DY }; // out — straight down the spine
 	}
@@ -181,34 +183,38 @@
 
 	function place(raw: FlowNode[], rawEdges: FlowEdge[]): FlowNode[] {
 		// First paint (or after Tidy): dagre lays out the SPINE; click chains
-		// (reached through a button's dot) are excluded and placed relative to
-		// their button afterwards, so they fan right instead of stacking under
-		// the message card.
+		// (reached through a button's dot) and on-error routers with their
+		// recovery chains are excluded and placed relative to their owner
+		// afterwards, so they fan out beside the flow instead of dagre
+		// stacking them under the owning card.
 		if (!positions.has(ENTRY_ID)) {
 			pendingPlacement = null;
-			const clickRoots = rawEdges
-				.filter((e) => (e.sourceHandle ?? '').startsWith('component-'))
+			const offSpineRoots = rawEdges
+				.filter((e) => {
+					const h = e.sourceHandle ?? '';
+					return h.startsWith('component-') || h === 'on_error';
+				})
 				.map((e) => e.target);
-			const inClick = new Set(clickRoots);
+			const offSpine = new Set(offSpineRoots);
 			let grew = true;
 			while (grew) {
 				grew = false;
 				for (const e of rawEdges) {
-					if (inClick.has(e.source) && !inClick.has(e.target)) {
-						inClick.add(e.target);
+					if (offSpine.has(e.source) && !offSpine.has(e.target)) {
+						offSpine.add(e.target);
 						grew = true;
 					}
 				}
 			}
-			const spineNodes = raw.filter((n) => !inClick.has(n.id));
+			const spineNodes = raw.filter((n) => !offSpine.has(n.id));
 			const spineEdges = rawEdges.filter(
-				(e) => !inClick.has(e.source) && !inClick.has(e.target)
+				(e) => !offSpine.has(e.source) && !offSpine.has(e.target)
 			);
 			const laid = applyLayout(spineNodes, spineEdges, { rankdir: 'TB' });
 			positions.clear();
 			for (const n of laid) positions.set(n.id, n.position);
-			// Click-chain nodes fall through to the multi-pass below as
-			// unknowns, resolved via offsetFor (right of their button).
+			// Off-spine nodes fall through to the multi-pass below as
+			// unknowns, resolved via offsetFor (beside their owner).
 		}
 		const out = raw.map((n) => ({ ...n, position: positions.get(n.id) ?? n.position }));
 		const byId = new Map(out.map((n) => [n.id, n]));
