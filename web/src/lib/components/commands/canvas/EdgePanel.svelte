@@ -346,6 +346,13 @@
 			Runs when the button is clicked. The run pauses on this line until
 			someone presses it (or the timeout passes).
 		</p>
+		{#if info.targetKind === 'modal_open'}
+			<p class="mb-2 rounded-md border border-input bg-secondary/40 px-2 py-1.5 text-[10.5px] leading-snug text-muted-foreground">
+				This path opens a form, and the form itself answers the click. Discord
+				requires the form to be the first response, so no other click response
+				applies here.
+			</p>
+		{:else}
 		<span class="mb-1 block font-mono text-[9.5px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
 			On click, the bot
 		</span>
@@ -374,6 +381,7 @@
 				</button>
 			{/each}
 		</div>
+		{/if}
 		<label class="mb-2 flex items-center justify-between gap-2">
 			<span class="text-[11.5px] text-muted-foreground">
 				Only the <span class="font-medium text-foreground">command's invoker</span> can click

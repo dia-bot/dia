@@ -132,6 +132,9 @@ export type EdgeInfo = {
 	clickSwitch?: Step;
 	sourceStep: Step | null;
 	targetId: string;
+	// Kind of the step the line lands on (a click path starting with
+	// modal_open answers the click with the form, so the panel adapts).
+	targetKind?: string;
 };
 
 // Public ID of the synthetic entry node (the /command pill).

@@ -418,7 +418,9 @@
 			clickWait: d.clickWait,
 			clickSwitch: d.clickSwitch,
 			sourceStep: owner,
-			targetId: edge.target
+			targetId: edge.target,
+			targetKind: (nodes.find((n) => n.id === edge.target)?.data as NodeData | undefined)?.step
+				?.kind
 		};
 		selectedId = '';
 		routerOwnerId = null;
