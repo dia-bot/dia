@@ -507,11 +507,11 @@ type SpecWait struct {
 // Click-response modes: how the bot acknowledges the component interaction
 // that resumes a wait_for, before any steps run.
 //
-//   - reply (default): deferred channel message — Discord shows the bot
+//   - reply (default): deferred channel message; Discord shows the bot
 //     thinking until the flow's first Message step replies.
-//   - update: deferred update — nothing shows at the click; the flow's first
+//   - update: deferred update; nothing shows at the click, the flow's first
 //     Message step rewrites the clicked message in place.
-//   - silent: deferred update, marked replied — nothing shows at the click
+//   - silent: deferred update marked replied; nothing shows at the click
 //     and any later Message step posts a fresh follow-up.
 const (
 	ClickResponseReply  = "reply"
