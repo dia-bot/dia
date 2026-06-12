@@ -102,9 +102,23 @@ func (s *Server) handleListCommands(c *gin.Context) {
 		fail(c, http.StatusInternalServerError, "could not load commands")
 		return
 	}
+	// Usage stats are decoration: the list still serves without them.
+	stats, err := s.store.CommandRuns.GuildRunStats(c.Request.Context(), gidInt)
+	if err != nil {
+		stats = nil
+	}
 	out := make([]gin.H, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, summarizeCommand(r))
+		h := summarizeCommand(r)
+		addShapeFields(h, r.Definition)
+		if st, ok := stats[r.ID]; ok {
+			h["runs_24h"] = st.Runs24h
+			h["last_run_at"] = st.LastRunAt
+		} else if stats != nil {
+			h["runs_24h"] = 0
+			h["last_run_at"] = nil
+		}
+		out = append(out, h)
 	}
 	c.JSON(http.StatusOK, gin.H{"commands": out})
 }
@@ -250,6 +264,106 @@ func fullCommand(r store.CustomCommand) gin.H {
 	out := summarizeCommand(r)
 	out["definition"] = json.RawMessage(r.Definition)
 	return out
+}
+
+// ── Flow shape (the overview's miniature canvases) ──────────
+
+// shapeNode is the thumbnail's entire input; layout happens client-side.
+type shapeNode struct {
+	K string        `json:"k"`           // step kind
+	C [][]shapeNode `json:"c,omitempty"` // one array per non-empty control branch, in order
+	E bool          `json:"e,omitempty"` // has an on-error router
+}
+
+const (
+	shapeMaxNodes = 40
+	shapeMaxDepth = 6
+)
+
+// addShapeFields derives the overview's cheap structural fields from the
+// definition JSONB: total step count, slash property count, and a compact
+// capped shape for the flow thumbnail.
+func addShapeFields(h gin.H, raw json.RawMessage) {
+	var def cc.Definition
+	if len(raw) == 0 || json.Unmarshal(raw, &def) != nil {
+		return
+	}
+	b := &shapeBuilder{}
+	shape := b.walk(def.Steps, 0)
+	h["step_count"] = countShapeSteps(def.Steps)
+	h["option_count"] = len(def.Options)
+	h["flow_shape"] = shape
+	h["shape_more"] = b.dropped
+}
+
+type shapeBuilder struct {
+	nodes   int
+	dropped int
+}
+
+func (b *shapeBuilder) walk(steps []cc.Step, depth int) []shapeNode {
+	out := make([]shapeNode, 0, len(steps))
+	for i := range steps {
+		s := &steps[i]
+		if b.nodes >= shapeMaxNodes || depth >= shapeMaxDepth {
+			b.dropped += countShapeSteps(steps[i:])
+			break
+		}
+		b.nodes++
+		n := shapeNode{
+			K: s.Kind,
+			E: s.OnError != nil || len(s.OnErrorCases) > 0,
+		}
+		for _, br := range branchesOf(s) {
+			if len(br) == 0 {
+				continue
+			}
+			n.C = append(n.C, b.walk(br, depth+1))
+		}
+		out = append(out, n)
+	}
+	return out
+}
+
+// branchesOf lists a step's control branches in display order. Error
+// handlers are not branches here; they surface as the dashed rail flag.
+func branchesOf(s *cc.Step) [][]cc.Step {
+	switch s.Kind {
+	case cc.KindIf:
+		return [][]cc.Step{s.Then, s.Else}
+	case cc.KindSwitch:
+		out := make([][]cc.Step, 0, len(s.Cases)+1)
+		for _, cse := range s.Cases {
+			out = append(out, cse.Do)
+		}
+		return append(out, s.Default)
+	case cc.KindLoop:
+		return [][]cc.Step{s.Then}
+	case cc.KindParallel:
+		var ps cc.SpecParallel
+		if len(s.Spec) > 0 && json.Unmarshal(s.Spec, &ps) == nil {
+			return ps.Branches
+		}
+	}
+	return nil
+}
+
+// countShapeSteps counts every step in the live tree, error-handler bodies
+// included (scratch is the caller's concern and excluded by construction).
+func countShapeSteps(steps []cc.Step) int {
+	n := 0
+	for i := range steps {
+		s := &steps[i]
+		n++
+		for _, br := range branchesOf(s) {
+			n += countShapeSteps(br)
+		}
+		n += countShapeSteps(s.OnError)
+		for _, ec := range s.OnErrorCases {
+			n += countShapeSteps(ec.Do)
+		}
+	}
+	return n
 }
 
 // syncGuildCommands rebuilds the guild's slash-command set from all enabled

@@ -193,6 +193,39 @@ func (r *CommandRunRepo) ListByGuild(ctx context.Context, guildID int64, command
 	return out, rows.Err()
 }
 
+// CommandRunStats is the per-command usage aggregate the overview shows.
+type CommandRunStats struct {
+	Runs24h   int
+	LastRunAt *time.Time
+}
+
+// GuildRunStats aggregates run usage per command in ONE query (no N+1).
+// Bounded to 30 days so the idx_command_runs_guild range scan stays small.
+func (r *CommandRunRepo) GuildRunStats(ctx context.Context, guildID int64) (map[int64]CommandRunStats, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT command_id,
+			count(*) FILTER (WHERE started_at > now() - interval '24 hours'),
+			max(started_at)
+		FROM command_runs
+		WHERE guild_id = $1 AND started_at > now() - interval '30 days'
+		GROUP BY command_id`, guildID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := map[int64]CommandRunStats{}
+	for rows.Next() {
+		var id int64
+		var st CommandRunStats
+		if err := rows.Scan(&id, &st.Runs24h, &st.LastRunAt); err != nil {
+			return nil, err
+		}
+		out[id] = st
+	}
+	return out, rows.Err()
+}
+
 // ── Run logs ────────────────────────────────────────────────
 
 // AppendLog inserts one structured step-execution log row.
