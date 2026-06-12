@@ -526,6 +526,41 @@
 														Use the automatic id instead
 													</button>
 												{:else}
+													<div class="mt-2 flex items-center justify-between gap-2">
+														<span class="font-mono text-[9.5px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
+															On click
+														</span>
+														<div class="flex rounded-md border border-input p-0.5">
+															<button
+																type="button"
+																class="rounded px-2 py-0.5 text-[10px] font-medium transition-colors {c.on_click !== 'none'
+																	? 'bg-secondary text-foreground'
+																	: 'text-muted-foreground hover:text-foreground'}"
+																onclick={() => patchComponent(ri, ci, { on_click: undefined })}
+															>
+																Runs a path
+															</button>
+															<button
+																type="button"
+																class="rounded px-2 py-0.5 text-[10px] font-medium transition-colors {c.on_click === 'none'
+																	? 'bg-secondary text-foreground'
+																	: 'text-muted-foreground hover:text-foreground'}"
+																onclick={() =>
+																	patchComponent(ri, ci, {
+																		on_click: 'none',
+																		custom_id_suffix: c.custom_id_suffix || randId('btn')
+																	})}
+															>
+																Nothing
+															</button>
+														</div>
+													</div>
+													{#if c.on_click === 'none'}
+														<p class="mt-1.5 text-[10px] leading-snug text-muted-foreground">
+															Clicks are acknowledged silently and nothing runs. Works forever,
+															even after the flow ends.
+														</p>
+													{:else}
 													<p class="mt-1.5 flex items-start gap-1 text-[10px] leading-snug text-muted-foreground">
 														<MousePointerClick size={10} class="mt-px shrink-0" />
 														<span>
@@ -541,6 +576,7 @@
 													>
 														Configure custom id
 													</button>
+													{/if}
 												{/if}
 											</Popover.Content>
 										</Popover.Root>

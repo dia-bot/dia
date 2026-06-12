@@ -36,6 +36,7 @@
 		sfx: string;
 		url: string;
 		manual: boolean;
+		noop: boolean;
 	};
 	const componentItems = $derived.by(() => {
 		// eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -51,7 +52,8 @@
 					emoji: c.emoji ?? '',
 					sfx: c.custom_id_suffix ?? '',
 					url: c.url ?? '',
-					manual: !!c.custom_id_manual
+					manual: !!c.custom_id_manual,
+					noop: c.on_click === 'none'
 				});
 			})
 		);
@@ -162,17 +164,21 @@
 					style="background: {it.type === 'button'
 						? (BTN_BG[it.style] ?? BTN_BG.primary)
 						: '#1e1f22'}"
-					title={it.manual
-						? 'Manual custom id — routed by hand / automations, no canvas click path'
-						: it.sfx
-							? `Drag the dot → what happens when "${it.label}" is clicked (id: ${it.sfx})`
-							: it.url
-								? 'Link button — opens a URL, no click path'
-								: 'Set a click id in the composer to wire this up'}
+					title={it.noop
+						? 'Does nothing: clicks are acknowledged silently, no path runs'
+						: it.manual
+							? 'Manual custom id — routed by hand / automations, no canvas click path'
+							: it.sfx
+								? `Drag the dot → what happens when "${it.label}" is clicked (id: ${it.sfx})`
+								: it.url
+									? 'Link button — opens a URL, no click path'
+									: 'Set a click id in the composer to wire this up'}
 				>
 					{#if it.emoji}<EmojiGlyph emoji={it.emoji} size={12} />{/if}
 					<span class="min-w-0 flex-1 truncate">{it.label}</span>
-					{#if it.sfx && !it.manual}
+					{#if it.noop}
+						<span class="shrink-0 font-mono text-[8.5px] opacity-60">no action</span>
+					{:else if it.sfx && !it.manual}
 						<span class="shrink-0 font-mono text-[8.5px] opacity-60">{it.sfx}</span>
 						<Handle
 							type="source"
