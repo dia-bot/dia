@@ -587,7 +587,12 @@
 	}
 
 	onMount(() => {
-		const onDelete = (e: Event) => onDeleteStep?.((e as CustomEvent).detail.id);
+		const onDelete = (e: Event) => {
+			// The deleted step may be the open line panel's target; its
+			// snapshot (targetKind etc.) would go stale.
+			edgePanel = null;
+			onDeleteStep?.((e as CustomEvent).detail.id);
+		};
 		// "On error" on a step card: create the router (no steps yet) and open
 		// its case editor so the user describes what each arm catches.
 		const onErrorH = (e: Event) => {

@@ -385,7 +385,9 @@
 			// eslint-disable-next-line @typescript-eslint/no-explicit-any
 			for (const row of (sp.components ?? []) as { components: any[] }[]) {
 				for (const c of row.components ?? []) {
-					if (!c.custom_id_manual && c.custom_id_suffix) suffixes.add(c.custom_id_suffix);
+					if (!c.custom_id_manual && c.on_click !== 'none' && c.custom_id_suffix) {
+						suffixes.add(c.custom_id_suffix);
+					}
 				}
 			}
 			if (suffixes.size === 0) continue;

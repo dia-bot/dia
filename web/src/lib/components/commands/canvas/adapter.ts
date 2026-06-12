@@ -166,8 +166,9 @@ function componentClickSuffix(prev: Step | null, next: Step): string | null {
 	for (const row of rows) {
 		for (const c of row.components ?? []) {
 			// Manually-configured ids are for hand-built routing / future
-			// automations: no visual click path claims them.
-			if (c.custom_id_manual) continue;
+			// automations, and "do nothing" buttons never fire a path: neither
+			// claims a visual click line.
+			if (c.custom_id_manual || c.on_click === 'none') continue;
 			if (c.custom_id_suffix === ns.custom_id_suffix) return ns.custom_id_suffix as string;
 		}
 	}
@@ -197,7 +198,9 @@ function buttonSuffixes(step: Step | null): Set<string> {
 	const rows = (((step?.spec ?? {}) as any).components ?? []) as { components: any[] }[];
 	for (const row of rows) {
 		for (const c of row.components ?? []) {
-			if (!c.custom_id_manual && c.custom_id_suffix) out.add(c.custom_id_suffix as string);
+			if (!c.custom_id_manual && c.on_click !== 'none' && c.custom_id_suffix) {
+				out.add(c.custom_id_suffix as string);
+			}
 		}
 	}
 	return out;
