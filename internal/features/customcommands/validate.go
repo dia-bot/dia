@@ -208,6 +208,7 @@ func walkSteps(steps []Step, basePath string, ids map[string]bool, depth *stackD
 			ids[s.ID] = true
 		}
 		validateSpec(s, path, r)
+		warnNoopClickConflicts(steps, i, path, r)
 
 		if IsControl(s.Kind) {
 			switch s.Kind {
@@ -295,6 +296,7 @@ func validateSpec(s Step, path string, r *ValidationResult) {
 		if spec.Content == "" && len(spec.Embeds) == 0 && len(spec.Components) == 0 && len(spec.Attachments) == 0 {
 			r.warn(path+".spec", "reply_empty", "this reply sends nothing — add content, an embed or a component")
 		}
+		validateComponents(spec.Components, path, r)
 	case KindSendMessage:
 		var spec SpecSendMessage
 		if err := decodeSpec(s.Spec, &spec); err != nil {
@@ -302,6 +304,7 @@ func validateSpec(s Step, path string, r *ValidationResult) {
 			return
 		}
 		requireExpr(spec.Channel, path, "channel", s.Kind, r)
+		validateComponents(spec.Components, path, r)
 	case KindSendDM:
 		var spec SpecSendDM
 		if err := decodeSpec(s.Spec, &spec); err != nil {
@@ -670,6 +673,66 @@ func decodeSpec(raw json.RawMessage, v any) error {
 		return nil
 	}
 	return json.Unmarshal(raw, v)
+}
+
+// validateComponents checks the per-component fields shared by every
+// message-shaped step.
+func validateComponents(rows []ComponentRow, path string, r *ValidationResult) {
+	for ri, row := range rows {
+		for ci, c := range row.Components {
+			if c.OnClick != "" && c.OnClick != "none" {
+				r.fail(fmt.Sprintf("%s.spec.components[%d][%d].on_click", path, ri, ci),
+					"on_click_invalid", "on_click must be empty or none")
+			}
+		}
+	}
+}
+
+// warnNoopClickConflicts flags buttons set to "do nothing" that still own a
+// click path: their custom_id no longer references the run, so the path can
+// never fire.
+func warnNoopClickConflicts(steps []Step, i int, path string, r *ValidationResult) {
+	switch steps[i].Kind {
+	case KindReply, KindEditReply, KindSendMessage, KindEmbedSend:
+	default:
+		return
+	}
+	// All message-shaped specs share the components field.
+	var spec SpecReply
+	if decodeSpec(steps[i].Spec, &spec) != nil {
+		return
+	}
+	noop := map[string]bool{}
+	for _, row := range spec.Components {
+		for _, c := range row.Components {
+			if c.OnClick == "none" && c.CustomIDSuffix != "" {
+				noop[c.CustomIDSuffix] = true
+			}
+		}
+	}
+	if len(noop) == 0 || i+2 >= len(steps) {
+		return
+	}
+	// The message's hidden click cluster: listener + switch on the clicked id.
+	var ws SpecWaitFor
+	w := steps[i+1]
+	if w.Kind != KindWaitFor || decodeSpec(w.Spec, &ws) != nil ||
+		ws.Into == "" || ws.CustomIDSuffix != "" {
+		return
+	}
+	sw := steps[i+2]
+	var ss SpecSwitch
+	if sw.Kind != KindSwitch || decodeSpec(sw.Spec, &ss) != nil ||
+		ss.On.Src != "{{ .Vars."+ws.Into+".id }}" {
+		return
+	}
+	for _, cse := range sw.Cases {
+		if noop[cse.When.Src] {
+			r.warn(path+".spec.components", "noop_click_conflict",
+				`a button set to "do nothing" still has a click path; it will never run`)
+			return
+		}
+	}
 }
 
 // requiresDefer returns true when the worst-case path from root to the first
