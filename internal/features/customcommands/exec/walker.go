@@ -203,17 +203,27 @@ func (e *Engine) resumeBranch(ctx context.Context, run *RunState, scope *cc.Scop
 }
 
 // StepAtCursor returns the step a persisted cursor points at (the one that
-// paused the run), or nil if the cursor no longer resolves. It mirrors
-// resumeBranch's traversal, so the two must stay in lockstep.
+// paused the run), or nil if the cursor no longer resolves.
 func StepAtCursor(steps []cc.Step, frames []cc.CursorFrame) *cc.Step {
+	branch, idx := BranchAtCursor(steps, frames)
+	if branch == nil {
+		return nil
+	}
+	return &branch[idx]
+}
+
+// BranchAtCursor returns the steps array containing the paused step plus its
+// index in it, or (nil, -1). It mirrors resumeBranch's traversal, so the two
+// must stay in lockstep.
+func BranchAtCursor(steps []cc.Step, frames []cc.CursorFrame) ([]cc.Step, int) {
 	for depth := 0; depth < len(frames); depth++ {
 		frame := frames[depth]
 		if frame.Index < 0 || frame.Index >= len(steps) {
-			return nil
+			return nil, -1
 		}
 		s := &steps[frame.Index]
 		if depth == len(frames)-1 {
-			return s
+			return steps, frame.Index
 		}
 		child := frames[depth+1]
 		switch child.Branch {
@@ -225,42 +235,42 @@ func StepAtCursor(steps []cc.Step, frames []cc.CursorFrame) *cc.Step {
 			steps = s.Default
 		case "case":
 			if child.Case < 0 || child.Case >= len(s.Cases) {
-				return nil
+				return nil, -1
 			}
 			steps = s.Cases[child.Case].Do
 		case "on_error":
 			steps = s.OnError
 		case "on_error_case":
 			if child.Case < 0 || child.Case >= len(s.OnErrorCases) {
-				return nil
+				return nil, -1
 			}
 			steps = s.OnErrorCases[child.Case].Do
 		case "parallel":
 			if s.Kind != cc.KindParallel {
-				return nil
+				return nil, -1
 			}
 			var spec cc.SpecParallel
 			if json.Unmarshal(s.Spec, &spec) != nil {
-				return nil
+				return nil, -1
 			}
 			if child.Case < 0 || child.Case >= len(spec.Branches) {
-				return nil
+				return nil, -1
 			}
 			steps = spec.Branches[child.Case]
 		case "on_timeout":
 			if s.Kind != cc.KindWaitFor {
-				return nil
+				return nil, -1
 			}
 			var spec cc.SpecWaitFor
 			if json.Unmarshal(s.Spec, &spec) != nil {
-				return nil
+				return nil, -1
 			}
 			steps = spec.OnTimeout
 		default:
-			return nil
+			return nil, -1
 		}
 	}
-	return nil
+	return nil, -1
 }
 
 // ── if ───────────────────────────────────────────────────────────────────────

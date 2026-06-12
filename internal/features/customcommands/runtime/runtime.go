@@ -218,7 +218,11 @@ func (p *Plugin) resume(c *interactions.Context, kind string) error {
 	// can't find it; only the cursor can.
 	awaitInto := ""
 	mode := cc.ClickResponseReply
-	if st := exec.StepAtCursor(def.Steps, cursor); st != nil && len(st.Spec) > 0 {
+	modalFirst := false
+	unrouted := false
+	branch, idx := exec.BranchAtCursor(def.Steps, cursor)
+	if branch != nil && len(branch[idx].Spec) > 0 {
+		st := branch[idx]
 		switch st.Kind {
 		case cc.KindWaitFor:
 			var ws cc.SpecWaitFor
@@ -227,6 +231,7 @@ func (p *Plugin) resume(c *interactions.Context, kind string) error {
 				if kind == "component" {
 					suffix, _ := payload["id"].(string)
 					mode = ws.ResponseFor(suffix)
+					modalFirst, unrouted = clickContinuation(branch, idx, ws.Into, suffix)
 				}
 			}
 		case cc.KindModalOpen:
@@ -257,12 +262,24 @@ func (p *Plugin) resume(c *interactions.Context, kind string) error {
 	//   in place (a deferred-update's @original is the component's message).
 	//   silent: defer silently and mark replied, so nothing shows unless a
 	//   later step posts a follow-up.
-	switch mode {
-	case cc.ClickResponseSilent:
+	//
+	// Two cases pre-empt the configured mode: a path that STARTS with
+	// modal_open answers the click with the form itself (a modal must be the
+	// interaction's first response, so no ack here), and a click no path
+	// routes anywhere gets a bare silent ack.
+	switch {
+	case modalFirst:
+		scope.MarkDeferred(false)
+		scope.MarkReplied(false)
+	case unrouted:
 		_ = c.DeferUpdate()
 		scope.MarkDeferred(true)
 		scope.MarkReplied(true)
-	case cc.ClickResponseUpdate:
+	case mode == cc.ClickResponseSilent:
+		_ = c.DeferUpdate()
+		scope.MarkDeferred(true)
+		scope.MarkReplied(true)
+	case mode == cc.ClickResponseUpdate:
 		_ = c.DeferUpdate()
 		scope.MarkDeferred(true)
 		scope.MarkReplied(false)
@@ -289,6 +306,13 @@ func (p *Plugin) resume(c *interactions.Context, kind string) error {
 	outcome, pause, runErr := p.eng.Resume(c.Ctx, resumeRun, def, scope, cursor)
 	if runErr != nil {
 		p.deps.Log.Warn("ccmd resume error", "run", run.ID, "err", runErr)
+	}
+	// Safety net for the modal-first path: if the modal never opened (the
+	// step failed, or the definition shifted under the cursor), the click
+	// still needs SOME response within the deadline or Discord shows
+	// "interaction failed".
+	if modalFirst && !c.Responded() && (pause == nil || pause.AwaitingKind != "modal") {
+		_ = c.DeferUpdate()
 	}
 	p.persistLogs(c.Ctx, resumeRun)
 
@@ -532,6 +556,47 @@ func (p *Plugin) persistLogs(ctx context.Context, run *exec.RunState) {
 func newULID() string {
 	ts := time.Now().UnixNano()
 	return fmt.Sprintf("R%013xR%08x", ts/1_000_000, ts&0xFFFFFFFF)
+}
+
+// clickContinuation inspects what a clicked suffix leads to, given the wait
+// listener's containing branch and index.
+//
+//   - modalFirst: the path's first step is modal_open, so the form must BE
+//     the interaction response (a modal cannot follow an ack).
+//   - unrouted: a click router is present, every case match value is static,
+//     none equals the clicked suffix and the default arm is empty; the click
+//     deserves a bare silent ack instead of a hanging "thinking" state.
+//
+// Templated case values can't be compared statically, so their presence
+// disables the unrouted degradation.
+func clickContinuation(branch []cc.Step, idx int, into, suffix string) (modalFirst, unrouted bool) {
+	if idx+1 >= len(branch) {
+		return false, false
+	}
+	next := branch[idx+1]
+	// Legacy explicit-suffix waits chain their continuation directly.
+	if next.Kind == cc.KindModalOpen {
+		return true, false
+	}
+	if next.Kind != cc.KindSwitch || into == "" {
+		return false, false
+	}
+	var sw cc.SpecSwitch
+	if json.Unmarshal(next.Spec, &sw) != nil ||
+		sw.On.Src != "{{ .Vars."+into+".id }}" {
+		return false, false
+	}
+	allStatic := true
+	for _, cse := range next.Cases {
+		if strings.Contains(cse.When.Src, "{") {
+			allStatic = false
+			continue
+		}
+		if cse.When.Src == suffix {
+			return len(cse.Do) > 0 && cse.Do[0].Kind == cc.KindModalOpen, false
+		}
+	}
+	return false, allStatic && len(next.Default) == 0
 }
 
 // findAwaitInto locates the wait_for / modal_open step whose custom_id suffix
