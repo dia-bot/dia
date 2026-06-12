@@ -555,3 +555,50 @@ input[type='number'] {
 		transition: none !important;
 	}
 }
+
+/* ─────────────────────────────────────────────────────────────
+   Release dock — the floating save/publish capsule on the
+   command editor. Beam sweeps while a request is in flight;
+   shake answers a failure.
+   ───────────────────────────────────────────────────────────── */
+@keyframes dock-beam {
+	from {
+		transform: translateX(-100%);
+	}
+	to {
+		transform: translateX(433%);
+	}
+}
+
+@keyframes dock-shake {
+	0%,
+	100% {
+		transform: translateX(0);
+	}
+	17% {
+		transform: translateX(-3px);
+	}
+	34% {
+		transform: translateX(3px);
+	}
+	51% {
+		transform: translateX(-3px);
+	}
+	68% {
+		transform: translateX(3px);
+	}
+}
+
+.dock-beam-sweep {
+	animation: dock-beam 1.1s linear infinite;
+}
+.dock-shake {
+	animation: dock-shake 300ms ease-in-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.dock-beam-sweep,
+	.dock-shake {
+		animation: none !important;
+	}
+}
