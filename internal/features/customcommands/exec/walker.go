@@ -61,14 +61,13 @@ func (e *Engine) resumeAt(ctx context.Context, run *RunState, scope *cc.Scope, r
 // (one past the cursor's saved index — the next step we should execute).
 func (e *Engine) resumeBranch(ctx context.Context, run *RunState, scope *cc.Scope, steps []cc.Step, frames []cc.CursorFrame, depth int) error {
 	frame := frames[depth]
-	run.push(cc.CursorFrame{Branch: frame.Branch})
+	run.push(cc.CursorFrame{Branch: frame.Branch, Case: frame.Case, Iter: frame.Iter, Total: frame.Total})
 
 	startIdx := frame.Index
 	// The paused step is at frame.Index; resume executes the NEXT step, except
 	// when the paused step is a loop iteration that hasn't yet finished its body.
 	if depth == len(frames)-1 {
 		// Resume from the paused step's next sibling.
-		run.setIndex(startIdx + 1)
 		// Re-execute the paused step itself NOT directly, but conceptually it
 		// has already completed (the trigger payload has been written to scope
 		// by the caller before invoking Resume).
@@ -84,22 +83,28 @@ func (e *Engine) resumeBranch(ctx context.Context, run *RunState, scope *cc.Scop
 	}
 
 	// Mid-tree frame: find the matching step container, recurse, then
-	// continue executing siblings after it returns.
+	// continue executing siblings after it returns. A frame describes the
+	// steps array it walks, so the branch to descend INTO is named by the
+	// NEXT frame, while this frame's Index says which step holds it.
+	if startIdx < 0 || startIdx >= len(steps) {
+		run.pop()
+		return fmt.Errorf("resume: cursor index %d out of range (%d steps)", startIdx, len(steps))
+	}
 	s := steps[startIdx]
 	run.setIndex(startIdx)
 
+	child := frames[depth+1]
 	var childSteps []cc.Step
-	switch frame.Branch {
-	case "then":
+	switch child.Branch {
+	case "then", "body":
 		childSteps = s.Then
 	case "else":
 		childSteps = s.Else
 	case "default":
 		childSteps = s.Default
 	case "case":
-		if frame.Case >= 0 && frame.Case < len(s.Cases) {
-			childSteps = s.Cases[frame.Case].Do
-			run.cursor[len(run.cursor)-1].Case = frame.Case
+		if child.Case >= 0 && child.Case < len(s.Cases) {
+			childSteps = s.Cases[child.Case].Do
 		}
 	case "on_error":
 		childSteps = s.OnError
@@ -109,11 +114,6 @@ func (e *Engine) resumeBranch(ctx context.Context, run *RunState, scope *cc.Scop
 			var spec cc.SpecWaitFor
 			_ = json.Unmarshal(s.Spec, &spec)
 			childSteps = spec.OnTimeout
-		}
-	case "body":
-		childSteps = s.Then
-		if frame.Iter >= 0 {
-			run.cursor[len(run.cursor)-1].Iter = frame.Iter
 		}
 	}
 	if err := e.resumeBranch(ctx, run, scope, childSteps, frames, depth+1); err != nil {
@@ -129,6 +129,50 @@ func (e *Engine) resumeBranch(ctx context.Context, run *RunState, scope *cc.Scop
 		}
 	}
 	run.pop()
+	return nil
+}
+
+// StepAtCursor returns the step a persisted cursor points at — the one that
+// paused the run — or nil if the cursor no longer resolves. It mirrors
+// resumeBranch's traversal, so the two must stay in lockstep.
+func StepAtCursor(steps []cc.Step, frames []cc.CursorFrame) *cc.Step {
+	for depth := 0; depth < len(frames); depth++ {
+		frame := frames[depth]
+		if frame.Index < 0 || frame.Index >= len(steps) {
+			return nil
+		}
+		s := &steps[frame.Index]
+		if depth == len(frames)-1 {
+			return s
+		}
+		child := frames[depth+1]
+		switch child.Branch {
+		case "then", "body":
+			steps = s.Then
+		case "else":
+			steps = s.Else
+		case "default":
+			steps = s.Default
+		case "case":
+			if child.Case < 0 || child.Case >= len(s.Cases) {
+				return nil
+			}
+			steps = s.Cases[child.Case].Do
+		case "on_error":
+			steps = s.OnError
+		case "on_timeout":
+			if s.Kind != cc.KindWaitFor {
+				return nil
+			}
+			var spec cc.SpecWaitFor
+			if json.Unmarshal(s.Spec, &spec) != nil {
+				return nil
+			}
+			steps = spec.OnTimeout
+		default:
+			return nil
+		}
+	}
 	return nil
 }
 

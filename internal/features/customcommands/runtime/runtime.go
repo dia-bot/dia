@@ -406,7 +406,9 @@ func defaultVars(def *cc.Definition) map[string]any {
 
 func (p *Plugin) persistRunForResume(ctx context.Context, run *exec.RunState, scope *cc.Scope, pause *exec.PauseError) error {
 	scopeJSON, _ := scope.Marshal()
-	cursorJSON, _ := json.Marshal(run.Cursor())
+	// The cursor on the pause, NOT run.Cursor(): the walker's frames have
+	// already unwound by the time the pause reaches us.
+	cursorJSON, _ := json.Marshal(pause.Cursor)
 	gid, _ := event.ParseID(run.GuildID)
 	uid, _ := event.ParseID(run.InvokerID)
 	chID, _ := event.ParseID(run.ChannelID)

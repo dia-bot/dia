@@ -163,6 +163,12 @@ type PauseError struct {
 	AwaitingCustomID string
 	AwaitingUserID   string
 	AwaitingKind     string // "component" | "modal" | "message" | "reaction" | ""
+
+	// Cursor is the path to the paused step, snapshotted by dispatch() the
+	// moment the handler yields. It MUST be captured here: as the pause
+	// unwinds, every walk frame defer-pops, so the RunState cursor is empty
+	// again by the time the caller persists the run.
+	Cursor []cc.CursorFrame
 }
 
 // Error implements error.
@@ -320,8 +326,11 @@ func (e *Engine) dispatch(ctx context.Context, run *RunState, scope *cc.Scope, s
 	status := "ok"
 	errMsg := ""
 	if err != nil {
-		if _, isPause := IsPause(err); isPause {
+		if p, isPause := IsPause(err); isPause {
 			status = "ok" // a pause completed the step normally
+			if p.Cursor == nil {
+				p.Cursor = run.Cursor()
+			}
 		} else if IsExit(err) {
 			status = "ok"
 		} else {
