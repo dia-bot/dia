@@ -217,3 +217,8 @@ export interface ExprScope {
 }
 
 export const EXPR_SCOPE_CTX = Symbol('dia.expr-scope');
+
+// AUTOMATION_CTX is set (to `true`) by the automations editor so shared step
+// editors can adapt their copy/limits to event semantics — e.g. the wait_for
+// editor shows the 1-minute cap and frames replies as "respond to the click".
+export const AUTOMATION_CTX = Symbol('dia.automation');

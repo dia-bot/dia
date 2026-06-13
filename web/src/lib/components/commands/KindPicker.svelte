@@ -2,27 +2,34 @@
 	// Searchable, grouped list of step kinds. Pure picker — the host renders
 	// the floating container (Add-step dropdown, drop-point popover) and gets
 	// the picked kind back through onPick.
-	import { STEP_CATEGORIES, STEP_KINDS } from '$lib/commands/types';
+	import { STEP_CATEGORIES, STEP_KINDS, type StepKindMeta } from '$lib/commands/types';
 	import { iconFor } from '$lib/commands/icons';
 	import Search from 'lucide-svelte/icons/search';
 
 	let {
 		onPick,
-		autofocus = true
+		autofocus = true,
+		// kinds overrides the offered palette (already curated by the host, e.g.
+		// the automations editor hiding interaction-only steps at the root). The
+		// host's list is shown as-is — `hidden` is ignored, since the host opted
+		// the kind in deliberately.
+		kinds
 	}: {
 		onPick: (kind: string) => void;
 		autofocus?: boolean;
+		kinds?: StepKindMeta[];
 	} = $props();
 
 	let query = $state('');
 	const lc = $derived(query.trim().toLowerCase());
 
+	const source = $derived(kinds ?? STEP_KINDS.filter((k) => !k.hidden));
+
 	const groups = $derived(
 		STEP_CATEGORIES.map((c) => ({
 			category: c,
-			items: STEP_KINDS.filter(
+			items: source.filter(
 				(k) =>
-					!k.hidden &&
 					k.category === c.id &&
 					(!lc ||
 						k.kind.includes(lc) ||

@@ -23,6 +23,13 @@
 	const hasErrorHandler = $derived(
 		step?.on_error !== undefined || (step?.on_error_cases?.length ?? 0) > 0
 	);
+	// wait_for nodes expose an extra "on timeout" path (the right dot): steps to
+	// run if the wait window elapses without the click / submit / message.
+	const isWaitFor = $derived(step?.kind === 'wait_for');
+	const hasTimeout = $derived(
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		(((step?.spec as any)?.on_timeout ?? []) as unknown[]).length > 0
+	);
 
 	// Buttons & selects render on the card, ONE PER LINE — each with its own
 	// dot on the right. Drag a dot to build that component's click path (a
@@ -239,6 +246,18 @@
 		id="out"
 		class="!size-2.5 !border-2 !border-card !bg-muted-foreground/70 hover:!bg-foreground"
 	/>
+	{#if isWaitFor}
+		<!-- Right dot = the on-timeout path (revealed on hover until used). -->
+		<Handle
+			type="source"
+			position={Position.Right}
+			id="on_timeout"
+			title="Run steps if the wait times out"
+			class="!size-2 !border-2 !border-card !bg-foreground/50 {hasTimeout
+				? ''
+				: '!opacity-0 transition-opacity group-hover/node:!opacity-100'}"
+		/>
+	{/if}
 </div>
 
 <style>

@@ -1,6 +1,8 @@
 <script lang="ts">
+	import { getContext } from 'svelte';
 	import type { Step } from '$lib/commands/types';
 	import { STEP_KIND_BY_KIND } from '$lib/commands/types';
+	import { AUTOMATION_CTX } from '$lib/commands/expr-meta';
 	import ExprField from './ExprField.svelte';
 	import MessageEditor from './MessageEditor.svelte';
 	import EmbedBuilder from './EmbedBuilder.svelte';
@@ -21,6 +23,10 @@
 		// Drawer hosts provide their own header — skip the built-in one.
 		embedded?: boolean;
 	} = $props();
+
+	// In an automation, waits cap at 1 minute and there's no slash interaction,
+	// so a few step editors reword themselves.
+	const isAutomation = getContext(AUTOMATION_CTX) === true;
 
 	function getSpec(): any {
 		if (!step) return {};
@@ -529,13 +535,26 @@
 				<Field label="Custom id suffix" hint='The button must have custom_id_suffix="<suffix>" for the router to match it back.'>
 					<input class="input" value={spec.custom_id_suffix ?? ''} oninput={(e) => set('custom_id_suffix', (e.currentTarget as HTMLInputElement).value)} />
 				</Field>
-				<Field label="Restrict to user id"><ExprField {...exprBind('from_user')} placeholder="(any)" /></Field>
-				<Field label="Timeout">
-					<input class="input" value={spec.timeout ?? '10m'} oninput={(e) => set('timeout', (e.currentTarget as HTMLInputElement).value)} />
+				<Field label="Restrict to user id" hint={isAutomation ? 'Limit who can answer, e.g. {{ .User.ID }} for the member the event is about.' : undefined}>
+					<ExprField {...exprBind('from_user')} placeholder="(any)" />
+				</Field>
+				<Field
+					label="Timeout"
+					hint={isAutomation
+						? 'How long to wait (max 1 minute, e.g. 30s). After it elapses, the "on timeout" path runs.'
+						: 'Go duration, e.g. 30s, 5m.'}
+				>
+					<input class="input" value={spec.timeout ?? (isAutomation ? '30s' : '10m')} oninput={(e) => set('timeout', (e.currentTarget as HTMLInputElement).value)} />
 				</Field>
 				<Field label="Save click to" hint={"Branch on it: {{ eq .Vars.click.user_id .User.ID }} = clicker is the invoker"}>
 					<input class="input" value={spec.into ?? ''} oninput={(e) => set('into', (e.currentTarget as HTMLInputElement).value)} />
 				</Field>
+				{#if isAutomation}
+					<p class="px-0.5 text-[10.5px] leading-snug text-faint">
+						Steps after this run when the click or modal arrives — replies are allowed there.
+						Drag the node's right dot to add an <span class="text-muted">on timeout</span> path.
+					</p>
+				{/if}
 			{:else if step.kind === 'exit'}
 				<Field label="Reason (logged)">
 					<input class="input" value={spec.reason ?? ''} oninput={(e) => set('reason', (e.currentTarget as HTMLInputElement).value)} />

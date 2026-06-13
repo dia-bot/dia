@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { SvelteFlowProvider } from '@xyflow/svelte';
-	import type { Step } from '$lib/commands/types';
+	import type { Step, StepKindMeta } from '$lib/commands/types';
 	import FlowInner from './FlowInner.svelte';
 
 	let {
@@ -21,6 +21,7 @@
 		onAttachScratch,
 		onAddCase,
 		onAddParallelBranch,
+		palette,
 		showLegend = true
 	}: {
 		steps: Step[];
@@ -30,6 +31,9 @@
 		selectedId: string;
 		errorPaths?: Set<string>;
 		showLegend?: boolean;
+		// palette curates which step kinds the add-pickers offer, per context
+		// (root menu vs dragging from a node handle). Omitted = the full palette.
+		palette?: (ctx: { root: boolean; sourceId: string | null; handle: string | null }) => StepKindMeta[];
 		onAddAtRoot?: (kind: string, position?: { x: number; y: number }) => void;
 		onAddFromHandle?: (
 			sourceNodeId: string,
@@ -68,6 +72,7 @@
 		{onAttachScratch}
 		{onAddCase}
 		{onAddParallelBranch}
+		{palette}
 		{showLegend}
 	/>
 </SvelteFlowProvider>

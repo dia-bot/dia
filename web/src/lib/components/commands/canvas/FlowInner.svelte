@@ -13,7 +13,7 @@
 		type EdgeTypes,
 		type OnConnectEnd
 	} from '@xyflow/svelte';
-	import type { Step } from '$lib/commands/types';
+	import type { Step, StepKindMeta } from '$lib/commands/types';
 	import {
 		applyLayout,
 		treeToGraph,
@@ -70,6 +70,7 @@
 		onAttachScratch,
 		onAddCase,
 		onAddParallelBranch,
+		palette,
 		showLegend = true
 	}: {
 		steps: Step[];
@@ -79,6 +80,7 @@
 		selectedId: string;
 		errorPaths?: Set<string>;
 		showLegend?: boolean;
+		palette?: (ctx: { root: boolean; sourceId: string | null; handle: string | null }) => StepKindMeta[];
 		onAddAtRoot?: (kind: string, position?: { x: number; y: number }) => void;
 		onAddFromHandle?: (
 			sourceNodeId: string,
@@ -799,7 +801,10 @@
 			out:fly={{ y: -4, duration: dur(120), easing: cubicOut }}
 			class="absolute left-[15px] top-[53px] z-40 overflow-hidden rounded-lg border border-border bg-popover shadow-[0_16px_40px_-12px_rgba(0,0,0,0.7)]"
 		>
-			<KindPicker onPick={pickFromMenu} />
+			<KindPicker
+				onPick={pickFromMenu}
+				kinds={palette ? palette({ root: true, sourceId: null, handle: null }) : undefined}
+			/>
 		</div>
 	{/if}
 	{#if dropPicker}
@@ -814,7 +819,12 @@
 			>
 				Add a connected step
 			</div>
-			<KindPicker onPick={pickFromDrop} />
+			<KindPicker
+				onPick={pickFromDrop}
+				kinds={palette
+					? palette({ root: false, sourceId: dropPicker.sourceId, handle: dropPicker.handleId })
+					: undefined}
+			/>
 		</div>
 	{/if}
 
