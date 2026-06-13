@@ -112,7 +112,7 @@ func (r *CustomCommandRepo) Upsert(ctx context.Context, c CustomCommand) (Custom
 	if c.Version <= 0 {
 		c.Version = 1
 	}
-	if c.ID == 0 {
+	if c.ID == "" {
 		err := r.pool.QueryRow(ctx, `
 			INSERT INTO custom_commands (guild_id, name, description, enabled, status, version, requires_defer, definition, created_by)
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
@@ -143,7 +143,7 @@ func (r *CustomCommandRepo) Upsert(ctx context.Context, c CustomCommand) (Custom
 }
 
 // Get returns one command by id.
-func (r *CustomCommandRepo) Get(ctx context.Context, guildID, id int64) (CustomCommand, error) {
+func (r *CustomCommandRepo) Get(ctx context.Context, guildID int64, id string) (CustomCommand, error) {
 	c := CustomCommand{GuildID: guildID}
 	err := r.pool.QueryRow(ctx, `
 		SELECT id, name, description, enabled, status, version, requires_defer, definition, group_id, created_by, created_at, updated_at
@@ -157,7 +157,7 @@ func (r *CustomCommandRepo) Get(ctx context.Context, guildID, id int64) (CustomC
 }
 
 // Delete removes a command scoped to a guild.
-func (r *CustomCommandRepo) Delete(ctx context.Context, guildID, id int64) error {
+func (r *CustomCommandRepo) Delete(ctx context.Context, guildID int64, id string) error {
 	_, err := r.pool.Exec(ctx, `DELETE FROM custom_commands WHERE id = $1 AND guild_id = $2`, id, guildID)
 	return err
 }
@@ -216,7 +216,7 @@ func (r *CustomCommandRepo) PublishVersion(ctx context.Context, v CustomCommandV
 }
 
 // GetVersion returns a specific published snapshot.
-func (r *CustomCommandRepo) GetVersion(ctx context.Context, commandID int64, version int) (CustomCommandVersion, error) {
+func (r *CustomCommandRepo) GetVersion(ctx context.Context, commandID string, version int) (CustomCommandVersion, error) {
 	var v CustomCommandVersion
 	err := r.pool.QueryRow(ctx, `
 		SELECT command_id, version, definition, published_by, published_at
@@ -231,7 +231,7 @@ func (r *CustomCommandRepo) GetVersion(ctx context.Context, commandID int64, ver
 
 // SetGroup moves a command into a group (nil = ungrouped). Group membership is
 // metadata, not an edit, so updated_at is left untouched.
-func (r *CustomCommandRepo) SetGroup(ctx context.Context, guildID, id int64, groupID *int64) error {
+func (r *CustomCommandRepo) SetGroup(ctx context.Context, guildID int64, id string, groupID *string) error {
 	ct, err := r.pool.Exec(ctx,
 		`UPDATE custom_commands SET group_id = $3 WHERE id = $1 AND guild_id = $2`,
 		id, guildID, groupID)
@@ -284,7 +284,7 @@ func (r *CommandGroupRepo) Create(ctx context.Context, guildID int64, name strin
 }
 
 // Rename changes a group's name.
-func (r *CommandGroupRepo) Rename(ctx context.Context, guildID, id int64, name string) error {
+func (r *CommandGroupRepo) Rename(ctx context.Context, guildID int64, id string, name string) error {
 	ct, err := r.pool.Exec(ctx,
 		`UPDATE command_groups SET name = $3 WHERE id = $1 AND guild_id = $2`, id, guildID, name)
 	if err != nil {
@@ -297,14 +297,14 @@ func (r *CommandGroupRepo) Rename(ctx context.Context, guildID, id int64, name s
 }
 
 // Delete removes a group; its commands fall back to ungrouped (FK SET NULL).
-func (r *CommandGroupRepo) Delete(ctx context.Context, guildID, id int64) error {
+func (r *CommandGroupRepo) Delete(ctx context.Context, guildID int64, id string) error {
 	_, err := r.pool.Exec(ctx,
 		`DELETE FROM command_groups WHERE id = $1 AND guild_id = $2`, id, guildID)
 	return err
 }
 
 // Reorder sets group positions to the given id order.
-func (r *CommandGroupRepo) Reorder(ctx context.Context, guildID int64, ids []int64) error {
+func (r *CommandGroupRepo) Reorder(ctx context.Context, guildID int64, ids []string) error {
 	for i, id := range ids {
 		if _, err := r.pool.Exec(ctx,
 			`UPDATE command_groups SET position = $3 WHERE id = $1 AND guild_id = $2`,

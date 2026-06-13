@@ -170,8 +170,8 @@ type Expr struct {
 // Run is one in-progress or completed command execution. Persisted only for
 // durable runs (wait / wait_for / parallel / scheduled).
 type Run struct {
-	ID                 string          `json:"id"` // ULID
-	CommandID          int64           `json:"command_id"`
+	ID                 string          `json:"id"`         // ULID
+	CommandID          string          `json:"command_id"` // UUID
 	CommandVersion     int             `json:"command_version"`
 	GuildID            string          `json:"guild_id"` // decimal snowflake
 	InvokerID          string          `json:"invoker_id"`
@@ -236,8 +236,8 @@ type ImageTemplate struct {
 // KVEntry is one key/value pair in the durable store.
 type KVEntry struct {
 	GuildID   string          `json:"guild_id"`
-	CommandID int64           `json:"command_id"`
-	Scope     string          `json:"scope"` // guild | member
+	CommandID string          `json:"command_id"` // UUID
+	Scope     string          `json:"scope"`      // guild | member
 	OwnerID   string          `json:"owner_id"`
 	Key       string          `json:"key"`
 	Value     json.RawMessage `json:"value"`

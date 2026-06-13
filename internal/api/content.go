@@ -127,8 +127,8 @@ func (s *Server) handleListCommands(c *gin.Context) {
 }
 
 func (s *Server) handleGetCommand(c *gin.Context) {
-	id, err := strconv.ParseInt(c.Param("cid"), 10, 64)
-	if err != nil {
+	id := c.Param("cid")
+	if id == "" {
 		fail(c, http.StatusBadRequest, "invalid id")
 		return
 	}
@@ -142,7 +142,7 @@ func (s *Server) handleGetCommand(c *gin.Context) {
 }
 
 type upsertCommandReq struct {
-	ID          int64           `json:"id,omitempty"`
+	ID          string          `json:"id,omitempty"`
 	Name        string          `json:"name"`
 	Description string          `json:"description"`
 	Enabled     bool            `json:"enabled"`
@@ -190,7 +190,7 @@ func (s *Server) handleUpsertCommand(c *gin.Context) {
 		Definition:    req.Definition,
 	}
 	// If the row already exists keep its version and bump on publish only.
-	if req.ID != 0 {
+	if req.ID != "" {
 		if existing, err := s.store.CustomCommands.Get(c.Request.Context(), gidInt, req.ID); err == nil {
 			row.Version = existing.Version
 			if row.Status == string(cc.StatusPublished) && existing.Status != string(cc.StatusPublished) {
@@ -234,8 +234,8 @@ func (s *Server) handleValidateCommand(c *gin.Context) {
 }
 
 func (s *Server) handleDeleteCommand(c *gin.Context) {
-	id, err := strconv.ParseInt(c.Param("cid"), 10, 64)
-	if err != nil {
+	id := c.Param("cid")
+	if id == "" {
 		fail(c, http.StatusBadRequest, "invalid id")
 		return
 	}
@@ -304,8 +304,8 @@ func (s *Server) handleCreateCommandGroup(c *gin.Context) {
 }
 
 func (s *Server) handleRenameCommandGroup(c *gin.Context) {
-	id, err := strconv.ParseInt(c.Param("gid"), 10, 64)
-	if err != nil {
+	id := c.Param("gid")
+	if id == "" {
 		fail(c, http.StatusBadRequest, "invalid id")
 		return
 	}
@@ -328,8 +328,8 @@ func (s *Server) handleRenameCommandGroup(c *gin.Context) {
 }
 
 func (s *Server) handleDeleteCommandGroup(c *gin.Context) {
-	id, err := strconv.ParseInt(c.Param("gid"), 10, 64)
-	if err != nil {
+	id := c.Param("gid")
+	if id == "" {
 		fail(c, http.StatusBadRequest, "invalid id")
 		return
 	}
@@ -343,7 +343,7 @@ func (s *Server) handleDeleteCommandGroup(c *gin.Context) {
 }
 
 type reorderGroupsReq struct {
-	IDs []int64 `json:"ids"`
+	IDs []string `json:"ids"`
 }
 
 func (s *Server) handleReorderCommandGroups(c *gin.Context) {
@@ -361,12 +361,12 @@ func (s *Server) handleReorderCommandGroups(c *gin.Context) {
 }
 
 type setGroupReq struct {
-	GroupID *int64 `json:"group_id"`
+	GroupID *string `json:"group_id"`
 }
 
 func (s *Server) handleSetCommandGroup(c *gin.Context) {
-	id, err := strconv.ParseInt(c.Param("cid"), 10, 64)
-	if err != nil {
+	id := c.Param("cid")
+	if id == "" {
 		fail(c, http.StatusBadRequest, "invalid id")
 		return
 	}

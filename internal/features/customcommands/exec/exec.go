@@ -86,7 +86,7 @@ func (h *Halt) SetOutput(v any) {
 // pending logs, statistics. It is NOT shared between concurrent runs.
 type RunState struct {
 	ID             string
-	CommandID      int64
+	CommandID      string // UUID
 	CommandVersion int
 	GuildID        string
 	InvokerID      string

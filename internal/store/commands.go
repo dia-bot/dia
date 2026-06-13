@@ -160,7 +160,7 @@ func (r *CommandRunRepo) ClaimResume(ctx context.Context, id string) (bool, erro
 }
 
 // ListByGuild returns recent runs for a guild (Runs tab).
-func (r *CommandRunRepo) ListByGuild(ctx context.Context, guildID int64, commandID int64, limit int) ([]CommandRun, error) {
+func (r *CommandRunRepo) ListByGuild(ctx context.Context, guildID int64, commandID string, limit int) ([]CommandRun, error) {
 	q := `
 		SELECT id, command_id, command_version, guild_id, invoker_id, channel_id,
 			trigger_kind, interaction_id, interaction_token, interaction_expires,
@@ -168,7 +168,7 @@ func (r *CommandRunRepo) ListByGuild(ctx context.Context, guildID int64, command
 			awaiting_kind, definition_snapshot, started_at, completed_at, error
 		FROM command_runs WHERE guild_id = $1`
 	args := []any{guildID}
-	if commandID > 0 {
+	if commandID != "" {
 		q += ` AND command_id = $2`
 		args = append(args, commandID)
 	}
@@ -201,7 +201,7 @@ type CommandRunStats struct {
 
 // GuildRunStats aggregates run usage per command in ONE query (no N+1).
 // Bounded to 30 days so the idx_command_runs_guild range scan stays small.
-func (r *CommandRunRepo) GuildRunStats(ctx context.Context, guildID int64) (map[int64]CommandRunStats, error) {
+func (r *CommandRunRepo) GuildRunStats(ctx context.Context, guildID int64) (map[string]CommandRunStats, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT command_id,
 			count(*) FILTER (WHERE started_at > now() - interval '24 hours'),
@@ -214,9 +214,9 @@ func (r *CommandRunRepo) GuildRunStats(ctx context.Context, guildID int64) (map[
 	}
 	defer rows.Close()
 
-	out := map[int64]CommandRunStats{}
+	out := map[string]CommandRunStats{}
 	for rows.Next() {
-		var id int64
+		var id string
 		var st CommandRunStats
 		if err := rows.Scan(&id, &st.Runs24h, &st.LastRunAt); err != nil {
 			return nil, err
@@ -265,8 +265,20 @@ func (r *CommandRunRepo) ListLogs(ctx context.Context, runID string) ([]CommandR
 // FeatureKVRepo manages feature_kv.
 type FeatureKVRepo struct{ pool *pgxpool.Pool }
 
+// zeroUUID is the guild-shared sentinel for feature_kv.command_id (the UUID
+// column is NOT NULL, so an absent command id maps here).
+const zeroUUID = "00000000-0000-0000-0000-000000000000"
+
+func kvCommandID(id string) string {
+	if id == "" {
+		return zeroUUID
+	}
+	return id
+}
+
 // Get reads a value, or ErrNotFound. Expired entries are treated as missing.
 func (r *FeatureKVRepo) Get(ctx context.Context, e FeatureKVEntry) (FeatureKVEntry, error) {
+	e.CommandID = kvCommandID(e.CommandID)
 	out := e
 	err := r.pool.QueryRow(ctx, `
 		SELECT value, expires_at, updated_at FROM feature_kv
@@ -282,6 +294,7 @@ func (r *FeatureKVRepo) Get(ctx context.Context, e FeatureKVEntry) (FeatureKVEnt
 
 // Set upserts a value. ExpiresAt nil means no expiry.
 func (r *FeatureKVRepo) Set(ctx context.Context, e FeatureKVEntry) error {
+	e.CommandID = kvCommandID(e.CommandID)
 	if len(e.Value) == 0 {
 		e.Value = json.RawMessage("null")
 	}
@@ -296,6 +309,7 @@ func (r *FeatureKVRepo) Set(ctx context.Context, e FeatureKVEntry) error {
 
 // Delete removes a value.
 func (r *FeatureKVRepo) Delete(ctx context.Context, e FeatureKVEntry) error {
+	e.CommandID = kvCommandID(e.CommandID)
 	_, err := r.pool.Exec(ctx, `
 		DELETE FROM feature_kv
 		WHERE guild_id = $1 AND command_id = $2 AND scope = $3 AND owner_id = $4 AND key = $5`,

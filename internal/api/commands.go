@@ -14,10 +14,7 @@ import (
 
 func (s *Server) handleListCommandRuns(c *gin.Context) {
 	gidInt, _ := event.ParseID(guildID(c))
-	var cmdID int64
-	if v := c.Query("command_id"); v != "" {
-		cmdID, _ = strconv.ParseInt(v, 10, 64)
-	}
+	cmdID := c.Query("command_id")
 	limit := 25
 	if v := c.Query("limit"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 200 {

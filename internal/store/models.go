@@ -76,7 +76,7 @@ type ReactionRoleMenu struct {
 // holds the full JSONB program (slash params + Step[] tree); see
 // internal/features/customcommands/config.go for the typed shape.
 type CustomCommand struct {
-	ID            int64
+	ID            string // UUID
 	GuildID       int64
 	Name          string
 	Description   string
@@ -85,7 +85,7 @@ type CustomCommand struct {
 	Version       int
 	RequiresDefer bool
 	Definition    json.RawMessage
-	GroupID       *int64 // organizational folder; nil = ungrouped
+	GroupID       *string // UUID of the group; nil = ungrouped
 	CreatedBy     int64
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
@@ -93,7 +93,7 @@ type CustomCommand struct {
 
 // CommandGroup is a dashboard organizational folder for custom commands.
 type CommandGroup struct {
-	ID        int64
+	ID        string // UUID
 	GuildID   int64
 	Name      string
 	Position  int
@@ -102,7 +102,7 @@ type CommandGroup struct {
 
 // CustomCommandVersion is an immutable snapshot of the Definition at publish.
 type CustomCommandVersion struct {
-	CommandID   int64
+	CommandID   string // UUID
 	Version     int
 	Definition  json.RawMessage
 	PublishedBy int64
@@ -114,7 +114,7 @@ type CustomCommandVersion struct {
 // synchronous runs leave only their RunLog rows.
 type CommandRun struct {
 	ID                 string
-	CommandID          int64
+	CommandID          string // UUID
 	CommandVersion     int
 	GuildID            int64
 	InvokerID          int64
@@ -154,7 +154,7 @@ type CommandRunLog struct {
 // FeatureKVEntry is one durable key/value pair backing kv_get / kv_set steps.
 type FeatureKVEntry struct {
 	GuildID   int64
-	CommandID int64
+	CommandID string // UUID; "" or zero-UUID = guild-shared
 	Scope     string
 	OwnerID   int64
 	Key       string
