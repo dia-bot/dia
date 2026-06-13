@@ -118,8 +118,12 @@
 		}))
 	]);
 
+	// Host-injected extras (e.g. an automation trigger's `.Event.*` fields).
+	const extraVars = $derived(scope?.extraVars ?? []);
+
 	const scopeVars = $derived([
 		...TMPL_STATIC_VARS,
+		...extraVars,
 		...dynamicVars,
 		...(inErrorScope ? TMPL_ERROR_VARS : [])
 	]);

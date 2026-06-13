@@ -210,6 +210,10 @@ export interface ExprScope {
 	// The live step tree — lets fields offer "reference a previous step"
 	// pickers (e.g. the message sent by an earlier Send-message step).
 	steps?: Step[];
+	// extraVars are scope variables a host injects beyond options/variables —
+	// server-event automations use this to surface the trigger's `.Event.*`
+	// fields in the variable picker. Empty for slash commands.
+	extraVars?: TmplVar[];
 }
 
 export const EXPR_SCOPE_CTX = Symbol('dia.expr-scope');

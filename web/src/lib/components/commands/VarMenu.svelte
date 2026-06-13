@@ -30,6 +30,13 @@
 					.map((o) => ({ token: `{{ .Input.${o.name} }}`, short: o.description || o.kind }))
 			});
 		}
+		const extra = scope?.extraVars ?? [];
+		if (extra.length > 0) {
+			out.push({
+				label: 'Trigger',
+				items: extra.map((v) => ({ token: `{{ ${v.path} }}`, short: v.short }))
+			});
+		}
 		const vars = scope?.variables ?? [];
 		if (vars.length > 0) {
 			out.push({
