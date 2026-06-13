@@ -13,9 +13,13 @@ export function connectRealtime(
 	let attempt = 0;
 	let timer: ReturnType<typeof setTimeout> | undefined;
 
+	// Tolerate a PUBLIC_WS_URL that already ends in /realtime — strip it so we
+	// don't double the path ("/realtime/realtime/<id>").
+	const base = WS_URL.replace(/\/+$/, '').replace(/\/realtime$/, '');
+
 	const open = () => {
 		if (closed) return;
-		ws = new WebSocket(`${WS_URL}/realtime/${guildId}`);
+		ws = new WebSocket(`${base}/realtime/${guildId}`);
 		ws.onopen = () => {
 			attempt = 0;
 		};

@@ -23,7 +23,7 @@ import (
 	"github.com/dia-bot/dia/internal/plugin"
 	"github.com/dia-bot/dia/internal/store"
 
-	"github.com/dia-bot/dia/internal/features/customcommands"
+	customcommands "github.com/dia-bot/dia/internal/features/customcommands/runtime"
 	"github.com/dia-bot/dia/internal/features/leveling"
 	"github.com/dia-bot/dia/internal/features/moderation"
 	"github.com/dia-bot/dia/internal/features/roles"

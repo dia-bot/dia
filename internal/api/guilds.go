@@ -32,6 +32,23 @@ func (s *Server) handleListGuilds(c *gin.Context) {
 	ctx := c.Request.Context()
 	sess := currentSession(c)
 
+	// Refresh-on-empty: a session created when Discord's /users/@me/guilds
+	// fetch hiccuped (rate-limit, transient 5xx) ends up with an empty
+	// Guilds slice and the dashboard's server switcher renders blank
+	// forever. Try once more with the user's access token before serving;
+	// if it succeeds, persist back so the next request is free.
+	if len(sess.Guilds) == 0 && sess.AccessToken != "" {
+		var fresh []UserGuild
+		if err := discordGet(ctx, sess.AccessToken, "/users/@me/guilds", &fresh); err == nil && len(fresh) > 0 {
+			sess.Guilds = fresh
+			if _, token, ok := s.sessionFromCookie(c); ok {
+				_ = s.sessions.save(ctx, token, sess)
+			}
+		} else if err != nil {
+			s.log.Warn("refresh user guilds", "err", err)
+		}
+	}
+
 	var ids []int64
 	manageable := make([]UserGuild, 0)
 	for _, g := range sess.Guilds {
@@ -48,6 +65,11 @@ func (s *Server) handleListGuilds(c *gin.Context) {
 	// table, and the bot's live guild list from Discord (cached). The latter is
 	// authoritative and independent of the GUILD_CREATE pipeline, so the dashboard
 	// reflects the bot's real membership even when gateway events lag or drop.
+	// IMPORTANT: the bulk lookup + live botSet must agree with the middleware's
+	// botInGuild helper; otherwise the dashboard shows "Add" for guilds that
+	// would actually pass the requireGuild check (the user's complaint). We
+	// pre-warm the live set once, then use it inline so each item is computed
+	// the same way the middleware does.
 	present := map[string]bool{}
 	if rows, err := s.store.Guilds.ListByIDs(ctx, ids); err == nil {
 		for _, r := range rows {
@@ -55,10 +77,22 @@ func (s *Server) handleListGuilds(c *gin.Context) {
 		}
 	}
 	botSet := s.botGuildIDs(ctx)
+	s.log.Info("list guilds", "manageable", len(manageable), "db_present", len(present), "live_bot_set", len(botSet))
 
 	out := make([]gin.H, 0, len(manageable))
 	for _, g := range manageable {
 		inGuild := present[g.ID] || botSet[g.ID]
+		// Per-guild fallback: when a guild was missed by both signals (race
+		// between OAuth list refresh and worker syncing GUILD_CREATE rows),
+		// hit Postgres directly. Cheap; only runs for the misses.
+		if !inGuild {
+			if id, ok := event.ParseID(g.ID); ok {
+				if _, err := s.store.Guilds.Get(ctx, id); err == nil {
+					inGuild = true
+					present[g.ID] = true
+				}
+			}
+		}
 		item := gin.H{
 			"id":          g.ID,
 			"name":        g.Name,
@@ -82,14 +116,20 @@ func (s *Server) botGuildIDs(ctx context.Context) map[string]bool {
 	const cacheKey = "bot:guilds"
 	set := map[string]bool{}
 
+	// Honour the cache only when it actually contains data. An empty cached
+	// slice (which can happen if Redis was previously poisoned, or if the
+	// SetJSON path got called with empty input by a future caller) would
+	// otherwise short-circuit the live fetch and falsely report "bot is in
+	// no servers" for the next 10 seconds.
 	var cached []string
-	if err := s.cache.GetJSON(ctx, cacheKey, &cached); err == nil {
+	if err := s.cache.GetJSON(ctx, cacheKey, &cached); err == nil && len(cached) > 0 {
 		for _, id := range cached {
 			set[id] = true
 		}
 		return set
 	}
 	if s.cfg.Discord.Token == "" {
+		s.log.Warn("botGuildIDs: DISCORD_TOKEN empty, can't list bot guilds")
 		return set
 	}
 
@@ -105,7 +145,7 @@ func (s *Server) botGuildIDs(ctx context.Context) map[string]bool {
 			break
 		}
 		req.Header.Set("Authorization", "Bot "+s.cfg.Discord.Token)
-		resp, err := oauthHTTP.Do(req)
+		resp, err := botListHTTP.Do(req)
 		if err != nil {
 			s.log.Warn("list bot guilds", "err", err)
 			break
@@ -134,9 +174,30 @@ func (s *Server) botGuildIDs(ctx context.Context) map[string]bool {
 	}
 
 	if len(ids) > 0 {
-		_ = s.cache.SetJSON(ctx, cacheKey, ids, 10*time.Second)
+		// Cache for a full minute: this list rarely changes (bot joining or
+		// leaving a guild fires gateway events the worker handles), and the
+		// dashboard hits this on every page load. 10s caused every reload to
+		// race against Discord's REST budget.
+		_ = s.cache.SetJSON(ctx, cacheKey, ids, 60*time.Second)
+		s.log.Info("botGuildIDs: refreshed bot guild list", "count", len(ids))
+	} else {
+		s.log.Warn("botGuildIDs: Discord returned 0 guilds for the bot — token wrong or bot really is in no servers")
 	}
 	return set
+}
+
+// botInGuild reports whether Dia is present in the given guild. It ORs the
+// gateway-sourced guilds table with the live `GET /users/@me/guilds` set so that
+// dashboard auth doesn't 404 when gateway events lag (or when a process was
+// restarted with a fresh DB but the bot is still in the server). Matches the
+// permissive presence logic in handleListGuilds.
+func (s *Server) botInGuild(ctx context.Context, gid string) bool {
+	if id, ok := event.ParseID(gid); ok {
+		if _, err := s.store.Guilds.Get(ctx, id); err == nil {
+			return true
+		}
+	}
+	return s.botGuildIDs(ctx)[gid]
 }
 
 func (s *Server) inviteURL(guildID string) string {
@@ -159,6 +220,44 @@ func (s *Server) handleGetGuild(c *gin.Context) {
 	sort.Slice(snap.Roles, func(i, j int) bool { return snap.Roles[i].Position > snap.Roles[j].Position })
 
 	gidInt, _ := event.ParseID(gid)
+
+	// Meta fallback chain: the freshest source is the Redis snapshot populated
+	// from GUILD_CREATE, but until the worker has handshaken (or after a fresh
+	// data wipe) Redis can be empty even when the bot is in the guild. Fall
+	// back to the Postgres guilds row, then to the user's session guild list,
+	// so the dashboard header always renders a real name / icon.
+	if snap.Meta.ID == "" {
+		snap.Meta.ID = gid
+	}
+	if snap.Meta.Name == "" {
+		if g, gerr := s.store.Guilds.Get(c.Request.Context(), gidInt); gerr == nil {
+			if g.Name != "" {
+				snap.Meta.Name = g.Name
+			}
+			if snap.Meta.Icon == "" && g.Icon != "" {
+				snap.Meta.Icon = g.Icon
+			}
+			if snap.Meta.OwnerID == "" && g.OwnerID != 0 {
+				snap.Meta.OwnerID = event.FormatID(g.OwnerID)
+			}
+			if snap.Meta.MemberCount == 0 && g.MemberCount > 0 {
+				snap.Meta.MemberCount = g.MemberCount
+			}
+		}
+	}
+	if snap.Meta.Name == "" {
+		if sess := currentSession(c); sess != nil {
+			for _, ug := range sess.Guilds {
+				if ug.ID == gid {
+					snap.Meta.Name = ug.Name
+					if snap.Meta.Icon == "" {
+						snap.Meta.Icon = ug.Icon
+					}
+					break
+				}
+			}
+		}
+	}
 	features, _ := s.store.Features.GetAll(c.Request.Context(), gidInt)
 	featOut := map[string]gin.H{}
 	for k, fc := range features {

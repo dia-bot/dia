@@ -73,6 +73,16 @@ func (s *sessionStore) delete(ctx context.Context, token string) error {
 	return s.cache.Delete(ctx, s.key(token))
 }
 
+// save overwrites the session at the given token, resetting its TTL. Used to
+// refresh ephemeral session state (e.g. the Discord guild list) without
+// forcing a full re-login.
+func (s *sessionStore) save(ctx context.Context, token string, sess *Session) error {
+	if token == "" {
+		return errNoSession
+	}
+	return s.cache.SetJSON(ctx, s.key(token), sess, s.ttl)
+}
+
 // randomToken returns a 256-bit opaque token.
 func randomToken() string {
 	b := make([]byte, 32)

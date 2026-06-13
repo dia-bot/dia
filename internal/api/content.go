@@ -5,9 +5,13 @@ import (
 	"encoding/json"
 	"net/http"
 	"regexp"
+	"sort"
 	"strconv"
+	"strings"
+	"time"
 
 	"github.com/dia-bot/dia/internal/event"
+	cc "github.com/dia-bot/dia/internal/features/customcommands"
 	"github.com/dia-bot/dia/internal/store"
 	"github.com/dia-bot/dia/pkg/discordgo"
 	"github.com/gin-gonic/gin"
@@ -89,7 +93,7 @@ func (s *Server) handleDeleteReward(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
-// ── Custom commands ──────────────────────────────────────────
+// ── Custom commands (v2 — programmable Step[] tree) ─────────
 
 var commandNameRe = regexp.MustCompile(`^[a-z0-9_-]{1,32}$`)
 
@@ -100,21 +104,50 @@ func (s *Server) handleListCommands(c *gin.Context) {
 		fail(c, http.StatusInternalServerError, "could not load commands")
 		return
 	}
+	// Usage stats are decoration: the list still serves without them.
+	stats, err := s.store.CommandRuns.GuildRunStats(c.Request.Context(), gidInt)
+	if err != nil {
+		s.log.Warn("custom command run stats failed", "guild", gidInt, "err", err)
+		stats = nil
+	}
 	out := make([]gin.H, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, gin.H{
-			"id": r.ID, "name": r.Name, "description": r.Description,
-			"enabled": r.Enabled, "response": json.RawMessage(r.Response),
-		})
+		h := summarizeCommand(r)
+		addShapeFields(h, r.Definition)
+		if st, ok := stats[r.ID]; ok {
+			h["runs_24h"] = st.Runs24h
+			h["last_run_at"] = st.LastRunAt
+		} else if stats != nil {
+			h["runs_24h"] = 0
+			h["last_run_at"] = nil
+		}
+		out = append(out, h)
 	}
 	c.JSON(http.StatusOK, gin.H{"commands": out})
 }
 
+func (s *Server) handleGetCommand(c *gin.Context) {
+	id := c.Param("cid")
+	if id == "" {
+		fail(c, http.StatusBadRequest, "invalid id")
+		return
+	}
+	gidInt, _ := event.ParseID(guildID(c))
+	cmd, err := s.store.CustomCommands.Get(c.Request.Context(), gidInt, id)
+	if err != nil {
+		fail(c, http.StatusNotFound, "not found")
+		return
+	}
+	c.JSON(http.StatusOK, fullCommand(cmd))
+}
+
 type upsertCommandReq struct {
+	ID          string          `json:"id,omitempty"`
 	Name        string          `json:"name"`
 	Description string          `json:"description"`
 	Enabled     bool            `json:"enabled"`
-	Response    json.RawMessage `json:"response"`
+	Status      string          `json:"status,omitempty"`
+	Definition  json.RawMessage `json:"definition"`
 }
 
 func (s *Server) handleUpsertCommand(c *gin.Context) {
@@ -130,23 +163,79 @@ func (s *Server) handleUpsertCommand(c *gin.Context) {
 	if req.Description == "" {
 		req.Description = "Custom command"
 	}
+	var def cc.Definition
+	if len(req.Definition) > 0 {
+		if err := json.Unmarshal(req.Definition, &def); err != nil {
+			fail(c, http.StatusBadRequest, "invalid definition json")
+			return
+		}
+	}
+	result := cc.Validate(req.Name, def)
+	if !result.OK {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "validation failed", "validation": result})
+		return
+	}
+
 	gid := guildID(c)
 	gidInt, _ := event.ParseID(gid)
-	if _, err := s.store.CustomCommands.Upsert(c.Request.Context(), store.CustomCommand{
-		GuildID: gidInt, Name: req.Name, Description: req.Description,
-		Response: req.Response, Enabled: req.Enabled,
-	}); err != nil {
+	row := store.CustomCommand{
+		ID:            req.ID,
+		GuildID:       gidInt,
+		Name:          req.Name,
+		Description:   req.Description,
+		Enabled:       req.Enabled,
+		Status:        firstNonEmpty(req.Status, string(cc.StatusDraft)),
+		Version:       1,
+		RequiresDefer: result.RequiresDefer,
+		Definition:    req.Definition,
+	}
+	// If the row already exists keep its version and bump on publish only.
+	if req.ID != "" {
+		if existing, err := s.store.CustomCommands.Get(c.Request.Context(), gidInt, req.ID); err == nil {
+			row.Version = existing.Version
+			if row.Status == string(cc.StatusPublished) && existing.Status != string(cc.StatusPublished) {
+				row.Version = existing.Version + 1
+			}
+		}
+	}
+	saved, err := s.store.CustomCommands.Upsert(c.Request.Context(), row)
+	if err != nil {
 		fail(c, http.StatusInternalServerError, "could not save command")
 		return
 	}
-	s.syncGuildCommands(c.Request.Context(), gid, gidInt)
-	s.audit(c, gidInt, "command.upsert", gin.H{"name": req.Name})
-	c.JSON(http.StatusOK, gin.H{"ok": true})
+	if saved.Status == string(cc.StatusPublished) {
+		if err := s.store.CustomCommands.PublishVersion(c.Request.Context(), store.CustomCommandVersion{
+			CommandID:  saved.ID,
+			Version:    saved.Version,
+			Definition: saved.Definition,
+		}); err != nil {
+			s.log.Warn("publish version", "err", err)
+		}
+	}
+	s.syncGuildCommandsAsync(gid, gidInt)
+	s.audit(c, gidInt, "command.upsert", gin.H{"name": req.Name, "id": saved.ID, "status": saved.Status})
+	c.JSON(http.StatusOK, gin.H{"id": saved.ID, "validation": result})
+}
+
+func (s *Server) handleValidateCommand(c *gin.Context) {
+	var req upsertCommandReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		fail(c, http.StatusBadRequest, "invalid body")
+		return
+	}
+	var def cc.Definition
+	if len(req.Definition) > 0 {
+		if err := json.Unmarshal(req.Definition, &def); err != nil {
+			fail(c, http.StatusBadRequest, "invalid definition json")
+			return
+		}
+	}
+	c.JSON(http.StatusOK, gin.H{"validation": cc.Validate(req.Name, def)})
 }
 
 func (s *Server) handleDeleteCommand(c *gin.Context) {
-	id, err := strconv.ParseInt(c.Param("cid"), 10, 64)
-	if err != nil {
+	id := c.Param("cid")
+	if id == "" {
 		fail(c, http.StatusBadRequest, "invalid id")
 		return
 	}
@@ -156,14 +245,320 @@ func (s *Server) handleDeleteCommand(c *gin.Context) {
 		fail(c, http.StatusInternalServerError, "could not delete command")
 		return
 	}
-	s.syncGuildCommands(c.Request.Context(), gid, gidInt)
+	s.syncGuildCommandsAsync(gid, gidInt)
 	s.audit(c, gidInt, "command.delete", gin.H{"id": id})
 	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+// ── Command groups (organizational folders) ────────────────
+
+func groupJSON(g store.CommandGroup) gin.H {
+	return gin.H{"id": g.ID, "name": g.Name, "position": g.Position, "created_at": g.CreatedAt}
+}
+
+func (s *Server) handleListCommandGroups(c *gin.Context) {
+	gidInt, _ := event.ParseID(guildID(c))
+	rows, err := s.store.CommandGroups.List(c.Request.Context(), gidInt)
+	if err != nil {
+		fail(c, http.StatusInternalServerError, "could not load groups")
+		return
+	}
+	out := make([]gin.H, 0, len(rows))
+	for _, g := range rows {
+		out = append(out, groupJSON(g))
+	}
+	c.JSON(http.StatusOK, gin.H{"groups": out})
+}
+
+type groupReq struct {
+	Name string `json:"name"`
+}
+
+func cleanGroupName(s string) string {
+	s = strings.TrimSpace(s)
+	if len(s) > 40 {
+		s = s[:40]
+	}
+	return s
+}
+
+func (s *Server) handleCreateCommandGroup(c *gin.Context) {
+	var req groupReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		fail(c, http.StatusBadRequest, "invalid body")
+		return
+	}
+	name := cleanGroupName(req.Name)
+	if name == "" {
+		fail(c, http.StatusBadRequest, "group name required")
+		return
+	}
+	gidInt, _ := event.ParseID(guildID(c))
+	g, err := s.store.CommandGroups.Create(c.Request.Context(), gidInt, name)
+	if err != nil {
+		fail(c, http.StatusInternalServerError, "could not create group")
+		return
+	}
+	s.audit(c, gidInt, "command_group.create", gin.H{"id": g.ID, "name": name})
+	c.JSON(http.StatusOK, groupJSON(g))
+}
+
+func (s *Server) handleRenameCommandGroup(c *gin.Context) {
+	id := c.Param("gid")
+	if id == "" {
+		fail(c, http.StatusBadRequest, "invalid id")
+		return
+	}
+	var req groupReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		fail(c, http.StatusBadRequest, "invalid body")
+		return
+	}
+	name := cleanGroupName(req.Name)
+	if name == "" {
+		fail(c, http.StatusBadRequest, "group name required")
+		return
+	}
+	gidInt, _ := event.ParseID(guildID(c))
+	if err := s.store.CommandGroups.Rename(c.Request.Context(), gidInt, id, name); err != nil {
+		fail(c, http.StatusNotFound, "group not found")
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+func (s *Server) handleDeleteCommandGroup(c *gin.Context) {
+	id := c.Param("gid")
+	if id == "" {
+		fail(c, http.StatusBadRequest, "invalid id")
+		return
+	}
+	gidInt, _ := event.ParseID(guildID(c))
+	if err := s.store.CommandGroups.Delete(c.Request.Context(), gidInt, id); err != nil {
+		fail(c, http.StatusInternalServerError, "could not delete group")
+		return
+	}
+	s.audit(c, gidInt, "command_group.delete", gin.H{"id": id})
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+type reorderGroupsReq struct {
+	IDs []string `json:"ids"`
+}
+
+func (s *Server) handleReorderCommandGroups(c *gin.Context) {
+	var req reorderGroupsReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		fail(c, http.StatusBadRequest, "invalid body")
+		return
+	}
+	gidInt, _ := event.ParseID(guildID(c))
+	if err := s.store.CommandGroups.Reorder(c.Request.Context(), gidInt, req.IDs); err != nil {
+		fail(c, http.StatusInternalServerError, "could not reorder groups")
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+type setGroupReq struct {
+	GroupID *string `json:"group_id"`
+}
+
+func (s *Server) handleSetCommandGroup(c *gin.Context) {
+	id := c.Param("cid")
+	if id == "" {
+		fail(c, http.StatusBadRequest, "invalid id")
+		return
+	}
+	var req setGroupReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		fail(c, http.StatusBadRequest, "invalid body")
+		return
+	}
+	gidInt, _ := event.ParseID(guildID(c))
+	// A non-nil group must belong to this guild.
+	if req.GroupID != nil {
+		groups, err := s.store.CommandGroups.List(c.Request.Context(), gidInt)
+		if err != nil {
+			fail(c, http.StatusInternalServerError, "could not verify group")
+			return
+		}
+		ok := false
+		for _, g := range groups {
+			if g.ID == *req.GroupID {
+				ok = true
+				break
+			}
+		}
+		if !ok {
+			fail(c, http.StatusBadRequest, "unknown group")
+			return
+		}
+	}
+	if err := s.store.CustomCommands.SetGroup(c.Request.Context(), gidInt, id, req.GroupID); err != nil {
+		fail(c, http.StatusNotFound, "command not found")
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+func summarizeCommand(r store.CustomCommand) gin.H {
+	return gin.H{
+		"id":             r.ID,
+		"name":           r.Name,
+		"description":    r.Description,
+		"enabled":        r.Enabled,
+		"status":         r.Status,
+		"version":        r.Version,
+		"requires_defer": r.RequiresDefer,
+		"group_id":       r.GroupID,
+		"updated_at":     r.UpdatedAt,
+	}
+}
+
+func fullCommand(r store.CustomCommand) gin.H {
+	out := summarizeCommand(r)
+	out["definition"] = json.RawMessage(r.Definition)
+	return out
+}
+
+// ── Flow shape (the overview's miniature canvases) ──────────
+
+// shapeNode is the thumbnail's entire input; layout happens client-side.
+type shapeNode struct {
+	K string        `json:"k"`           // step kind
+	C [][]shapeNode `json:"c,omitempty"` // one array per non-empty control branch, in order
+	E bool          `json:"e,omitempty"` // has an on-error router
+}
+
+const (
+	shapeMaxNodes = 40
+	shapeMaxDepth = 6
+)
+
+// addShapeFields derives the overview's cheap structural fields from the
+// definition JSONB: total step count, slash property count, and a compact
+// capped shape for the flow thumbnail.
+func addShapeFields(h gin.H, raw json.RawMessage) {
+	var def cc.Definition
+	if len(raw) == 0 || json.Unmarshal(raw, &def) != nil {
+		return
+	}
+	b := &shapeBuilder{}
+	shape := b.walk(def.Steps, 0)
+	h["step_count"] = countShapeSteps(def.Steps)
+	h["option_count"] = len(def.Options)
+	h["flow_shape"] = shape
+	h["shape_more"] = b.dropped
+}
+
+type shapeBuilder struct {
+	nodes   int
+	dropped int
+}
+
+func (b *shapeBuilder) walk(steps []cc.Step, depth int) []shapeNode {
+	out := make([]shapeNode, 0, len(steps))
+	for i := range steps {
+		s := &steps[i]
+		if b.nodes >= shapeMaxNodes || depth >= shapeMaxDepth {
+			// Count only what the thumbnail WOULD draw (control branches, not
+			// error-handler bodies), so "+n more" matches the missing nodes.
+			b.dropped += countDrawable(steps[i:])
+			break
+		}
+		b.nodes++
+		n := shapeNode{
+			K: s.Kind,
+			E: s.OnError != nil || len(s.OnErrorCases) > 0,
+		}
+		for _, br := range branchesOf(s) {
+			if len(br) == 0 {
+				continue
+			}
+			n.C = append(n.C, b.walk(br, depth+1))
+		}
+		out = append(out, n)
+	}
+	return out
+}
+
+// branchesOf lists a step's control branches in display order. Error
+// handlers are not branches here; they surface as the dashed rail flag.
+func branchesOf(s *cc.Step) [][]cc.Step {
+	switch s.Kind {
+	case cc.KindIf:
+		return [][]cc.Step{s.Then, s.Else}
+	case cc.KindSwitch:
+		out := make([][]cc.Step, 0, len(s.Cases)+1)
+		for _, cse := range s.Cases {
+			out = append(out, cse.Do)
+		}
+		return append(out, s.Default)
+	case cc.KindLoop:
+		return [][]cc.Step{s.Then}
+	case cc.KindParallel:
+		var ps cc.SpecParallel
+		if len(s.Spec) > 0 && json.Unmarshal(s.Spec, &ps) == nil {
+			return ps.Branches
+		}
+	}
+	return nil
+}
+
+// countShapeSteps counts every step in the live tree, error-handler bodies
+// included (scratch is the caller's concern and excluded by construction).
+func countShapeSteps(steps []cc.Step) int {
+	n := 0
+	for i := range steps {
+		s := &steps[i]
+		n++
+		for _, br := range branchesOf(s) {
+			n += countShapeSteps(br)
+		}
+		n += countShapeSteps(s.OnError)
+		for _, ec := range s.OnErrorCases {
+			n += countShapeSteps(ec.Do)
+		}
+	}
+	return n
+}
+
+// countDrawable counts the nodes the thumbnail walk would emit: control
+// branches only, error handlers surface as a flag, never their own nodes.
+func countDrawable(steps []cc.Step) int {
+	n := 0
+	for i := range steps {
+		s := &steps[i]
+		n++
+		for _, br := range branchesOf(s) {
+			n += countDrawable(br)
+		}
+	}
+	return n
 }
 
 // syncGuildCommands rebuilds the guild's slash-command set from all enabled
 // custom commands and registers it with Discord. Dia's built-in commands are
 // registered globally, so a guild's command slots hold only custom commands.
+// syncGuildCommandsAsync registers the guild's slash commands with Discord
+// WITHOUT blocking the HTTP response: a save/publish must not hang on a slow
+// or unreachable Discord API (that surfaced as a 10s client timeout). The
+// registration runs on its own bounded context and only logs failures, which
+// matches the synchronous version's error handling.
+func (s *Server) syncGuildCommandsAsync(gid string, gidInt int64) {
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				s.log.Error("custom command sync: panic", "guild", gid, "err", r)
+			}
+		}()
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		s.syncGuildCommands(ctx, gid, gidInt)
+	}()
+}
+
 func (s *Server) syncGuildCommands(ctx context.Context, gid string, gidInt int64) {
 	rows, err := s.store.CustomCommands.List(ctx, gidInt)
 	if err != nil {
@@ -175,15 +570,89 @@ func (s *Server) syncGuildCommands(ctx context.Context, gid string, gidInt int64
 		if !r.Enabled {
 			continue
 		}
+		var d cc.Definition
+		_ = json.Unmarshal(r.Definition, &d)
 		defs = append(defs, &discordgo.ApplicationCommand{
 			Type:        discordgo.ChatApplicationCommand,
 			Name:        r.Name,
 			Description: r.Description,
+			Options:     buildSlashOptions(d.Options),
 		})
 	}
 	if _, err := s.discord.BulkOverwriteGuildCommands(gid, defs); err != nil {
 		s.log.Warn("custom command sync: register failed", "guild", gid, "err", err)
 	}
+}
+
+func buildSlashOptions(opts []cc.CommandOption) []*discordgo.ApplicationCommandOption {
+	// Discord rejects registrations where a required option follows an optional
+	// one; sort stably so a stored out-of-order definition still syncs.
+	ordered := make([]cc.CommandOption, len(opts))
+	copy(ordered, opts)
+	sort.SliceStable(ordered, func(i, j int) bool {
+		return ordered[i].Required && !ordered[j].Required
+	})
+	out := make([]*discordgo.ApplicationCommandOption, 0, len(ordered))
+	for _, o := range ordered {
+		opt := &discordgo.ApplicationCommandOption{
+			Type:         slashOptKind(o.Kind),
+			Name:         o.Name,
+			Description:  o.Description,
+			Required:     o.Required,
+			Autocomplete: o.Autocomplete,
+			MinValue:     o.MinValue,
+		}
+		if o.MaxValue != nil {
+			opt.MaxValue = *o.MaxValue
+		}
+		if o.MinLength != nil {
+			opt.MinLength = o.MinLength
+		}
+		if o.MaxLength != nil {
+			opt.MaxLength = *o.MaxLength
+		}
+		if len(o.ChannelTypes) > 0 {
+			cts := make([]discordgo.ChannelType, 0, len(o.ChannelTypes))
+			for _, ct := range o.ChannelTypes {
+				cts = append(cts, discordgo.ChannelType(ct))
+			}
+			opt.ChannelTypes = cts
+		}
+		if len(o.Choices) > 0 {
+			for _, c := range o.Choices {
+				var v interface{}
+				_ = json.Unmarshal(c.Value, &v)
+				opt.Choices = append(opt.Choices, &discordgo.ApplicationCommandOptionChoice{
+					Name:  c.Name,
+					Value: v,
+				})
+			}
+		}
+		out = append(out, opt)
+	}
+	return out
+}
+
+func slashOptKind(k string) discordgo.ApplicationCommandOptionType {
+	switch k {
+	case "int", "integer":
+		return discordgo.ApplicationCommandOptionInteger
+	case "bool", "boolean":
+		return discordgo.ApplicationCommandOptionBoolean
+	case "user":
+		return discordgo.ApplicationCommandOptionUser
+	case "role":
+		return discordgo.ApplicationCommandOptionRole
+	case "channel":
+		return discordgo.ApplicationCommandOptionChannel
+	case "mentionable":
+		return discordgo.ApplicationCommandOptionMentionable
+	case "number":
+		return discordgo.ApplicationCommandOptionNumber
+	case "attachment":
+		return discordgo.ApplicationCommandOptionAttachment
+	}
+	return discordgo.ApplicationCommandOptionString
 }
 
 // ── Reaction role menus ──────────────────────────────────────

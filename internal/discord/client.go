@@ -38,6 +38,11 @@ func (c *Client) AppID() string { return c.appID }
 // not yet wrapped here.
 func (c *Client) Session() *discordgo.Session { return c.s }
 
+// GuildEmojis lists a guild's custom emojis (dashboard emoji picker).
+func (c *Client) GuildEmojis(guildID string) ([]*discordgo.Emoji, error) {
+	return c.s.GuildEmojis(guildID)
+}
+
 // InteractionRef identifies an interaction for REST responses.
 type InteractionRef struct {
 	ID    string
@@ -64,6 +69,15 @@ func (c *Client) Defer(ref InteractionRef, ephemeral bool) error {
 	return c.s.InteractionRespond(ref.dg(), &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
 		Data: data,
+	})
+}
+
+// DeferUpdate acknowledges a component interaction with no visible response
+// (DEFERRED_UPDATE_MESSAGE): the click stops spinning, the message stays as
+// is, and the token remains usable for follow-ups or an @original edit.
+func (c *Client) DeferUpdate(ref InteractionRef) error {
+	return c.s.InteractionRespond(ref.dg(), &discordgo.InteractionResponse{
+		Type: discordgo.InteractionResponseDeferredMessageUpdate,
 	})
 }
 

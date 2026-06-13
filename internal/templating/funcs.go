@@ -13,14 +13,15 @@ import (
 )
 
 // funcMap clones the stateless base functions and adds the per-render lookup
-// (read-only guild data) and action functions (which capture rt + the counter).
-func (e *Engine) funcMap(rt Runtime, lookup Lookup, actions *int) template.FuncMap {
-	fm := make(template.FuncMap, len(baseFuncs)+8)
+// (read-only guild data). Templates stay pure — there are deliberately NO
+// side-effecting functions; actions are custom-command steps, never template
+// calls.
+func (e *Engine) funcMap(lookup Lookup) template.FuncMap {
+	fm := make(template.FuncMap, len(baseFuncs)+2)
 	for k, v := range baseFuncs {
 		fm[k] = v
 	}
 	addLookupFuncs(fm, lookup)
-	addActionFuncs(fm, rt, actions)
 	return fm
 }
 
@@ -154,51 +155,6 @@ var baseFuncs = template.FuncMap{
 	"mentionUser":    func(id string) string { return "<@" + id + ">" },
 	"mentionRole":    func(id string) string { return "<@&" + id + ">" },
 	"mentionChannel": func(id string) string { return "<#" + id + ">" },
-}
-
-// addActionFuncs wires the side-effecting functions, each guarded by the
-// per-render action budget. rt == nil disables them entirely.
-func addActionFuncs(fm template.FuncMap, rt Runtime, count *int) {
-	guard := func() error {
-		if rt == nil {
-			return errors.New("actions are disabled in this context")
-		}
-		if *count >= maxActions {
-			return fmt.Errorf("action limit reached (%d per run)", maxActions)
-		}
-		*count++
-		return nil
-	}
-	fm["sendDM"] = func(userID, content string) (string, error) {
-		if err := guard(); err != nil {
-			return "", err
-		}
-		return "", rt.SendDM(userID, content)
-	}
-	fm["sendMessage"] = func(channelID, content string) (string, error) {
-		if err := guard(); err != nil {
-			return "", err
-		}
-		return "", rt.SendChannelMessage(channelID, content)
-	}
-	fm["addRole"] = func(userID, roleID string) (string, error) {
-		if err := guard(); err != nil {
-			return "", err
-		}
-		return "", rt.AddRole(userID, roleID)
-	}
-	fm["removeRole"] = func(userID, roleID string) (string, error) {
-		if err := guard(); err != nil {
-			return "", err
-		}
-		return "", rt.RemoveRole(userID, roleID)
-	}
-	fm["addReaction"] = func(channelID, messageID, emoji string) (string, error) {
-		if err := guard(); err != nil {
-			return "", err
-		}
-		return "", rt.AddReaction(channelID, messageID, emoji)
-	}
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────────

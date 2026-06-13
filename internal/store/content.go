@@ -94,43 +94,78 @@ func (r *ReactionRoleRepo) List(ctx context.Context, guildID int64) ([]ReactionR
 	return out, rows.Err()
 }
 
-// ── Custom commands ──────────────────────────────────────────
+// ── Custom commands (v2: programmable Step[] tree) ───────────
 
 // CustomCommandRepo manages custom_commands.
 type CustomCommandRepo struct{ pool *pgxpool.Pool }
 
-// Upsert creates or updates a custom command by (guild, name).
+// Upsert inserts or updates a command. When c.ID==0 a new row is created and
+// returned with the assigned id; otherwise the row is updated by (guild, id).
+// Name uniqueness within a guild is enforced by the index.
 func (r *CustomCommandRepo) Upsert(ctx context.Context, c CustomCommand) (CustomCommand, error) {
-	if len(c.Response) == 0 {
-		c.Response = json.RawMessage("{}")
+	if len(c.Definition) == 0 {
+		c.Definition = json.RawMessage("{}")
+	}
+	if c.Status == "" {
+		c.Status = "draft"
+	}
+	if c.Version <= 0 {
+		c.Version = 1
+	}
+	if c.ID == "" {
+		err := r.pool.QueryRow(ctx, `
+			INSERT INTO custom_commands (guild_id, name, description, enabled, status, version, requires_defer, definition, created_by)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+			RETURNING id, created_at, updated_at`,
+			c.GuildID, c.Name, c.Description, c.Enabled, c.Status, c.Version, c.RequiresDefer, []byte(c.Definition), c.CreatedBy).
+			Scan(&c.ID, &c.CreatedAt, &c.UpdatedAt)
+		if err != nil {
+			return CustomCommand{}, fmt.Errorf("insert custom command: %w", err)
+		}
+		return c, nil
 	}
 	err := r.pool.QueryRow(ctx, `
-		INSERT INTO custom_commands (guild_id, name, description, response, enabled)
-		VALUES ($1, $2, $3, $4, $5)
-		ON CONFLICT (guild_id, name) DO UPDATE SET
-			description = EXCLUDED.description,
-			response = EXCLUDED.response,
-			enabled = EXCLUDED.enabled,
-			updated_at = now()
-		RETURNING id, created_at, updated_at`,
-		c.GuildID, c.Name, c.Description, []byte(c.Response), c.Enabled).
-		Scan(&c.ID, &c.CreatedAt, &c.UpdatedAt)
+		UPDATE custom_commands SET
+			name = $3, description = $4, enabled = $5, status = $6, version = $7,
+			requires_defer = $8, definition = $9, updated_at = now()
+		WHERE id = $1 AND guild_id = $2
+		RETURNING created_at, updated_at`,
+		c.ID, c.GuildID, c.Name, c.Description, c.Enabled, c.Status, c.Version,
+		c.RequiresDefer, []byte(c.Definition)).
+		Scan(&c.CreatedAt, &c.UpdatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return c, ErrNotFound
+	}
 	if err != nil {
-		return CustomCommand{}, fmt.Errorf("upsert custom command: %w", err)
+		return CustomCommand{}, fmt.Errorf("update custom command: %w", err)
 	}
 	return c, nil
 }
 
+// Get returns one command by id.
+func (r *CustomCommandRepo) Get(ctx context.Context, guildID int64, id string) (CustomCommand, error) {
+	c := CustomCommand{GuildID: guildID}
+	err := r.pool.QueryRow(ctx, `
+		SELECT id, name, description, enabled, status, version, requires_defer, definition, group_id, created_by, created_at, updated_at
+		FROM custom_commands WHERE id = $1 AND guild_id = $2`, id, guildID).
+		Scan(&c.ID, &c.Name, &c.Description, &c.Enabled, &c.Status, &c.Version, &c.RequiresDefer,
+			&c.Definition, &c.GroupID, &c.CreatedBy, &c.CreatedAt, &c.UpdatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return c, ErrNotFound
+	}
+	return c, err
+}
+
 // Delete removes a command scoped to a guild.
-func (r *CustomCommandRepo) Delete(ctx context.Context, guildID, id int64) error {
+func (r *CustomCommandRepo) Delete(ctx context.Context, guildID int64, id string) error {
 	_, err := r.pool.Exec(ctx, `DELETE FROM custom_commands WHERE id = $1 AND guild_id = $2`, id, guildID)
 	return err
 }
 
-// List returns all custom commands for a guild.
+// List returns all custom commands for a guild, ordered by name.
 func (r *CustomCommandRepo) List(ctx context.Context, guildID int64) ([]CustomCommand, error) {
 	rows, err := r.pool.Query(ctx, `
-		SELECT id, name, description, response, enabled, created_at, updated_at
+		SELECT id, name, description, enabled, status, version, requires_defer, definition, group_id, created_by, created_at, updated_at
 		FROM custom_commands WHERE guild_id = $1 ORDER BY name`, guildID)
 	if err != nil {
 		return nil, err
@@ -140,8 +175,8 @@ func (r *CustomCommandRepo) List(ctx context.Context, guildID int64) ([]CustomCo
 	var out []CustomCommand
 	for rows.Next() {
 		c := CustomCommand{GuildID: guildID}
-		if err := rows.Scan(&c.ID, &c.Name, &c.Description, &c.Response, &c.Enabled,
-			&c.CreatedAt, &c.UpdatedAt); err != nil {
+		if err := rows.Scan(&c.ID, &c.Name, &c.Description, &c.Enabled, &c.Status, &c.Version,
+			&c.RequiresDefer, &c.Definition, &c.GroupID, &c.CreatedBy, &c.CreatedAt, &c.UpdatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, c)
@@ -149,17 +184,135 @@ func (r *CustomCommandRepo) List(ctx context.Context, guildID int64) ([]CustomCo
 	return out, rows.Err()
 }
 
-// GetByName returns an enabled custom command by name, or ErrNotFound.
+// GetByName returns a command by (guild, name), or ErrNotFound. Used by the
+// interaction-time dispatcher.
 func (r *CustomCommandRepo) GetByName(ctx context.Context, guildID int64, name string) (CustomCommand, error) {
 	c := CustomCommand{GuildID: guildID}
 	err := r.pool.QueryRow(ctx, `
-		SELECT id, name, description, response, enabled, created_at, updated_at
+		SELECT id, name, description, enabled, status, version, requires_defer, definition, group_id, created_by, created_at, updated_at
 		FROM custom_commands WHERE guild_id = $1 AND name = $2`, guildID, name).
-		Scan(&c.ID, &c.Name, &c.Description, &c.Response, &c.Enabled, &c.CreatedAt, &c.UpdatedAt)
+		Scan(&c.ID, &c.Name, &c.Description, &c.Enabled, &c.Status, &c.Version, &c.RequiresDefer,
+			&c.Definition, &c.GroupID, &c.CreatedBy, &c.CreatedAt, &c.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return c, ErrNotFound
 	}
 	return c, err
+}
+
+// PublishVersion writes an immutable snapshot of a command's Definition. The
+// caller bumps custom_commands.version + status='published' in the same txn.
+func (r *CustomCommandRepo) PublishVersion(ctx context.Context, v CustomCommandVersion) error {
+	if len(v.Definition) == 0 {
+		v.Definition = json.RawMessage("{}")
+	}
+	_, err := r.pool.Exec(ctx, `
+		INSERT INTO custom_command_versions (command_id, version, definition, published_by)
+		VALUES ($1, $2, $3, $4)
+		ON CONFLICT (command_id, version) DO UPDATE SET
+			definition = EXCLUDED.definition,
+			published_by = EXCLUDED.published_by`,
+		v.CommandID, v.Version, []byte(v.Definition), v.PublishedBy)
+	return err
+}
+
+// GetVersion returns a specific published snapshot.
+func (r *CustomCommandRepo) GetVersion(ctx context.Context, commandID string, version int) (CustomCommandVersion, error) {
+	var v CustomCommandVersion
+	err := r.pool.QueryRow(ctx, `
+		SELECT command_id, version, definition, published_by, published_at
+		FROM custom_command_versions WHERE command_id = $1 AND version = $2`,
+		commandID, version).
+		Scan(&v.CommandID, &v.Version, &v.Definition, &v.PublishedBy, &v.PublishedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return v, ErrNotFound
+	}
+	return v, err
+}
+
+// SetGroup moves a command into a group (nil = ungrouped). Group membership is
+// metadata, not an edit, so updated_at is left untouched.
+func (r *CustomCommandRepo) SetGroup(ctx context.Context, guildID int64, id string, groupID *string) error {
+	ct, err := r.pool.Exec(ctx,
+		`UPDATE custom_commands SET group_id = $3 WHERE id = $1 AND guild_id = $2`,
+		id, guildID, groupID)
+	if err != nil {
+		return err
+	}
+	if ct.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// ── Command groups ───────────────────────────────────────────
+
+// CommandGroupRepo manages command_groups (dashboard organizational folders).
+type CommandGroupRepo struct{ pool *pgxpool.Pool }
+
+// List returns a guild's groups in display order.
+func (r *CommandGroupRepo) List(ctx context.Context, guildID int64) ([]CommandGroup, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT id, name, position, created_at FROM command_groups
+		 WHERE guild_id = $1 ORDER BY position, id`, guildID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []CommandGroup
+	for rows.Next() {
+		g := CommandGroup{GuildID: guildID}
+		if err := rows.Scan(&g.ID, &g.Name, &g.Position, &g.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, g)
+	}
+	return out, rows.Err()
+}
+
+// Create appends a new group after the existing ones.
+func (r *CommandGroupRepo) Create(ctx context.Context, guildID int64, name string) (CommandGroup, error) {
+	g := CommandGroup{GuildID: guildID, Name: name}
+	err := r.pool.QueryRow(ctx, `
+		INSERT INTO command_groups (guild_id, name, position)
+		VALUES ($1, $2, COALESCE((SELECT max(position) + 1 FROM command_groups WHERE guild_id = $1), 0))
+		RETURNING id, position, created_at`, guildID, name).
+		Scan(&g.ID, &g.Position, &g.CreatedAt)
+	if err != nil {
+		return CommandGroup{}, fmt.Errorf("create command group: %w", err)
+	}
+	return g, nil
+}
+
+// Rename changes a group's name.
+func (r *CommandGroupRepo) Rename(ctx context.Context, guildID int64, id string, name string) error {
+	ct, err := r.pool.Exec(ctx,
+		`UPDATE command_groups SET name = $3 WHERE id = $1 AND guild_id = $2`, id, guildID, name)
+	if err != nil {
+		return err
+	}
+	if ct.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// Delete removes a group; its commands fall back to ungrouped (FK SET NULL).
+func (r *CommandGroupRepo) Delete(ctx context.Context, guildID int64, id string) error {
+	_, err := r.pool.Exec(ctx,
+		`DELETE FROM command_groups WHERE id = $1 AND guild_id = $2`, id, guildID)
+	return err
+}
+
+// Reorder sets group positions to the given id order.
+func (r *CommandGroupRepo) Reorder(ctx context.Context, guildID int64, ids []string) error {
+	for i, id := range ids {
+		if _, err := r.pool.Exec(ctx,
+			`UPDATE command_groups SET position = $3 WHERE id = $1 AND guild_id = $2`,
+			id, guildID, i); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // ── Audit log ────────────────────────────────────────────────

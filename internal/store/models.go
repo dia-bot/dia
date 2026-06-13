@@ -72,14 +72,105 @@ type ReactionRoleMenu struct {
 	UpdatedAt time.Time
 }
 
-// CustomCommand is an admin-defined slash command.
+// CustomCommand is one admin-defined programmable slash command. Definition
+// holds the full JSONB program (slash params + Step[] tree); see
+// internal/features/customcommands/config.go for the typed shape.
 type CustomCommand struct {
+	ID            string // UUID
+	GuildID       int64
+	Name          string
+	Description   string
+	Enabled       bool
+	Status        string // draft | published | archived
+	Version       int
+	RequiresDefer bool
+	Definition    json.RawMessage
+	GroupID       *string // UUID of the group; nil = ungrouped
+	CreatedBy     int64
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
+}
+
+// CommandGroup is a dashboard organizational folder for custom commands.
+type CommandGroup struct {
+	ID        string // UUID
+	GuildID   int64
+	Name      string
+	Position  int
+	CreatedAt time.Time
+}
+
+// CustomCommandVersion is an immutable snapshot of the Definition at publish.
+type CustomCommandVersion struct {
+	CommandID   string // UUID
+	Version     int
+	Definition  json.RawMessage
+	PublishedBy int64
+	PublishedAt time.Time
+}
+
+// CommandRun is a persisted in-flight (or completed) command execution. Runs
+// exist only for durable steps (wait, wait_for, scheduled, parallel); pure
+// synchronous runs leave only their RunLog rows.
+type CommandRun struct {
+	ID                 string
+	CommandID          string // UUID
+	CommandVersion     int
+	GuildID            int64
+	InvokerID          int64
+	ChannelID          int64
+	TriggerKind        string
+	InteractionID      string
+	InteractionToken   string
+	InteractionExpires *time.Time
+	Scope              json.RawMessage
+	Cursor             json.RawMessage
+	Status             string
+	ResumeAt           *time.Time
+	AwaitingCustomID   string
+	AwaitingUserID     int64
+	AwaitingKind       string
+	DefinitionSnapshot json.RawMessage
+	StartedAt          time.Time
+	CompletedAt        *time.Time
+	Error              string
+}
+
+// CommandRunLog is one structured log row per executed step.
+type CommandRunLog struct {
+	ID         int64
+	RunID      string
+	StepID     string
+	StepKind   string
+	CursorPath string
+	StartedAt  time.Time
+	DurationMs int
+	Status     string
+	Input      json.RawMessage
+	Output     json.RawMessage
+	Error      string
+}
+
+// FeatureKVEntry is one durable key/value pair backing kv_get / kv_set steps.
+type FeatureKVEntry struct {
+	GuildID   int64
+	CommandID string // UUID; "" or zero-UUID = guild-shared
+	Scope     string
+	OwnerID   int64
+	Key       string
+	Value     json.RawMessage
+	ExpiresAt *time.Time
+	UpdatedAt time.Time
+}
+
+// CommandImageTemplate is one stored Card Studio layout referenced by
+// image_render steps.
+type CommandImageTemplate struct {
 	ID          int64
 	GuildID     int64
 	Name        string
 	Description string
-	Response    json.RawMessage
-	Enabled     bool
+	Layout      json.RawMessage
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
 }

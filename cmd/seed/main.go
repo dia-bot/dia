@@ -358,36 +358,44 @@ func seedReactionMenu(ctx context.Context, st *store.Store, guildID int64) error
 // ── Custom commands ──────────────────────────────────────────────────────────
 
 func seedCustomCommands(ctx context.Context, st *store.Store, guildID int64) error {
+	// One reply step + a simple embed is the v2 equivalent of the legacy
+	// content+embed response. Admins extend from there in the dashboard.
 	commands := []struct {
 		name, desc string
-		resp       customcommands.Response
+		def        customcommands.Definition
 	}{
 		{
 			name: "rules", desc: "Show the server rules",
-			resp: customcommands.Response{
-				Content: "Be kind, stay on topic, and no spam. Full rules in <#" + sid(welcomeChannel) + ">.",
-				Embed: &customcommands.ResponseEmbed{
-					Title:       "📜 Server Rules",
-					Description: "1. Be respectful\n2. No spam or self-promo\n3. Keep it on topic",
-					Color:       "#F15BB5",
-				},
-			},
+			def: customcommands.Definition{Steps: []customcommands.Step{{
+				ID: "01_reply", Kind: customcommands.KindReply,
+				Spec: mustJSON(customcommands.SpecReply{
+					Content: "Be kind, stay on topic, and no spam. Full rules in <#" + sid(welcomeChannel) + ">.",
+					Embeds: []customcommands.EmbedSpec{{
+						Title:       "📜 Server Rules",
+						Description: "1. Be respectful\n2. No spam or self-promo\n3. Keep it on topic",
+						Color:       "#F15BB5",
+					}},
+				}),
+			}}},
 		},
 		{
 			name: "links", desc: "Useful links",
-			resp: customcommands.Response{
-				Content:   "Docs, GitHub and more 👇",
-				Ephemeral: true,
-				Embed: &customcommands.ResponseEmbed{
-					Title:       "🔗 Links",
-					Description: "[Website](https://example.com) · [GitHub](https://github.com/dia-bot/dia)",
-					Color:       "#9B5DE5",
-				},
-			},
+			def: customcommands.Definition{Steps: []customcommands.Step{{
+				ID: "01_reply", Kind: customcommands.KindReply,
+				Spec: mustJSON(customcommands.SpecReply{
+					Content:   "Docs, GitHub and more 👇",
+					Ephemeral: true,
+					Embeds: []customcommands.EmbedSpec{{
+						Title:       "🔗 Links",
+						Description: "[Website](https://example.com) · [GitHub](https://github.com/dia-bot/dia)",
+						Color:       "#9B5DE5",
+					}},
+				}),
+			}}},
 		},
 	}
 	for _, c := range commands {
-		raw, err := json.Marshal(c.resp)
+		raw, err := json.Marshal(c.def)
 		if err != nil {
 			return fmt.Errorf("marshal command %s: %w", c.name, err)
 		}
@@ -395,13 +403,23 @@ func seedCustomCommands(ctx context.Context, st *store.Store, guildID int64) err
 			GuildID:     guildID,
 			Name:        c.name,
 			Description: c.desc,
-			Response:    raw,
 			Enabled:     true,
+			Status:      string(customcommands.StatusPublished),
+			Version:     1,
+			Definition:  raw,
 		}); err != nil {
 			return fmt.Errorf("upsert command %s: %w", c.name, err)
 		}
 	}
 	return nil
+}
+
+func mustJSON(v any) json.RawMessage {
+	b, err := json.Marshal(v)
+	if err != nil {
+		panic(err)
+	}
+	return b
 }
 
 // ── Audit log ────────────────────────────────────────────────────────────────

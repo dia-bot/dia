@@ -17,7 +17,7 @@ export function setCsrf(token: string) {
 
 export const loginURL = `${API_URL}/auth/login`;
 
-class ApiError extends Error {
+export class ApiError extends Error {
 	constructor(
 		public status: number,
 		message: string
@@ -26,17 +26,49 @@ class ApiError extends Error {
 	}
 }
 
+// Default per-request timeout in ms. Long enough for image renders and slow
+// validation, short enough to surface a real hang as an error instead of an
+// infinite spinner.
+const DEFAULT_TIMEOUT_MS = 10_000;
+
 async function req<T>(method: string, path: string, body?: unknown): Promise<T> {
 	const headers: Record<string, string> = {};
 	if (body !== undefined) headers['Content-Type'] = 'application/json';
 	if (method !== 'GET') headers['X-CSRF-Token'] = csrfToken;
 
-	const res = await fetch(`${API_URL}${path}`, {
-		method,
-		credentials: 'include',
-		headers,
-		body: body !== undefined ? JSON.stringify(body) : undefined
+	const ctrl = new AbortController();
+	// Double-belt-and-suspenders timeout: the AbortController cancels the
+	// underlying TCP work, AND a Promise.race rejects with our own ApiError
+	// so the call doesn't hang on any browser quirk that fails to surface the
+	// abort.
+	const timeoutErr = new ApiError(
+		0,
+		`Request timed out after ${DEFAULT_TIMEOUT_MS / 1000}s — the API may be down or unreachable`
+	);
+	const timeoutP = new Promise<never>((_, reject) => {
+		setTimeout(() => {
+			ctrl.abort();
+			reject(timeoutErr);
+		}, DEFAULT_TIMEOUT_MS);
 	});
+
+	let res: Response;
+	try {
+		res = await Promise.race([
+			fetch(`${API_URL}${path}`, {
+				method,
+				credentials: 'include',
+				headers,
+				body: body !== undefined ? JSON.stringify(body) : undefined,
+				signal: ctrl.signal
+			}),
+			timeoutP
+		]);
+	} catch (e) {
+		if (e instanceof ApiError) throw e;
+		if (e instanceof DOMException && e.name === 'AbortError') throw timeoutErr;
+		throw new ApiError(0, e instanceof Error ? e.message : `network error: ${String(e)}`);
+	}
 	if (!res.ok) {
 		let msg = res.statusText;
 		try {
@@ -48,7 +80,11 @@ async function req<T>(method: string, path: string, body?: unknown): Promise<T> 
 		throw new ApiError(res.status, msg);
 	}
 	if (res.status === 204) return undefined as T;
-	return (await res.json()) as T;
+	try {
+		return (await res.json()) as T;
+	} catch (e) {
+		throw new ApiError(res.status, `invalid JSON response: ${e instanceof Error ? e.message : String(e)}`);
+	}
 }
 
 export const api = {
@@ -71,10 +107,49 @@ export const api = {
 		req('DELETE', `/api/guilds/${id}/level-rewards/${level}`),
 
 	commands: (id: string) => req<{ commands: any[] }>('GET', `/api/guilds/${id}/commands`),
+	command: (id: string, cid: string) => req<any>('GET', `/api/guilds/${id}/commands/${cid}`),
+	emojis: (id: string) =>
+		req<{ emojis: { id: string; name: string; animated: boolean }[] }>(
+			'GET',
+			`/api/guilds/${id}/emojis`
+		),
 	upsertCommand: (id: string, cmd: unknown) =>
-		req('PUT', `/api/guilds/${id}/commands`, cmd),
-	deleteCommand: (id: string, cid: number) =>
+		req<{ id: string; validation: any }>('PUT', `/api/guilds/${id}/commands`, cmd),
+	validateCommand: (id: string, cmd: unknown) =>
+		req<{ validation: any }>('POST', `/api/guilds/${id}/commands/validate`, cmd),
+	deleteCommand: (id: string, cid: string) =>
 		req('DELETE', `/api/guilds/${id}/commands/${cid}`),
+	setCommandGroup: (id: string, cid: string, groupId: string | null) =>
+		req('PATCH', `/api/guilds/${id}/commands/${cid}/group`, { group_id: groupId }),
+	commandGroups: (id: string) =>
+		req<{ groups: { id: string; name: string; position: number; created_at: string }[] }>(
+			'GET',
+			`/api/guilds/${id}/command-groups`
+		),
+	createCommandGroup: (id: string, name: string) =>
+		req<{ id: string; name: string; position: number }>('POST', `/api/guilds/${id}/command-groups`, {
+			name
+		}),
+	renameCommandGroup: (id: string, gid: string, name: string) =>
+		req('PATCH', `/api/guilds/${id}/command-groups/${gid}`, { name }),
+	deleteCommandGroup: (id: string, gid: string) =>
+		req('DELETE', `/api/guilds/${id}/command-groups/${gid}`),
+	reorderCommandGroups: (id: string, ids: string[]) =>
+		req('PATCH', `/api/guilds/${id}/command-group-order`, { ids }),
+	commandRuns: (id: string, commandId?: string, limit = 25) =>
+		req<{ runs: any[] }>(
+			'GET',
+			`/api/guilds/${id}/command-runs?limit=${limit}` +
+				(commandId ? `&command_id=${commandId}` : '')
+		),
+	commandRun: (id: string, runId: string) =>
+		req<{ run: any; logs: any[] }>('GET', `/api/guilds/${id}/command-runs/${runId}`),
+	commandTemplates: (id: string) =>
+		req<{ templates: any[] }>('GET', `/api/guilds/${id}/command-templates`),
+	upsertCommandTemplate: (id: string, tpl: unknown) =>
+		req<{ id: number }>('PUT', `/api/guilds/${id}/command-templates`, tpl),
+	deleteCommandTemplate: (id: string, tid: number) =>
+		req('DELETE', `/api/guilds/${id}/command-templates/${tid}`),
 
 	menus: (id: string) => req<{ menus: any[] }>('GET', `/api/guilds/${id}/reaction-roles`),
 	upsertMenu: (id: string, menu: unknown) =>

@@ -82,6 +82,54 @@ welcome; it is not required.
   `web/src/lib/components`.
 - **Never reference other bots/competitors by name** anywhere in code, comments,
   or UI copy.
+- **Avoid em-dashes (—) in prose** — UI copy, docs, comments, commit messages.
+  Prefer commas, periods, or parentheses; reach for an em-dash only when the
+  sentence genuinely needs one.
+
+## Custom commands: the templating contract
+
+Every user-facing **string value in a custom-command definition is a Go
+`text/template`**, rendered at runtime against the run's scope
+(`internal/features/customcommands/scope.go`). That covers message content,
+embed titles/descriptions/fields, reasons, nicknames, URLs, KV keys — both
+plain "templated string" spec fields and `Expr` values (`{lang:"tmpl",
+src:"…"}`). If a step needs a value pulled into a string, it goes through a
+template; never invent a second interpolation syntax.
+
+Values in scope inside any template:
+
+- `{{ .Input.<name> }}` — the slash **property** values, keyed by option name.
+- `{{ .Vars.<name> }}` — declared variables and anything written by `set_var`
+  / `into` fields.
+- `{{ .User.* }}` (`ID`, `Username`, `GlobalName`, `Mention`, `Bot`),
+  `{{ .Member.* }}` (`Nick`, `Roles`, `JoinedAt`), `{{ .Guild.* }}` (`ID`,
+  `Name`, `MemberCount`), `{{ .Channel.ID }}`, `{{ .Now }}`, `{{ .Last }}`.
+- `{{ .Error.* }}` — only inside `on_error` subtrees.
+
+**Go template syntax is the only syntax, everywhere.** Every placeholder,
+picker token, step default, hint, fixture and doc example must be a Go
+template (`{{ .User.Mention }}`, `{{ .Input.amount }}`), with no exceptions.
+The brace shorthands (`{user.mention}`, `{server}`, `{input.<name>}`, …) are
+legacy input sugar: the runtime still expands them so old saved definitions
+keep working, but nothing may display, insert, generate or document them.
+Read-side compatibility (recognising a legacy value in a stored spec) is the
+single allowed appearance.
+
+Keep these mirrors in lockstep when touching either side:
+
+- Definition shapes: `internal/features/customcommands/{config,kinds}.go` ↔
+  `web/src/lib/commands/types.ts` (the editor must never produce JSONB the
+  runtime won't decode — message/embed/component editors mirror `SpecReply` /
+  `EmbedSpec` / `ComponentRow` exactly).
+- Template functions & scope vars: `internal/templating/funcs.go` ↔
+  `web/src/lib/commands/expr-meta.ts` (drives the dashboard's variable /
+  function pickers).
+
+**Templates are pure.** Template functions only read values and format
+strings (lookups like `getRole`/`getChannel` are read-only). Never add a
+side-effecting template function — anything that *does* something (send,
+grant, react, …) must be a custom-command **step** so it's visible on the
+canvas, validated, and budgeted.
 
 ## Where things live
 

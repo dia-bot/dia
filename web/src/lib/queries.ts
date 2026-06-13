@@ -5,12 +5,17 @@ import { createQuery } from '@tanstack/svelte-query';
 import { api } from './api';
 import type { GuildListItem } from './types';
 
-// presentGuildsQuery returns the servers the user manages where Dia is present.
-export function presentGuildsQuery() {
+// manageableGuildsQuery returns every server the user manages (Administrator
+// or owner), regardless of whether Dia is currently present in it. The
+// `bot_present` flag is preserved on each item so callers can badge the ones
+// that still need an invite. The switcher and command palette want navigation,
+// not presence filtering — hiding non-bot guilds caused the "no servers found"
+// empty state when the bot's live guild list was momentarily unreachable.
+export function manageableGuildsQuery() {
 	return createQuery(() => ({
 		queryKey: ['guilds'],
 		queryFn: async () => (await api.guilds()).guilds,
 		staleTime: 30_000,
-		select: (guilds: GuildListItem[]) => guilds.filter((g) => g.bot_present)
+		select: (guilds: GuildListItem[]) => guilds
 	}));
 }

@@ -76,6 +76,16 @@ func (c *Context) Defer(ephemeral bool) error {
 	return err
 }
 
+// DeferUpdate acknowledges a component interaction with nothing visible: the
+// click stops spinning and the message stays exactly as it is.
+func (c *Context) DeferUpdate() error {
+	err := c.Client.DeferUpdate(c.ref())
+	if err == nil {
+		c.responded = true
+	}
+	return err
+}
+
 // Followup sends a follow-up after Defer.
 func (c *Context) Followup(params *discordgo.WebhookParams) (*discordgo.Message, error) {
 	return c.Client.Followup(c.ref(), params)

@@ -30,14 +30,14 @@ const (
 
 // Component types (Discord) relevant to interaction routing.
 const (
-	ComponentActionRow  = 1
-	ComponentButton     = 2
-	ComponentStringSelect = 3
-	ComponentTextInput  = 4
-	ComponentUserSelect = 5
-	ComponentRoleSelect = 6
+	ComponentActionRow         = 1
+	ComponentButton            = 2
+	ComponentStringSelect      = 3
+	ComponentTextInput         = 4
+	ComponentUserSelect        = 5
+	ComponentRoleSelect        = 6
 	ComponentMentionableSelect = 7
-	ComponentChannelSelect = 8
+	ComponentChannelSelect     = 8
 )
 
 // Interaction is the normalized INTERACTION_CREATE payload. It carries
