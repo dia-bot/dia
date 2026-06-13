@@ -5,6 +5,7 @@ import (
 
 	"github.com/dia-bot/dia/internal/event"
 	"github.com/dia-bot/dia/internal/features/automations"
+	cc "github.com/dia-bot/dia/internal/features/customcommands"
 	"github.com/dia-bot/dia/internal/store"
 )
 
@@ -119,6 +120,70 @@ func TestMatchChannelFilter(t *testing.T) {
 	}
 	if p.matches(nil, a, automations.TriggerConfig{IgnoreChannels: []string{"100"}}, ec) {
 		t.Error("ignore list should drop a listed channel")
+	}
+}
+
+func TestResumeWaitKind(t *testing.T) {
+	if resumeWaitKind(event.TypeMessageCreate) != "message" {
+		t.Error("MESSAGE_CREATE should resume message waits")
+	}
+	if resumeWaitKind(event.TypeReactionAdd) != "reaction" {
+		t.Error("MESSAGE_REACTION_ADD should resume reaction waits")
+	}
+	// Reaction-remove and others don't resume waits.
+	if resumeWaitKind(event.TypeReactionRemove) != "" {
+		t.Error("MESSAGE_REACTION_REMOVE should not resume waits")
+	}
+	if resumeWaitKind(event.TypeMemberAdd) != "" {
+		t.Error("member add should not resume waits")
+	}
+}
+
+func TestWaitChannelMatches(t *testing.T) {
+	// any: matches everything.
+	if !waitChannelMatches(cc.SpecWaitFor{ChannelMode: "any"}, "10", "99") {
+		t.Error("any should match any channel")
+	}
+	if !waitChannelMatches(cc.SpecWaitFor{}, "10", "99") {
+		t.Error("unset mode defaults to any")
+	}
+	// current: only the run's channel.
+	if !waitChannelMatches(cc.SpecWaitFor{ChannelMode: "current"}, "10", "10") {
+		t.Error("current should match the run channel")
+	}
+	if waitChannelMatches(cc.SpecWaitFor{ChannelMode: "current"}, "10", "11") {
+		t.Error("current should reject a different channel")
+	}
+	// only: allowlist.
+	only := cc.SpecWaitFor{ChannelMode: "only", Channels: []string{"5", "6"}}
+	if !waitChannelMatches(only, "10", "6") {
+		t.Error("only should match a listed channel")
+	}
+	if waitChannelMatches(only, "10", "7") {
+		t.Error("only should reject an unlisted channel")
+	}
+	// except: denylist.
+	except := cc.SpecWaitFor{ChannelMode: "except", Channels: []string{"5"}}
+	if waitChannelMatches(except, "10", "5") {
+		t.Error("except should reject a listed channel")
+	}
+	if !waitChannelMatches(except, "10", "9") {
+		t.Error("except should match an unlisted channel")
+	}
+}
+
+func TestWaitPayloadMessage(t *testing.T) {
+	ec := &eventContext{
+		channelID: "42",
+		user:      event.User{ID: "7"},
+		eventMap: map[string]any{
+			"content": "hello",
+			"message": map[string]any{"id": "99", "channel_id": "42"},
+		},
+	}
+	p := waitPayload("message", ec)
+	if p["id"] != "99" || p["content"] != "hello" || p["user_id"] != "7" || p["channel_id"] != "42" {
+		t.Fatalf("unexpected message payload: %+v", p)
 	}
 }
 

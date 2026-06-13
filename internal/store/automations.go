@@ -247,6 +247,29 @@ func (r *AutomationRunRepo) FindWaitingForComponent(ctx context.Context, customI
 	return run, err
 }
 
+// FindWaitingByKind returns the runs in a guild parked on a given wait kind
+// ("message" / "reaction"). The worker resumes the matching ones when the
+// corresponding event arrives. Backed by the partial wait-kind index.
+func (r *AutomationRunRepo) FindWaitingByKind(ctx context.Context, guildID int64, kind string) ([]AutomationRun, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT `+automationRunCols+` FROM automation_runs
+		WHERE guild_id = $1 AND status = 'waiting' AND awaiting_kind = $2
+		ORDER BY started_at LIMIT 100`, guildID, kind)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []AutomationRun
+	for rows.Next() {
+		var run AutomationRun
+		if err := scanAutomationRun(rows, &run); err != nil {
+			return nil, err
+		}
+		out = append(out, run)
+	}
+	return out, rows.Err()
+}
+
 // DueWaits returns runs with resume_at <= now() that are waiting on a timer.
 func (r *AutomationRunRepo) DueWaits(ctx context.Context, limit int) ([]AutomationRun, error) {
 	rows, err := r.pool.Query(ctx, `

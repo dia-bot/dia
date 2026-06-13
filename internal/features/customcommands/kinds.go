@@ -534,10 +534,17 @@ type SpecWaitFor struct {
 	Trigger        string `json:"trigger"` // component | modal | message | reaction
 	CustomIDSuffix string `json:"custom_id_suffix,omitempty"`
 	FromUser       Expr   `json:"from_user,omitempty"` // restrict who can satisfy this wait
-	Channel        Expr   `json:"channel,omitempty"`   // for message/reaction filters
-	Timeout        string `json:"timeout"`             // parsed by time.ParseDuration
-	Into           string `json:"into,omitempty"`
-	OnTimeout      []Step `json:"on_timeout,omitempty"`
+	Channel        Expr   `json:"channel,omitempty"`   // legacy single-channel filter
+	// ChannelMode + Channels scope which channels satisfy a message/reaction
+	// wait: "any" (default) | "current" (the run's channel) | "only" (in
+	// Channels) | "except" (anywhere but Channels). Channels are concrete ids.
+	ChannelMode string   `json:"channel_mode,omitempty"`
+	Channels    []string `json:"channels,omitempty"`
+	// Emoji optionally restricts a reaction wait to one emoji (glyph, name or id).
+	Emoji     string `json:"emoji,omitempty"`
+	Timeout   string `json:"timeout"` // parsed by time.ParseDuration
+	Into      string `json:"into,omitempty"`
+	OnTimeout []Step `json:"on_timeout,omitempty"`
 
 	// Response is the click-response mode for this listener; Responses
 	// overrides it per clicked button suffix (the click-router shares one

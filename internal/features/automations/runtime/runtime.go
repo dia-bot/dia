@@ -94,7 +94,16 @@ func (p *Plugin) handleEvent(ctx context.Context, et event.Type, env *event.Enve
 	if err != nil {
 		return err
 	}
-	if len(autos) == 0 {
+
+	// Message / reaction events can also RESUME runs parked on a wait_for
+	// (e.g. "wait for the member's reply"). Look those up alongside triggers.
+	waitKind := resumeWaitKind(et)
+	var waiting []store.AutomationRun
+	if waitKind != "" {
+		waiting, _ = p.deps.Store.AutomationRuns.FindWaitingByKind(ctx, gid, waitKind)
+	}
+
+	if len(autos) == 0 && len(waiting) == 0 {
 		return nil
 	}
 
@@ -115,7 +124,151 @@ func (p *Plugin) handleEvent(ctx context.Context, et event.Type, env *event.Enve
 			p.deps.Log.Warn("automation run error", "automation", a.ID, "trigger", a.TriggerType, "err", err)
 		}
 	}
+
+	if len(waiting) > 0 {
+		p.resumeWaits(ctx, waitKind, waiting, ec)
+	}
 	return nil
+}
+
+// resumeWaitKind maps an event to the wait_for trigger it can satisfy ("" = none).
+func resumeWaitKind(et event.Type) string {
+	switch et {
+	case event.TypeMessageCreate:
+		return "message"
+	case event.TypeReactionAdd:
+		return "reaction"
+	}
+	return ""
+}
+
+// resumeWaits resumes every parked run whose wait_for matches the incoming
+// event: the right kind, the awaited user (if any), the channel scope, and (for
+// reactions) the emoji. A run is claimed atomically so the scheduler's timeout
+// path and this resume can't both fire.
+func (p *Plugin) resumeWaits(ctx context.Context, kind string, waiting []store.AutomationRun, ec *eventContext) {
+	actorID, _ := event.ParseID(ec.user.ID)
+	payload := waitPayload(kind, ec)
+	for _, r := range waiting {
+		if r.AwaitingUserID != 0 && r.AwaitingUserID != actorID {
+			continue
+		}
+		var def cc.Definition
+		if json.Unmarshal(r.DefinitionSnapshot, &def) != nil {
+			continue
+		}
+		var cursor []cc.CursorFrame
+		if len(r.Cursor) > 0 {
+			_ = json.Unmarshal(r.Cursor, &cursor)
+		}
+		branch, idx := exec.BranchAtCursor(def.Steps, cursor)
+		if branch == nil || idx < 0 || idx >= len(branch) {
+			continue
+		}
+		st := branch[idx]
+		if st.Kind != cc.KindWaitFor || len(st.Spec) == 0 {
+			continue
+		}
+		var ws cc.SpecWaitFor
+		if json.Unmarshal(st.Spec, &ws) != nil || ws.Trigger != kind {
+			continue
+		}
+		if !waitChannelMatches(ws, event.FormatID(r.ChannelID), ec.channelID) {
+			continue
+		}
+		if kind == "reaction" && ws.Emoji != "" && !emojiMatches([]string{ws.Emoji}, ec.eventMap) {
+			continue
+		}
+		claimed, err := p.deps.Store.AutomationRuns.ClaimResume(ctx, r.ID)
+		if err != nil || !claimed {
+			continue
+		}
+		p.resumeWithEvent(ctx, r, def, cursor, ws.Into, payload)
+	}
+}
+
+// resumeWithEvent continues a parked run past its wait_for, injecting the event
+// payload under the wait's `into` variable (and the legacy "trigger").
+func (p *Plugin) resumeWithEvent(ctx context.Context, r store.AutomationRun, def cc.Definition, cursor []cc.CursorFrame, into string, payload map[string]any) {
+	scope, err := cc.RestoreScope(p.deps.GuildState, event.FormatID(r.GuildID), r.Scope)
+	if err != nil {
+		_ = p.deps.Store.AutomationRuns.MarkComplete(ctx, r.ID, "failed", err.Error())
+		return
+	}
+	scope.Set("trigger", payload)
+	if into != "" {
+		scope.Set(into, payload)
+	}
+	run := &exec.RunState{
+		ID:                 r.ID,
+		CommandID:          r.AutomationID,
+		CommandVersion:     r.AutomationVersion,
+		GuildID:            event.FormatID(r.GuildID),
+		InvokerID:          event.FormatID(r.InvokerID),
+		ChannelID:          event.FormatID(r.ChannelID),
+		TriggerKind:        r.TriggerKind,
+		DefinitionSnapshot: r.DefinitionSnapshot,
+	}
+	run.SetCursor(cursor)
+	outcome, pause, runErr := p.eng.Resume(ctx, run, def, scope, cursor)
+	if runErr != nil {
+		p.deps.Log.Warn("automation wait resume", "run", r.ID, "err", runErr)
+	}
+	p.persistLogs(ctx, run)
+	if pause != nil {
+		_ = p.persistResume(ctx, run, scope, pause)
+		return
+	}
+	_ = p.deps.Store.AutomationRuns.MarkComplete(ctx, r.ID, outcome.Status, outcome.Error)
+}
+
+// waitChannelMatches applies a wait_for's channel scope to an incoming event.
+func waitChannelMatches(ws cc.SpecWaitFor, runChannelID, eventChannelID string) bool {
+	switch ws.ChannelMode {
+	case "current":
+		return runChannelID != "" && eventChannelID == runChannelID
+	case "only":
+		return len(ws.Channels) == 0 || contains(ws.Channels, eventChannelID)
+	case "except":
+		return !contains(ws.Channels, eventChannelID)
+	default: // "any" / unset
+		return true
+	}
+}
+
+// waitPayload builds the `.Vars.<into>` value handed to a resumed wait.
+func waitPayload(kind string, ec *eventContext) map[string]any {
+	msg, _ := ec.eventMap["message"].(map[string]any)
+	switch kind {
+	case "message":
+		content, _ := ec.eventMap["content"].(string)
+		return map[string]any{
+			"kind":       "message",
+			"id":         mapStr(msg, "id"),
+			"content":    content,
+			"channel_id": ec.channelID,
+			"user_id":    ec.user.ID,
+		}
+	case "reaction":
+		return map[string]any{
+			"kind":       "reaction",
+			"emoji":      ec.eventMap["emoji"],
+			"emoji_id":   ec.eventMap["emoji_id"],
+			"emoji_name": ec.eventMap["emoji_name"],
+			"message_id": mapStr(msg, "id"),
+			"channel_id": ec.channelID,
+			"user_id":    ec.user.ID,
+		}
+	}
+	return map[string]any{"kind": kind}
+}
+
+func mapStr(m map[string]any, k string) string {
+	if m == nil {
+		return ""
+	}
+	s, _ := m[k].(string)
+	return s
 }
 
 // eventContext is the decoded, trigger-agnostic view of one gateway event:
