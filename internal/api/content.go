@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/dia-bot/dia/internal/event"
 	cc "github.com/dia-bot/dia/internal/features/customcommands"
@@ -211,7 +212,7 @@ func (s *Server) handleUpsertCommand(c *gin.Context) {
 			s.log.Warn("publish version", "err", err)
 		}
 	}
-	s.syncGuildCommands(c.Request.Context(), gid, gidInt)
+	s.syncGuildCommandsAsync(gid, gidInt)
 	s.audit(c, gidInt, "command.upsert", gin.H{"name": req.Name, "id": saved.ID, "status": saved.Status})
 	c.JSON(http.StatusOK, gin.H{"id": saved.ID, "validation": result})
 }
@@ -244,7 +245,7 @@ func (s *Server) handleDeleteCommand(c *gin.Context) {
 		fail(c, http.StatusInternalServerError, "could not delete command")
 		return
 	}
-	s.syncGuildCommands(c.Request.Context(), gid, gidInt)
+	s.syncGuildCommandsAsync(gid, gidInt)
 	s.audit(c, gidInt, "command.delete", gin.H{"id": id})
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
@@ -540,6 +541,24 @@ func countDrawable(steps []cc.Step) int {
 // syncGuildCommands rebuilds the guild's slash-command set from all enabled
 // custom commands and registers it with Discord. Dia's built-in commands are
 // registered globally, so a guild's command slots hold only custom commands.
+// syncGuildCommandsAsync registers the guild's slash commands with Discord
+// WITHOUT blocking the HTTP response: a save/publish must not hang on a slow
+// or unreachable Discord API (that surfaced as a 10s client timeout). The
+// registration runs on its own bounded context and only logs failures, which
+// matches the synchronous version's error handling.
+func (s *Server) syncGuildCommandsAsync(gid string, gidInt int64) {
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				s.log.Error("custom command sync: panic", "guild", gid, "err", r)
+			}
+		}()
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		s.syncGuildCommands(ctx, gid, gidInt)
+	}()
+}
+
 func (s *Server) syncGuildCommands(ctx context.Context, gid string, gidInt int64) {
 	rows, err := s.store.CustomCommands.List(ctx, gidInt)
 	if err != nil {
