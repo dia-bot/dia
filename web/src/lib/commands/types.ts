@@ -275,7 +275,7 @@ export const STEP_KINDS: StepKindMeta[] = [
 	{ kind: 'edit_reply', category: 'reply', label: 'Edit reply', short: 'Legacy — use Edit message with target “the reply”.', icon: 'SquarePen', hidden: true },
 	{ kind: 'defer_reply', category: 'reply', label: 'Defer reply', short: 'Acknowledge — buys time for slow steps.', icon: 'Clock' },
 	{ kind: 'send_dm', category: 'reply', label: 'Send DM', short: 'DM a user — embeds, buttons, files.', icon: 'Mail' },
-	{ kind: 'modal_open', category: 'reply', label: 'Open modal', short: 'Prompt the user with a form.', icon: 'TextCursorInput' },
+	{ kind: 'modal_open', category: 'reply', label: 'Open a form', short: 'Pop up a form for the member to fill in.', icon: 'TextCursorInput' },
 
 	// Messages anywhere
 	{ kind: 'send_message', category: 'messages', label: 'Send message', short: 'Post a message to any channel.', icon: 'Send' },
@@ -318,13 +318,13 @@ export const STEP_KINDS: StepKindMeta[] = [
 	{ kind: 'image_load', category: 'image', label: 'Load image', short: 'Download an image from a URL.', icon: 'ImageDown' },
 
 	// Data
-	{ kind: 'set_var', category: 'data', label: 'Set variable', short: 'Assign a value.', icon: 'Variable' },
+	{ kind: 'set_var', category: 'data', label: 'Set variable', short: 'Store a value to reuse later in this flow.', icon: 'Variable' },
 	{ kind: 'incr_var', category: 'data', label: 'Increment variable', short: 'Add to a numeric variable.', icon: 'CirclePlus' },
 	{ kind: 'pick_random', category: 'data', label: 'Pick random', short: 'Random entry from a list — 8ball, giveaways.', icon: 'Dices' },
 	{ kind: 'json_parse', category: 'data', label: 'Parse JSON', short: 'Turn a JSON string into a structured value.', icon: 'Braces' },
-	{ kind: 'kv_get', category: 'data', label: 'KV get', short: 'Read a durable value.', icon: 'Database' },
-	{ kind: 'kv_set', category: 'data', label: 'KV set', short: 'Write a durable value.', icon: 'Save' },
-	{ kind: 'kv_delete', category: 'data', label: 'KV delete', short: 'Delete a durable value.', icon: 'Eraser' },
+	{ kind: 'kv_get', category: 'data', label: 'Load saved value', short: 'Read a value saved earlier (persists across restarts).', icon: 'Database' },
+	{ kind: 'kv_set', category: 'data', label: 'Save a value', short: 'Store a value to reuse later or in another run.', icon: 'Save' },
+	{ kind: 'kv_delete', category: 'data', label: 'Delete saved value', short: 'Remove a saved value.', icon: 'Eraser' },
 	{ kind: 'http_request', category: 'data', label: 'HTTP request', short: 'Outbound HTTP call.', icon: 'Globe' },
 
 	// Flow
@@ -333,7 +333,7 @@ export const STEP_KINDS: StepKindMeta[] = [
 	{ kind: 'loop', category: 'flow', label: 'Loop', short: 'Iterate over a list.', icon: 'RotateCw' },
 	{ kind: 'parallel', category: 'flow', label: 'Parallel', short: 'Fork branches concurrently.', icon: 'Columns2' },
 	{ kind: 'wait', category: 'flow', label: 'Wait', short: 'Pause the run for a duration.', icon: 'Hourglass' },
-	{ kind: 'wait_for', category: 'flow', label: 'Wait for', short: 'Plumbing for click paths; created by dragging a button dot.', icon: 'Radar', hidden: true },
+	{ kind: 'wait_for', category: 'flow', label: 'Wait for', short: 'Pause until something happens (a click, reply or reaction), then continue.', icon: 'Radar', hidden: true },
 	{ kind: 'exit', category: 'flow', label: 'Exit', short: 'End the run successfully.', icon: 'CircleCheck' },
 	{ kind: 'fail', category: 'flow', label: 'Fail', short: 'Abort with an error.', icon: 'CircleAlert' },
 	{ kind: 'run_command', category: 'flow', label: 'Run command', short: 'Invoke another custom command.', icon: 'Terminal' },

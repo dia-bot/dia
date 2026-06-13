@@ -139,8 +139,8 @@
 			? {
 					...k,
 					hidden: false,
-					label: 'Wait for reply',
-					short: 'Pause up to 1 min for a button click or modal, then continue (or take a timeout path).'
+					label: 'Wait for…',
+					short: 'Pause until a click, message or reaction (up to 1 min), then continue.'
 				}
 			: k
 	);

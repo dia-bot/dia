@@ -5,8 +5,10 @@
 	// (click one to edit it in a popover), attachments support real picture
 	// upload. Mirrors SpecReply / SpecSendMessage on the Go side; every string
 	// is a Go template rendered at runtime.
+	import { getContext } from 'svelte';
 	import { page } from '$app/stores';
 	import { uploadImage } from '$lib/api';
+	import { AUTOMATION_CTX } from '$lib/commands/expr-meta';
 	import type { Step } from '$lib/commands/types';
 	import EmbedBuilder from './EmbedBuilder.svelte';
 	import ImagePicker from './ImagePicker.svelte';
@@ -49,6 +51,10 @@
 		components?: boolean;
 		attachments?: boolean;
 	} = $props();
+
+	// In automations, raw custom-id editing is hidden — buttons are wired by the
+	// canvas (drag a button's dot) or picked by label in a Wait-for.
+	const isAutomation = getContext(AUTOMATION_CTX) === true;
 
 	function spec(): AnySpec {
 		if (!step.spec) step.spec = {};
@@ -601,17 +607,21 @@
 														<MousePointerClick size={10} class="mt-px shrink-0" />
 														<span>
 															Drag this button's dot on the canvas to choose what
-															happens when it's clicked.
+															happens when it's clicked{isAutomation
+																? ', or wait for it in a Wait-for step.'
+																: '.'}
 														</span>
 													</p>
-													<button
-														type="button"
-														class="mt-1 text-[10px] font-medium text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
-														title="Advanced — set your own id for routing / future automations"
-														onclick={() => patchComponent(ri, ci, { custom_id_manual: true })}
-													>
-														Configure custom id
-													</button>
+													{#if !isAutomation}
+														<button
+															type="button"
+															class="mt-1 text-[10px] font-medium text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+															title="Advanced — set your own id for routing / future automations"
+															onclick={() => patchComponent(ri, ci, { custom_id_manual: true })}
+														>
+															Configure custom id
+														</button>
+													{/if}
 													{/if}
 												{/if}
 											</Popover.Content>
