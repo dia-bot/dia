@@ -118,6 +118,13 @@
 		return kinds.join(' -> ') + (rest > 0 ? ` +${rest}` : '');
 	}
 
+	// Runs readout: recent activity, then last-seen, then truly never.
+	function runsLabel(c: CommandSummary): string {
+		if ((c.runs_24h ?? 0) > 0) return `${c.runs_24h} runs 24h`;
+		if (c.last_run_at) return `last run ${relTime(c.last_run_at)}`;
+		return 'no runs yet';
+	}
+
 	function isInTextField(target: EventTarget | null): boolean {
 		const el = target as HTMLElement | null;
 		if (!el) return false;
@@ -280,9 +287,8 @@
 				</div>
 			{:else}
 				{#each filtered as cmd, i (cmd.id)}
-					<a
-						href={`/servers/${store.id}/commands/${cmd.id}`}
-						class="tile group relative overflow-hidden rounded-xl border border-line bg-surface focus-visible:outline focus-visible:outline-1 focus-visible:outline-line-strong {booted
+					<div
+						class="tile group relative overflow-hidden rounded-xl border border-line bg-surface {booted
 							? ''
 							: 'enter'}"
 						style="--i: {Math.min(i, 12)}"
@@ -290,8 +296,17 @@
 						out:scale|local={{ start: 0.97, duration: dur(140), easing: cubicOut }}
 						in:fade|local={{ duration: dur(180) }}
 					>
+						<!-- The whole tile navigates; a stretched link sits under the
+						     content so the action buttons stay valid, focusable siblings. -->
+						<a
+							href={`/servers/${store.id}/commands/${cmd.id}`}
+							class="absolute inset-0 z-0 rounded-xl focus-visible:outline focus-visible:outline-1 focus-visible:outline-line-strong"
+							aria-label={`Open /${cmd.name}`}
+						></a>
+
 						<!-- Zone 1: the miniature canvas -->
-						<div class="thumb relative aspect-[5/3] border-b border-line/60">
+						<div class="pointer-events-none relative aspect-[5/3]">
+							<div class="thumb absolute inset-0 border-b border-line/60"></div>
 							<div
 								class="absolute inset-0 transition-[opacity,filter] duration-300 {cmd.enabled
 									? ''
@@ -316,18 +331,14 @@
 								{/if}
 							</span>
 
-							<!-- Hover actions -->
-							<div class="acts absolute right-2 top-2 flex overflow-hidden rounded-md border border-line bg-surface/90 backdrop-blur">
+							<!-- Hover actions: above the stretched link, clickable. -->
+							<div class="acts pointer-events-auto absolute right-2 top-2 z-10 flex overflow-hidden rounded-md border border-line bg-surface/90 backdrop-blur">
 								<button
 									type="button"
 									class="grid size-6 place-items-center text-muted transition-colors hover:bg-ink-2 hover:text-ink focus-visible:ring-1 focus-visible:ring-line-strong"
 									aria-label="Duplicate"
 									title="Duplicate"
-									onclick={(e) => {
-										e.preventDefault();
-										e.stopPropagation();
-										duplicate(cmd);
-									}}
+									onclick={() => duplicate(cmd)}
 								>
 									<Copy size={12} />
 								</button>
@@ -336,19 +347,15 @@
 									class="grid size-6 place-items-center text-muted transition-colors hover:bg-ink-2 hover:text-danger focus-visible:ring-1 focus-visible:ring-line-strong"
 									aria-label="Delete"
 									title="Delete"
-									onclick={(e) => {
-										e.preventDefault();
-										e.stopPropagation();
-										remove(cmd);
-									}}
+									onclick={() => remove(cmd)}
 								>
 									<Trash2 size={12} />
 								</button>
 							</div>
 						</div>
 
-						<!-- Zone 2: nameplate -->
-						<div class="px-3.5 pt-2.5">
+						<!-- Zone 2: nameplate (decorative; clicks fall to the link) -->
+						<div class="pointer-events-none px-3.5 pt-2.5">
 							<div class="flex items-baseline gap-1.5">
 								<Play size={9} class="shrink-0 -translate-y-px self-center text-accent-ink" />
 								<span class="min-w-0 truncate font-mono text-[13px] font-medium text-ink">
@@ -368,7 +375,7 @@
 						</div>
 
 						<!-- Zone 3: readout rail -->
-						<div class="px-3.5 pb-2.5 pt-1.5 font-mono text-[10px] tabular-nums text-faint">
+						<div class="pointer-events-none px-3.5 pb-2.5 pt-1.5 font-mono text-[10px] tabular-nums text-faint">
 							{#if cmd.step_count !== undefined}
 								<span>{cmd.step_count} {cmd.step_count === 1 ? 'step' : 'steps'}</span>
 								<span class="mx-1 opacity-50">·</span>
@@ -378,7 +385,7 @@
 								<span class="mx-1 opacity-50">·</span>
 							{/if}
 							{#if cmd.runs_24h !== undefined}
-								<span>{cmd.runs_24h > 0 ? `${cmd.runs_24h} runs 24h` : 'no runs yet'}</span>
+								<span>{runsLabel(cmd)}</span>
 								<span class="mx-1 opacity-50">·</span>
 							{/if}
 							<span>edited {relTime(cmd.updated_at)}</span>
@@ -387,7 +394,7 @@
 								<span title="Auto-defers, worst-case path over 3 seconds">defers</span>
 							{/if}
 						</div>
-					</a>
+					</div>
 				{/each}
 
 				<!-- The ghost slot: an empty canvas waiting to be switched on -->
@@ -446,7 +453,7 @@
 			box-shadow 200ms var(--canvas-ease, cubic-bezier(0.22, 1, 0.36, 1));
 	}
 	.tile:hover,
-	.tile:focus-visible {
+	.tile:focus-within {
 		transform: translateY(-2px);
 		border-color: rgba(255, 255, 255, 0.14);
 		box-shadow:
