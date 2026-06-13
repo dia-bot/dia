@@ -10,7 +10,7 @@
 				outline: 'border-border text-muted-foreground',
 				destructive: 'border-destructive/30 bg-destructive/10 text-destructive',
 				success: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400',
-				warning: 'border-amber-500/30 bg-amber-500/10 text-amber-400'
+				warning: 'border-border bg-secondary text-foreground'
 			}
 		},
 		defaultVariants: { variant: 'default' }

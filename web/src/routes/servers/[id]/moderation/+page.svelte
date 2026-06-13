@@ -86,7 +86,7 @@
 			case 'mute':
 				return 'border-line-strong bg-blush text-accent-ink';
 			case 'warn':
-				return 'border-[color-mix(in_srgb,#f5b440_35%,transparent)] bg-[color-mix(in_srgb,#f5b440_15%,transparent)] text-[#f5c66b]';
+				return 'border-line-strong bg-ink-2 text-ink';
 			default:
 				return 'border-line-strong bg-surface text-muted';
 		}
