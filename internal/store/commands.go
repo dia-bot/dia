@@ -265,20 +265,8 @@ func (r *CommandRunRepo) ListLogs(ctx context.Context, runID string) ([]CommandR
 // FeatureKVRepo manages feature_kv.
 type FeatureKVRepo struct{ pool *pgxpool.Pool }
 
-// zeroUUID is the guild-shared sentinel for feature_kv.command_id (the UUID
-// column is NOT NULL, so an absent command id maps here).
-const zeroUUID = "00000000-0000-0000-0000-000000000000"
-
-func kvCommandID(id string) string {
-	if id == "" {
-		return zeroUUID
-	}
-	return id
-}
-
 // Get reads a value, or ErrNotFound. Expired entries are treated as missing.
 func (r *FeatureKVRepo) Get(ctx context.Context, e FeatureKVEntry) (FeatureKVEntry, error) {
-	e.CommandID = kvCommandID(e.CommandID)
 	out := e
 	err := r.pool.QueryRow(ctx, `
 		SELECT value, expires_at, updated_at FROM feature_kv
@@ -294,7 +282,6 @@ func (r *FeatureKVRepo) Get(ctx context.Context, e FeatureKVEntry) (FeatureKVEnt
 
 // Set upserts a value. ExpiresAt nil means no expiry.
 func (r *FeatureKVRepo) Set(ctx context.Context, e FeatureKVEntry) error {
-	e.CommandID = kvCommandID(e.CommandID)
 	if len(e.Value) == 0 {
 		e.Value = json.RawMessage("null")
 	}
@@ -309,7 +296,6 @@ func (r *FeatureKVRepo) Set(ctx context.Context, e FeatureKVEntry) error {
 
 // Delete removes a value.
 func (r *FeatureKVRepo) Delete(ctx context.Context, e FeatureKVEntry) error {
-	e.CommandID = kvCommandID(e.CommandID)
 	_, err := r.pool.Exec(ctx, `
 		DELETE FROM feature_kv
 		WHERE guild_id = $1 AND command_id = $2 AND scope = $3 AND owner_id = $4 AND key = $5`,
