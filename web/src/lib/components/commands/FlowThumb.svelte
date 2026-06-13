@@ -2,9 +2,12 @@
 	import type { ShapeNode } from '$lib/commands/types';
 
 	// ── Pure layout over the compact shape ─────────────────────────────────
-	// A sequence flows down one lane; extra branch arms take the first free
-	// lane to the right. Everything is clamped to the tiny stage; what falls
-	// off is counted so the tile can say "+n more".
+	// A sequence flows down one lane; extra branch arms claim a free lane to
+	// the side, reserved for the arm's whole vertical span so a long arm is
+	// never truncated by a neighbour deeper down. Everything is clamped to the
+	// tiny stage; what falls off is counted so the tile can say "+n more". The
+	// final coordinates are pre-centered (the centering offset is baked in, not
+	// applied as a transform) so a hover scale can never wipe it out.
 
 	export type PlacedNode = { cx: number; cy: number; k: string; e: boolean };
 	export type PlacedEdge = { x1: number; y1: number; x2: number; y2: number };
@@ -28,11 +31,22 @@
 		return n;
 	}
 
+	// spineDepth: ranks a sequence consumes in its own lane (arm 0 of a branch
+	// continues in the lane, so it deepens the spine; arms 1.. leave it).
+	function spineDepth(seq: ShapeNode[]): number {
+		let d = 0;
+		for (const s of seq) {
+			const arm0 = s.c && s.c[0] ? spineDepth(s.c[0]) : 0;
+			d += 1 + arm0;
+		}
+		return d;
+	}
+
 	export function layoutShape(shape: ShapeNode[] | undefined): {
 		nodes: PlacedNode[];
 		edges: PlacedEdge[];
 		dropped: number;
-		dx: number;
+		entryX: number;
 	} {
 		const nodes: PlacedNode[] = [];
 		const edges: PlacedEdge[] = [];
@@ -42,9 +56,21 @@
 		const laneX = (lane: number) => 140 + lane * LANE_W;
 		const rankY = (rank: number) => TOP_Y + rank * RANK_H + PILL_H / 2;
 
-		function firstFreeLane(rank: number, from: number): number | null {
-			for (let l = from; l <= MAX_LANE; l++) {
-				if (!occupied.has(`${rank}:${l}`)) return l;
+		// A lane free across [startRank, startRank+span); prefers outward from
+		// `from`, then the opposite side, so all five lanes get used.
+		function freeLane(startRank: number, span: number, from: number): number | null {
+			const tries: number[] = [];
+			for (let l = from; l <= MAX_LANE; l++) tries.push(l);
+			for (let l = from - 1; l >= MIN_LANE; l--) tries.push(l);
+			for (const l of tries) {
+				let ok = true;
+				for (let r = startRank; r < startRank + span && r <= MAX_RANK; r++) {
+					if (occupied.has(`${r}:${l}`)) {
+						ok = false;
+						break;
+					}
+				}
+				if (ok) return l;
 			}
 			return null;
 		}
@@ -76,7 +102,8 @@
 					if (arm.length === 0) continue;
 					let armLane = lane;
 					if (j > 0) {
-						const free = firstFreeLane(rank + 1, lane + 1);
+						const span = Math.max(1, spineDepth(arm));
+						const free = freeLane(rank + 1, span, lane + 1);
 						if (free === null) {
 							dropped += sizeOf(arm);
 							continue;
@@ -95,7 +122,8 @@
 		occupied.add('0:0');
 		placeSeq(shape ?? [], 0, 1, entry);
 
-		// Center the drawing horizontally on the 280-wide stage.
+		// Bake the horizontal centering into the coordinates so the hover scale
+		// (a CSS transform on the same group) can never override it.
 		let minX = entry.cx;
 		let maxX = entry.cx;
 		for (const n of nodes) {
@@ -103,8 +131,13 @@
 			if (n.cx > maxX) maxX = n.cx;
 		}
 		const dx = 140 - (minX + maxX) / 2;
+		for (const n of nodes) n.cx += dx;
+		for (const e of edges) {
+			e.x1 += dx;
+			e.x2 += dx;
+		}
 
-		return { nodes, edges, dropped, dx };
+		return { nodes, edges, dropped, entryX: entry.cx + dx };
 	}
 </script>
 
@@ -124,11 +157,13 @@
 
 	const laid = $derived(layoutShape(shape));
 	const overflow = $derived(more + laid.dropped);
-	const label = $derived('/' + (name || 'command').slice(0, 14));
+	const label = $derived('/' + (name || 'command').slice(0, 18));
+	// The pill grows with the name so it never clips, capped to the stage.
+	const pillW = $derived(Math.min(168, Math.max(64, label.length * 5 + 22)));
 </script>
 
 <svg viewBox="0 0 280 168" class="h-full w-full" aria-hidden="true">
-	<g class="tg" transform="translate({laid.dx} 0)">
+	<g class="tg">
 		{#each laid.edges as e, i (i)}
 			<path
 				class="tedge"
@@ -137,18 +172,18 @@
 		{/each}
 
 		<!-- Entry pill: the page's single rose moment -->
-		<rect class="tpill" x={140 - 32} y={12} width="64" height="18" rx="9" />
+		<rect class="tpill" x={laid.entryX - pillW / 2} y={12} width={pillW} height="18" rx="9" />
 		<path
-			d="M {140 - 24} {12 + 5.5} l 5 3.5 l -5 3.5 z"
+			d="M {laid.entryX - pillW / 2 + 8} {12 + 5.5} l 5 3.5 l -5 3.5 z"
 			fill="var(--color-accent)"
 			opacity="0.9"
 		/>
-		<text class="tname" x={140 - 16} y={12 + 12.5}>{label}</text>
+		<text class="tname" x={laid.entryX - pillW / 2 + 16} y={12 + 12.5}>{label}</text>
 
 		{#if !shape || shape.length === 0}
 			<rect
 				class="tghost"
-				x={140 - NODE_W / 2}
+				x={laid.entryX - NODE_W / 2}
 				y={12 + RANK_H + 2}
 				width={NODE_W}
 				height={NODE_H}
@@ -167,10 +202,7 @@
 			/>
 			<circle class="tdot" cx={n.cx - NODE_W / 2 + 5} cy={n.cy} r="1.5" />
 			{#if n.e}
-				<path
-					class="terr"
-					d="M {n.cx - NODE_W / 2} {n.cy} h -8"
-				/>
+				<path class="terr" d="M {n.cx - NODE_W / 2} {n.cy} h -8" />
 				<circle class="terrdot" cx={n.cx - NODE_W / 2 - 11} cy={n.cy} r="2.5" />
 			{/if}
 		{/each}
