@@ -10,6 +10,7 @@
 	import Toggle from '$lib/components/Toggle.svelte';
 	import Select from '$lib/components/Select.svelte';
 	import MultiSelect from '$lib/components/MultiSelect.svelte';
+	import ChannelPicker from '$lib/components/ChannelPicker.svelte';
 	import ColorField from '$lib/components/ColorField.svelte';
 	import SaveBar from '$lib/components/SaveBar.svelte';
 	import CardStudioModal from '$lib/components/editor/CardStudioModal.svelte';
@@ -320,7 +321,12 @@
 			{/if}
 
 			<Field label="No-XP channels" hint="Messages in these channels earn no XP.">
-				<MultiSelect bind:value={cfg.no_xp_channels} options={channelOpts} placeholder="Add a channel…" />
+				<ChannelPicker
+					multiple
+					value={cfg.no_xp_channels}
+					onChange={(v) => (cfg.no_xp_channels = v as string[])}
+					placeholder="Add a channel…"
+				/>
 			</Field>
 			<Field label="No-XP roles" hint="Members with these roles earn no XP.">
 				<MultiSelect bind:value={cfg.no_xp_roles} options={roleOpts} placeholder="Add a role…" />

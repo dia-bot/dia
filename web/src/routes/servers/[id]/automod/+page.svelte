@@ -8,6 +8,7 @@
 	import Toggle from '$lib/components/Toggle.svelte';
 	import Select from '$lib/components/Select.svelte';
 	import MultiSelect from '$lib/components/MultiSelect.svelte';
+	import ChannelPicker from '$lib/components/ChannelPicker.svelte';
 	import SaveBar from '$lib/components/SaveBar.svelte';
 	import { X } from 'lucide-svelte';
 
@@ -52,7 +53,6 @@
 	let baseline = $state('');
 	let wordInput = $state('');
 
-	const channelOpts = $derived(store.textChannelOptions());
 	const roleOpts = $derived(store.roleOptions());
 	const dirty = $derived(loaded && JSON.stringify({ enabled, cfg }) !== baseline);
 
@@ -176,7 +176,12 @@
 		<section class="card p-4 sm:p-6">
 			<h2 class="mb-4 text-base font-semibold">Exemptions</h2>
 			<Field label="Ignored channels" hint="AutoMod will not act in these channels.">
-				<MultiSelect bind:value={cfg.ignored_channels} options={channelOpts} placeholder="Add a channel…" />
+				<ChannelPicker
+					multiple
+					value={cfg.ignored_channels}
+					onChange={(v) => (cfg.ignored_channels = v as string[])}
+					placeholder="Add a channel…"
+				/>
 			</Field>
 			<Field label="Ignored roles" hint="Members with these roles are never moderated.">
 				<MultiSelect bind:value={cfg.ignored_roles} options={roleOpts} placeholder="Add a role…" />

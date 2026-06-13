@@ -9,6 +9,7 @@
 	import StepDrawer from '$lib/components/commands/StepDrawer.svelte';
 	import FieldSelect from '$lib/components/commands/FieldSelect.svelte';
 	import NumberField from '$lib/components/commands/NumberField.svelte';
+	import ChannelPicker from '$lib/components/ChannelPicker.svelte';
 	import ReleaseDock, { type DockState } from '$lib/components/commands/ReleaseDock.svelte';
 	import PreflightIssues from '$lib/components/commands/PreflightIssues.svelte';
 	import type { Definition, Step, ValidationResult, ValidationIssue, StepKindMeta } from '$lib/commands/types';
@@ -1069,20 +1070,25 @@
 				{#if !readonly}
 					<!-- Filters -->
 					{#if supports('channels')}
-						<section>
-							<div class="mb-1 font-mono text-[10px] font-medium uppercase tracking-[0.14em] text-faint">Only in channels</div>
-							<input
-								class="h-7 w-full rounded-md border border-line bg-bg px-2 font-mono text-[11.5px] focus:border-line-strong focus:outline-none"
-								placeholder="channel ids (blank = any)"
-								value={listStr(tcfg().channels)}
-								oninput={(e) => setCfg('channels', parseList((e.currentTarget as HTMLInputElement).value))}
-							/>
-							<input
-								class="mt-1 h-7 w-full rounded-md border border-line bg-bg px-2 font-mono text-[11.5px] focus:border-line-strong focus:outline-none"
-								placeholder="ignore channel ids"
-								value={listStr(tcfg().ignore_channels)}
-								oninput={(e) => setCfg('ignore_channels', parseList((e.currentTarget as HTMLInputElement).value))}
-							/>
+						<section class="space-y-2">
+							<div>
+								<div class="mb-1 font-mono text-[10px] font-medium uppercase tracking-[0.14em] text-faint">Only in channels</div>
+								<ChannelPicker
+									multiple
+									value={tcfg().channels ?? []}
+									onChange={(v) => setCfg('channels', v as string[])}
+									placeholder="Any channel"
+								/>
+							</div>
+							<div>
+								<div class="mb-1 font-mono text-[10px] font-medium uppercase tracking-[0.14em] text-faint">Ignore channels</div>
+								<ChannelPicker
+									multiple
+									value={tcfg().ignore_channels ?? []}
+									onChange={(v) => setCfg('ignore_channels', v as string[])}
+									placeholder="None ignored"
+								/>
+							</div>
 						</section>
 					{/if}
 

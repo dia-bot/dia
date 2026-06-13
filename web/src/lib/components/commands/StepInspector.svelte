@@ -11,6 +11,7 @@
 	import NumberField from './NumberField.svelte';
 	import MessageRefField from './MessageRefField.svelte';
 	import ChannelExprField from './ChannelExprField.svelte';
+	import ChannelPicker from '$lib/components/ChannelPicker.svelte';
 	import FieldSelect from './FieldSelect.svelte';
 	import Field from '$lib/components/Field.svelte';
 	import Toggle from '$lib/components/Toggle.svelte';
@@ -656,18 +657,17 @@
 						/>
 					</Field>
 					{#if cm === 'only' || cm === 'except'}
-						<Field label="Which channels?" hint="Paste channel ids or #mentions, separated by commas.">
-							<input
-								class="input font-mono text-[12px]"
-								value={(spec.channels ?? []).join(', ')}
-								oninput={(e) =>
-									set(
-										'channels',
-										(e.currentTarget as HTMLInputElement).value
-											.split(/[\s,]+/)
-											.map((x) => x.replace(/[<#>]/g, '').trim())
-											.filter(Boolean)
-									)}
+						<Field
+							label="Which channels?"
+							hint={cm === 'except'
+								? 'Watch everywhere except these.'
+								: 'Only watch these channels.'}
+						>
+							<ChannelPicker
+								multiple
+								value={spec.channels ?? []}
+								onChange={(v) => set('channels', v)}
+								placeholder={cm === 'except' ? 'Channels to skip' : 'Channels to watch'}
 							/>
 						</Field>
 					{/if}
