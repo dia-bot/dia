@@ -116,6 +116,7 @@ defmodule Dia.Gateway.Mapper do
       # roles is always present (a list) per the Go contract.
       "roles" => ids(Map.get(m, :roles)),
       "joined_at" => iso8601(Map.get(m, :joined_at)),
+      "premium_since" => iso8601(Map.get(m, :premium_since)),
       "pending" => true_or_nil(Map.get(m, :pending))
     })
     |> Map.put_new("roles", [])
@@ -218,11 +219,32 @@ defmodule Dia.Gateway.Mapper do
     |> Map.put_new("guild_id", "")
   end
 
-  @doc "GUILD_MEMBER_UPDATE data -> Go `MemberUpdate`."
-  def map_guild_member_update(guild_id, member_struct) do
+  @doc """
+  GUILD_MEMBER_UPDATE data -> Go `MemberUpdate`.
+
+  `old_member` is the member's prior state (may be nil under the thin cache);
+  when present we emit its role set as `old_roles` so the worker can diff
+  added/removed roles and detect boosts.
+  """
+  def map_guild_member_update(guild_id, member_struct, old_member \\ nil) do
     compact(%{
       "guild_id" => id(guild_id) || "",
-      "member" => member(member_struct, nil)
+      "member" => member(member_struct, nil),
+      "old_roles" => old_roles(old_member)
+    })
+    |> Map.put_new("guild_id", "")
+  end
+
+  defp old_roles(nil), do: nil
+  defp old_roles(m) when is_map(m), do: list_or_nil_ids(Map.get(m, :roles))
+
+  # ── Bans ──────────────────────────────────────────────────────────────────────
+
+  @doc "GUILD_BAN_ADD / GUILD_BAN_REMOVE data -> Go `BanEvent`."
+  def map_ban(guild_id, user_struct) do
+    compact(%{
+      "guild_id" => id(guild_id) || "",
+      "user" => user(user_struct)
     })
     |> Map.put_new("guild_id", "")
   end
@@ -274,6 +296,78 @@ defmodule Dia.Gateway.Mapper do
   defp attachment_count(nil), do: nil
   defp attachment_count([]), do: nil
   defp attachment_count(list) when is_list(list), do: length(list)
+
+  @doc "MESSAGE_UPDATE data -> Go `MessageUpdate` (same shape as Message)."
+  def map_message_update(m), do: map_message(m)
+
+  @doc "MESSAGE_DELETE data -> Go `MessageDelete` (only ids survive)."
+  def map_message_delete(m) do
+    compact(%{
+      "id" => id(Map.get(m, :id)) || "",
+      "channel_id" => id(Map.get(m, :channel_id)) || "",
+      "guild_id" => id(Map.get(m, :guild_id))
+    })
+    |> Map.put_new("id", "")
+    |> Map.put_new("channel_id", "")
+  end
+
+  # ── Reactions ──────────────────────────────────────────────────────────────────
+
+  @doc "MESSAGE_REACTION_ADD / MESSAGE_REACTION_REMOVE data -> Go `Reaction`."
+  def map_reaction(r) do
+    compact(%{
+      "user_id" => id(Map.get(r, :user_id)) || "",
+      "channel_id" => id(Map.get(r, :channel_id)) || "",
+      "message_id" => id(Map.get(r, :message_id)) || "",
+      "guild_id" => id(Map.get(r, :guild_id)),
+      "emoji" => emoji(Map.get(r, :emoji)),
+      "member" => member_or_nil(Map.get(r, :member))
+    })
+    |> Map.put_new("user_id", "")
+    |> Map.put_new("channel_id", "")
+    |> Map.put_new("message_id", "")
+    |> Map.put_new("emoji", %{"name" => ""})
+  end
+
+  defp emoji(nil), do: %{"name" => ""}
+
+  defp emoji(e) do
+    compact(%{
+      "id" => id(Map.get(e, :id)),
+      "name" => Map.get(e, :name) || "",
+      "animated" => true_or_nil(Map.get(e, :animated))
+    })
+    |> Map.put_new("name", "")
+  end
+
+  defp member_or_nil(nil), do: nil
+  defp member_or_nil(m) when is_map(m), do: member(m, nil)
+
+  # ── Voice ──────────────────────────────────────────────────────────────────────
+
+  @doc "VOICE_STATE_UPDATE data -> Go `VoiceState`. channel_id nil => disconnected."
+  def map_voice_state(vs) do
+    compact(%{
+      "guild_id" => id(Map.get(vs, :guild_id)) || "",
+      "channel_id" => id(Map.get(vs, :channel_id)),
+      "user_id" => id(Map.get(vs, :user_id)) || "",
+      "member" => member_or_nil(Map.get(vs, :member)),
+      "session_id" => blank_to_nil(Map.get(vs, :session_id)),
+      "deaf" => true_or_nil(Map.get(vs, :deaf)),
+      "mute" => true_or_nil(Map.get(vs, :mute)),
+      "self_deaf" => true_or_nil(Map.get(vs, :self_deaf)),
+      "self_mute" => true_or_nil(Map.get(vs, :self_mute)),
+      "self_video" => true_or_nil(Map.get(vs, :self_video)),
+      "self_stream" => true_or_nil(Map.get(vs, :self_stream))
+    })
+    |> Map.put_new("guild_id", "")
+    |> Map.put_new("user_id", "")
+  end
+
+  # ── Threads ────────────────────────────────────────────────────────────────────
+
+  @doc "THREAD_CREATE / THREAD_DELETE data -> Go `Channel` (a thread is a channel)."
+  def map_thread(c), do: channel(c)
 
   # ── Interaction (the most complex) ──────────────────────────────────────────────
 

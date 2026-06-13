@@ -95,6 +95,21 @@ defmodule Dia.Gateway.Consumer do
     forward(:CHANNEL_DELETE, guild_id(channel), ws, Mapper.map_channel(channel), id_of(channel))
   end
 
+  # ── Threads (threads are channels) ───────────────────────────────────────────────
+
+  def handle_event({:THREAD_CREATE, thread, ws}) when is_map(thread) do
+    forward(:THREAD_CREATE, guild_id(thread), ws, Mapper.map_thread(thread), id_of(thread))
+  end
+
+  def handle_event({:THREAD_DELETE, :noop, _ws}) do
+    Logger.debug("THREAD_DELETE dropped: thread not recoverable under NoOp cache")
+    :ok
+  end
+
+  def handle_event({:THREAD_DELETE, thread, ws}) when is_map(thread) do
+    forward(:THREAD_DELETE, guild_id(thread), ws, Mapper.map_thread(thread), id_of(thread))
+  end
+
   # ── Roles ───────────────────────────────────────────────────────────────────────
 
   # GUILD_ROLE_CREATE delivered as {guild_id, new_role}.
@@ -153,16 +168,98 @@ defmodule Dia.Gateway.Consumer do
     forward(:GUILD_MEMBER_REMOVE, gid, ws, data, member_dedup(gid, member))
   end
 
-  # GUILD_MEMBER_UPDATE delivered as {guild_id, old_member, new_member}.
-  def handle_event({:GUILD_MEMBER_UPDATE, {gid, _old, member}, ws}) do
-    data = Mapper.map_guild_member_update(gid, member)
+  # GUILD_MEMBER_UPDATE delivered as {guild_id, old_member, new_member}. We pass
+  # the old member through so the mapper can emit old_roles (when the cache has
+  # it) for added/removed-role and boost detection downstream.
+  def handle_event({:GUILD_MEMBER_UPDATE, {gid, old, member}, ws}) do
+    data = Mapper.map_guild_member_update(gid, member, old)
     forward(:GUILD_MEMBER_UPDATE, gid, ws, data, member_dedup(gid, member))
+  end
+
+  # ── Bans ───────────────────────────────────────────────────────────────────────
+
+  # GUILD_BAN_ADD / GUILD_BAN_REMOVE deliver a struct with guild_id + user.
+  def handle_event({:GUILD_BAN_ADD, ban, ws}) do
+    gid = guild_id(ban)
+    data = Mapper.map_ban(gid, Map.get(ban, :user))
+    forward(:GUILD_BAN_ADD, gid, ws, data, ban_dedup(gid, ban))
+  end
+
+  def handle_event({:GUILD_BAN_REMOVE, ban, ws}) do
+    gid = guild_id(ban)
+    data = Mapper.map_ban(gid, Map.get(ban, :user))
+    forward(:GUILD_BAN_REMOVE, gid, ws, data, ban_dedup(gid, ban))
   end
 
   # ── Messages ──────────────────────────────────────────────────────────────────
 
   def handle_event({:MESSAGE_CREATE, message, ws}) do
     forward(:MESSAGE_CREATE, guild_id(message), ws, Mapper.map_message(message), id_of(message))
+  end
+
+  # MESSAGE_UPDATE arrives as {old, new} when the message cache is on, or as a
+  # bare (possibly partial) message under the thin cache. Handle both. A partial
+  # update with no content still carries ids; the worker tolerates empty fields.
+  def handle_event({:MESSAGE_UPDATE, {_old, message}, ws}) do
+    forward(
+      :MESSAGE_UPDATE,
+      guild_id(message),
+      ws,
+      Mapper.map_message_update(message),
+      id_of(message)
+    )
+  end
+
+  def handle_event({:MESSAGE_UPDATE, message, ws}) when is_map(message) do
+    forward(
+      :MESSAGE_UPDATE,
+      guild_id(message),
+      ws,
+      Mapper.map_message_update(message),
+      id_of(message)
+    )
+  end
+
+  # MESSAGE_DELETE carries the deleted message's ids (guild_id may be nil in DMs).
+  def handle_event({:MESSAGE_DELETE, :noop, _ws}) do
+    Logger.debug("MESSAGE_DELETE dropped: message not recoverable under NoOp cache")
+    :ok
+  end
+
+  def handle_event({:MESSAGE_DELETE, message, ws}) when is_map(message) do
+    forward(
+      :MESSAGE_DELETE,
+      guild_id(message),
+      ws,
+      Mapper.map_message_delete(message),
+      id_of(message)
+    )
+  end
+
+  # ── Reactions ──────────────────────────────────────────────────────────────────
+
+  def handle_event({:MESSAGE_REACTION_ADD, reaction, ws}) do
+    gid = guild_id(reaction)
+    data = Mapper.map_reaction(reaction)
+    forward(:MESSAGE_REACTION_ADD, gid, ws, data, reaction_dedup(:add, reaction))
+  end
+
+  def handle_event({:MESSAGE_REACTION_REMOVE, reaction, ws}) do
+    gid = guild_id(reaction)
+    data = Mapper.map_reaction(reaction)
+    forward(:MESSAGE_REACTION_REMOVE, gid, ws, data, reaction_dedup(:remove, reaction))
+  end
+
+  # ── Voice ──────────────────────────────────────────────────────────────────────
+
+  # VOICE_STATE_UPDATE arrives as {old, new} with a voice cache, or a bare voice
+  # state under the thin cache. channel_id nil on the new state == disconnect.
+  def handle_event({:VOICE_STATE_UPDATE, {_old, vs}, ws}) do
+    forward(:VOICE_STATE_UPDATE, guild_id(vs), ws, Mapper.map_voice_state(vs), voice_dedup(vs))
+  end
+
+  def handle_event({:VOICE_STATE_UPDATE, vs, ws}) when is_map(vs) do
+    forward(:VOICE_STATE_UPDATE, guild_id(vs), ws, Mapper.map_voice_state(vs), voice_dedup(vs))
   end
 
   # ── Interactions ──────────────────────────────────────────────────────────────
@@ -247,6 +344,26 @@ defmodule Dia.Gateway.Consumer do
   defp member_dedup(gid, member) do
     uid = Map.get(member, :user_id)
     "#{gid}-#{uid}"
+  end
+
+  # Bans / reactions / voice states have no single id either; derive stable
+  # dedupe ids from their natural composite keys.
+  defp ban_dedup(gid, ban) do
+    uid = id_of(Map.get(ban, :user)) || Map.get(ban, :user_id)
+    "#{gid}-#{uid}"
+  end
+
+  defp reaction_dedup(dir, r) do
+    "#{dir}-#{Map.get(r, :message_id)}-#{Map.get(r, :user_id)}-#{emoji_key(Map.get(r, :emoji))}"
+  end
+
+  defp emoji_key(nil), do: ""
+  defp emoji_key(e), do: to_string(Map.get(e, :id) || Map.get(e, :name))
+
+  # A member's voice state changes many times; key on guild+user+session+channel
+  # plus the millisecond so distinct transitions don't dedupe each other away.
+  defp voice_dedup(vs) do
+    "#{Map.get(vs, :guild_id)}-#{Map.get(vs, :user_id)}-#{Map.get(vs, :channel_id)}-#{System.system_time(:millisecond)}"
   end
 
   # When the natural id is unrecoverable, derive a stable-ish fallback so two
