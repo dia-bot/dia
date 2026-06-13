@@ -20,8 +20,6 @@
 	import Page from '$lib/components/page/Page.svelte';
 	import PageTopbar from '$lib/components/page/PageTopbar.svelte';
 	import SectionBar from '$lib/components/page/SectionBar.svelte';
-	import StatStrip from '$lib/components/page/StatStrip.svelte';
-	import Stat from '$lib/components/page/Stat.svelte';
 	import TopbarAction from '$lib/components/page/TopbarAction.svelte';
 
 	import Plus from 'lucide-svelte/icons/plus';
@@ -75,6 +73,14 @@
 		drafts: commands.filter((c) => c.status === 'draft').length,
 		enabled: commands.filter((c) => c.enabled).length
 	});
+
+	function countFor(id: typeof filter): number {
+		if (id === 'all') return commands.length;
+		if (id === 'published') return stats.published;
+		if (id === 'draft') return stats.drafts;
+		if (id === 'enabled') return stats.enabled;
+		return commands.length - stats.enabled;
+	}
 
 	const activeQuery = $derived(query.trim() !== '' || filter !== 'all');
 	const showBands = $derived(groups.length > 0);
@@ -237,7 +243,7 @@
 		launchingId = cmd.id;
 		const href = `/servers/${store.id}/commands/${cmd.id}`;
 		if (launchTimer) clearTimeout(launchTimer);
-		launchTimer = setTimeout(() => goto(href), motionOK() ? 320 : 0);
+		launchTimer = setTimeout(() => goto(href), motionOK() ? 420 : 0);
 	}
 
 	const filterOptions: { id: typeof filter; label: string }[] = [
@@ -267,21 +273,15 @@
 					bind:value={query}
 				/>
 			</div>
-			<TopbarAction onclick={() => (wizardOpen = true)}>
+			<TopbarAction variant="ink" onclick={() => (wizardOpen = true)}>
 				{#snippet icon()}<Plus size={12} />{/snippet}
 				New command
 			</TopbarAction>
 		{/snippet}
 	</PageTopbar>
 
-	<StatStrip cols={4}>
-		<Stat label="Commands" value={loaded ? stats.total : '—'} onclick={() => (filter = 'all')} active={filter === 'all'} />
-		<Stat label="Live" value={loaded ? stats.published : '—'} sub="published to Discord" onclick={() => (filter = 'published')} active={filter === 'published'} />
-		<Stat label="Drafts" value={loaded ? stats.drafts : '—'} sub="not published yet" onclick={() => (filter = 'draft')} active={filter === 'draft'} />
-		<Stat label="Enabled" value={loaded ? stats.enabled : '—'} sub="switched on" onclick={() => (filter = 'enabled')} active={filter === 'enabled'} last />
-	</StatStrip>
 
-	<SectionBar label="Flows" count={loaded ? filtered.length : undefined}>
+	<SectionBar label="Flows">
 		<button
 			type="button"
 			class="inline-flex h-7 items-center gap-1.5 rounded-md border border-line bg-bg px-2 text-[11.5px] font-medium text-muted transition-colors hover:border-line-strong hover:text-ink"
@@ -295,12 +295,15 @@
 			{#each filterOptions as f (f.id)}
 				<button
 					type="button"
-					class="rounded px-1.5 py-0.5 text-[11px] font-medium transition-colors {filter === f.id
+					class="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-medium transition-colors {filter === f.id
 						? 'bg-surface text-ink'
 						: 'text-muted hover:text-ink'}"
 					onclick={() => (filter = f.id)}
 				>
 					{f.label}
+					<span class="font-mono text-[10px] tabular-nums {filter === f.id ? 'text-ink' : 'text-faint'}">
+						{loaded ? countFor(f.id) : '—'}
+					</span>
 				</button>
 			{/each}
 		</div>
@@ -339,7 +342,7 @@
 						Create your first slash command. Name it, add the properties members fill in, and pick its first reply.
 					</p>
 					<div class="mt-4 flex justify-center">
-						<TopbarAction onclick={() => (wizardOpen = true)}>
+						<TopbarAction variant="ink" onclick={() => (wizardOpen = true)}>
 							{#snippet icon()}<Plus size={12} />{/snippet}
 							New command
 						</TopbarAction>
@@ -396,7 +399,7 @@
 							{:else if band.group}
 								<button
 									type="button"
-									class="font-mono text-[11px] font-medium uppercase tracking-[0.12em] text-ink transition-colors hover:text-accent-ink"
+									class="font-mono text-[11px] font-medium uppercase tracking-[0.12em] text-ink transition-colors hover:text-ink"
 									onclick={() => band.group && startRename(band.group.id, band.group.name)}
 									title="Rename group"
 								>
@@ -542,7 +545,7 @@
 
 		<div class="pointer-events-none px-3.5 pt-2.5">
 			<div class="flex items-baseline gap-1.5">
-				<Play size={9} class="shrink-0 -translate-y-px self-center text-accent-ink" />
+				<Play size={9} class="shrink-0 -translate-y-px self-center text-faint" />
 				<span class="min-w-0 truncate font-mono text-[13px] font-medium text-ink">
 					<span class="text-faint">/</span>{cmd.name}
 				</span>
@@ -605,7 +608,7 @@
 		transition: filter 320ms var(--canvas-ease, cubic-bezier(0.22, 1, 0.36, 1));
 	}
 	.atlas.launching {
-		filter: brightness(0.92);
+		filter: brightness(0.82);
 	}
 	.thumb {
 		background-color: var(--color-ink-2);
@@ -643,17 +646,18 @@
 	}
 	/* Launch: the chosen tile dives forward; the wall recedes behind it. */
 	.tile.is-launching {
-		transform: translateY(-4px) scale(1.06);
-		border-color: color-mix(in srgb, var(--color-accent) 50%, transparent);
+		transform: translateY(-8px) scale(1.1);
+		border-color: rgba(255, 255, 255, 0.5);
 		box-shadow:
-			0 0 0 1px color-mix(in srgb, var(--color-accent) 35%, transparent),
-			0 28px 60px -16px rgba(0, 0, 0, 0.7);
+			0 0 0 1px rgba(255, 255, 255, 0.45),
+			0 36px 80px -16px rgba(0, 0, 0, 0.8);
 		z-index: 20;
 	}
 	.tile.receding,
 	.ghost.receding {
-		opacity: 0.3;
-		filter: blur(1px);
+		opacity: 0.18;
+		transform: scale(0.96);
+		filter: blur(2px);
 	}
 
 	@media (hover: hover) {

@@ -15,7 +15,7 @@
 		onclick?: () => void;
 		href?: string;
 		icon?: Snippet;
-		variant?: 'primary' | 'ghost' | 'danger';
+		variant?: 'primary' | 'ghost' | 'danger' | 'ink';
 		disabled?: boolean;
 		title?: string;
 		ariaLabel?: string;
@@ -24,6 +24,8 @@
 	const cls = $derived(
 		variant === 'primary'
 			? 'bg-accent text-ink hover:bg-accent/85'
+			: variant === 'ink'
+				? 'bg-ink text-bg hover:bg-ink/90'
 			: variant === 'danger'
 				? 'border border-line text-muted hover:border-danger/40 hover:text-danger bg-bg'
 				: 'border border-line text-muted hover:border-line-strong hover:text-ink bg-bg'

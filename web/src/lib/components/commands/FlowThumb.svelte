@@ -143,8 +143,8 @@
 
 <script lang="ts">
 	// The miniature canvas: a command's real program drawn at poster scale.
-	// Monochrome on purpose, matching the editor's color truth: the only
-	// color is the rose entry pill (and the dashed red error rail).
+	// Monochrome by request: neutral nodes and entry pill, with the only
+	// colors being the green live status and the dashed red error rail.
 	let {
 		shape,
 		name,
@@ -171,12 +171,12 @@
 			/>
 		{/each}
 
-		<!-- Entry pill: the page's single rose moment -->
+		<!-- Entry pill: neutral chip marking where the program starts -->
 		<rect class="tpill" x={laid.entryX - pillW / 2} y={12} width={pillW} height="18" rx="9" />
 		<path
 			d="M {laid.entryX - pillW / 2 + 8} {12 + 5.5} l 5 3.5 l -5 3.5 z"
-			fill="var(--color-accent)"
-			opacity="0.9"
+			fill="var(--color-ink)"
+			opacity="0.65"
 		/>
 		<text class="tname" x={laid.entryX - pillW / 2 + 16} y={12 + 12.5}>{label}</text>
 
@@ -227,8 +227,8 @@
 		stroke-width: 1;
 	}
 	.tpill {
-		fill: color-mix(in srgb, var(--color-accent) 8%, transparent);
-		stroke: color-mix(in srgb, var(--color-accent) 25%, transparent);
+		fill: rgba(255, 255, 255, 0.06);
+		stroke: var(--color-line-strong);
 		stroke-width: 1;
 	}
 	.tname {
