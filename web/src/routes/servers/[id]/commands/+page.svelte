@@ -47,6 +47,7 @@
 	// Enter animation: the launching tile dives forward, the rest recede.
 	let launchingId = $state<number | null>(null);
 	let launchTimer: ReturnType<typeof setTimeout> | null = null;
+	let atlasEl = $state<HTMLDivElement | null>(null);
 
 	// Group management state.
 	let collapsed = $state<Record<string, boolean>>({});
@@ -234,16 +235,31 @@
 		}
 	}
 
-	// Launch into the editor: dive the tile, recede the wall, then navigate.
-	// Modified clicks keep native behaviour (open in a new tab / window).
+	// Launch into the editor: fly the whole wall INTO the clicked card (the
+	// viewport zooms toward that exact tile and fades) so it reads as diving
+	// into the command, not a crossfade. Modified clicks keep native
+	// behaviour (open in a new tab / window).
 	function launch(cmd: CommandSummary, e: MouseEvent) {
 		if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
 		e.preventDefault();
 		if (launchingId !== null) return;
-		launchingId = cmd.id;
 		const href = `/servers/${store.id}/commands/${cmd.id}`;
+		if (!motionOK() || !atlasEl) {
+			launchingId = cmd.id;
+			goto(href);
+			return;
+		}
+		// Anchor the zoom on the clicked tile's centre, in the atlas's box.
+		const tileEl = (e.currentTarget as HTMLElement).closest('.tile') as HTMLElement | null;
+		const a = atlasEl.getBoundingClientRect();
+		if (tileEl) {
+			const t = tileEl.getBoundingClientRect();
+			atlasEl.style.setProperty('--zoom-x', `${t.left - a.left + t.width / 2}px`);
+			atlasEl.style.setProperty('--zoom-y', `${t.top - a.top + t.height / 2}px`);
+		}
+		launchingId = cmd.id;
 		if (launchTimer) clearTimeout(launchTimer);
-		launchTimer = setTimeout(() => goto(href), motionOK() ? 420 : 0);
+		launchTimer = setTimeout(() => goto(href), 360);
 	}
 
 	const filterOptions: { id: typeof filter; label: string }[] = [
@@ -321,7 +337,7 @@
 		</div>
 	</div>
 
-	<div class="atlas relative min-h-0 flex-1 overflow-y-auto {launchingId !== null ? 'launching' : ''}">
+	<div bind:this={atlasEl} class="atlas relative min-h-0 flex-1 overflow-y-auto {launchingId !== null ? 'launching' : ''}">
 		{#if !loaded}
 			<div class="grid grid-cols-1 gap-4 p-4 sm:grid-cols-2 md:p-6 lg:grid-cols-3 2xl:grid-cols-4">
 				{#each [0, 1, 2, 3, 4, 5] as i (i)}
@@ -463,7 +479,7 @@
 
 {#snippet tile(cmd: CommandSummary, i: number)}
 	<div
-		class="tile group relative overflow-hidden rounded-xl border border-line bg-surface {booted ? '' : 'enter'} {launchingId === cmd.id ? 'is-launching' : ''} {launchingId !== null && launchingId !== cmd.id ? 'receding' : ''}"
+		class="tile group relative overflow-hidden rounded-xl border border-line bg-surface {booted ? '' : 'enter'}"
 		style="--i: {Math.min(i, 12)}"
 		out:scale|local={{ start: 0.97, duration: dur(140), easing: cubicOut }}
 		in:fade|local={{ duration: dur(180) }}
@@ -585,7 +601,7 @@
 {#snippet ghost()}
 	<button
 		type="button"
-		class="ghost relative grid min-h-[15rem] place-items-center rounded-xl border-[1.5px] border-dashed border-line bg-transparent {launchingId !== null ? 'receding' : ''}"
+		class="ghost relative grid min-h-[15rem] place-items-center rounded-xl border-[1.5px] border-dashed border-line bg-transparent"
 		onclick={() => (wizardOpen = true)}
 	>
 		<span class="ghost-dots absolute inset-0 rounded-xl"></span>
@@ -605,10 +621,20 @@
 	.atlas {
 		background-image: radial-gradient(rgba(255, 255, 255, 0.05) 1px, transparent 1px);
 		background-size: 28px 28px;
-		transition: filter 320ms var(--canvas-ease, cubic-bezier(0.22, 1, 0.36, 1));
+		transform-origin: var(--zoom-x, 50%) var(--zoom-y, 50%);
+		transition:
+			transform 360ms cubic-bezier(0.45, 0, 0.7, 0.3),
+			opacity 380ms ease-in,
+			filter 380ms ease-in;
+		will-change: transform, opacity;
 	}
+	/* Fly the wall INTO the clicked card: scale up from that tile's centre
+	   and fade, so entering reads as diving in, never a crossfade. */
 	.atlas.launching {
-		filter: brightness(0.82);
+		transform: scale(1.85);
+		opacity: 0;
+		filter: blur(2px);
+		pointer-events: none;
 	}
 	.thumb {
 		background-color: var(--color-ink-2);
@@ -626,48 +652,29 @@
 			inset 0 1px 0 rgba(255, 255, 255, 0.04),
 			0 1px 2px rgba(0, 0, 0, 0.4);
 		transition:
-			transform 300ms var(--canvas-ease, cubic-bezier(0.22, 1, 0.36, 1)),
-			border-color 300ms var(--canvas-ease, cubic-bezier(0.22, 1, 0.36, 1)),
-			box-shadow 300ms var(--canvas-ease, cubic-bezier(0.22, 1, 0.36, 1)),
-			opacity 300ms var(--canvas-ease, cubic-bezier(0.22, 1, 0.36, 1)),
-			filter 300ms var(--canvas-ease, cubic-bezier(0.22, 1, 0.36, 1));
+			transform 200ms var(--canvas-ease, cubic-bezier(0.22, 1, 0.36, 1)),
+			border-color 200ms var(--canvas-ease, cubic-bezier(0.22, 1, 0.36, 1)),
+			box-shadow 200ms var(--canvas-ease, cubic-bezier(0.22, 1, 0.36, 1));
 	}
-	.tile:hover:not(.is-launching):not(.receding),
-	.tile:focus-within:not(.is-launching):not(.receding) {
+	.tile:hover,
+	.tile:focus-within {
 		transform: translateY(-2px);
 		border-color: rgba(255, 255, 255, 0.14);
 		box-shadow:
 			inset 0 1px 0 rgba(255, 255, 255, 0.04),
 			0 12px 32px -12px rgba(0, 0, 0, 0.5);
 	}
-	.tile:active:not(.is-launching) {
+	.tile:active {
 		transform: translateY(-2px) scale(0.99);
 		transition-duration: 90ms;
 	}
-	/* Launch: the chosen tile dives forward; the wall recedes behind it. */
-	.tile.is-launching {
-		transform: translateY(-8px) scale(1.1);
-		border-color: rgba(255, 255, 255, 0.5);
-		box-shadow:
-			0 0 0 1px rgba(255, 255, 255, 0.45),
-			0 36px 80px -16px rgba(0, 0, 0, 0.8);
-		z-index: 20;
-	}
-	.tile.receding,
-	.ghost.receding {
-		opacity: 0.18;
-		transform: scale(0.96);
-		filter: blur(2px);
-	}
 
 	@media (hover: hover) {
-		.tile:hover :global(.tedge),
-		.tile.is-launching :global(.tedge) {
+		.tile:hover :global(.tedge) {
 			stroke-dasharray: 4 2;
 			animation: connect-dash 600ms linear infinite;
 		}
-		.tile:hover :global(.terr),
-		.tile.is-launching :global(.terr) {
+		.tile:hover :global(.terr) {
 			animation: connect-dash 600ms linear infinite;
 		}
 		.tile:hover :global(.tg) {
@@ -736,13 +743,11 @@
 		.atlas {
 			transition-duration: 0s;
 		}
-		.tile.is-launching {
+		.atlas.launching {
 			transform: none;
 		}
 		.tile:hover :global(.tedge),
-		.tile.is-launching :global(.tedge),
-		.tile:hover :global(.terr),
-		.tile.is-launching :global(.terr) {
+		.tile:hover :global(.terr) {
 			animation: none;
 		}
 		.tile:hover :global(.tg) {
