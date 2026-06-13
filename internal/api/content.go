@@ -105,6 +105,7 @@ func (s *Server) handleListCommands(c *gin.Context) {
 	// Usage stats are decoration: the list still serves without them.
 	stats, err := s.store.CommandRuns.GuildRunStats(c.Request.Context(), gidInt)
 	if err != nil {
+		s.log.Warn("custom command run stats failed", "guild", gidInt, "err", err)
 		stats = nil
 	}
 	out := make([]gin.H, 0, len(rows))
@@ -306,7 +307,9 @@ func (b *shapeBuilder) walk(steps []cc.Step, depth int) []shapeNode {
 	for i := range steps {
 		s := &steps[i]
 		if b.nodes >= shapeMaxNodes || depth >= shapeMaxDepth {
-			b.dropped += countShapeSteps(steps[i:])
+			// Count only what the thumbnail WOULD draw (control branches, not
+			// error-handler bodies), so "+n more" matches the missing nodes.
+			b.dropped += countDrawable(steps[i:])
 			break
 		}
 		b.nodes++
@@ -361,6 +364,20 @@ func countShapeSteps(steps []cc.Step) int {
 		n += countShapeSteps(s.OnError)
 		for _, ec := range s.OnErrorCases {
 			n += countShapeSteps(ec.Do)
+		}
+	}
+	return n
+}
+
+// countDrawable counts the nodes the thumbnail walk would emit: control
+// branches only, error handlers surface as a flag, never their own nodes.
+func countDrawable(steps []cc.Step) int {
+	n := 0
+	for i := range steps {
+		s := &steps[i]
+		n++
+		for _, br := range branchesOf(s) {
+			n += countDrawable(br)
 		}
 	}
 	return n
