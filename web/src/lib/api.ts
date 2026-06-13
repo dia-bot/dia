@@ -119,6 +119,23 @@ export const api = {
 		req<{ validation: any }>('POST', `/api/guilds/${id}/commands/validate`, cmd),
 	deleteCommand: (id: string, cid: number) =>
 		req('DELETE', `/api/guilds/${id}/commands/${cid}`),
+	setCommandGroup: (id: string, cid: number, groupId: number | null) =>
+		req('PATCH', `/api/guilds/${id}/commands/${cid}/group`, { group_id: groupId }),
+	commandGroups: (id: string) =>
+		req<{ groups: { id: number; name: string; position: number; created_at: string }[] }>(
+			'GET',
+			`/api/guilds/${id}/command-groups`
+		),
+	createCommandGroup: (id: string, name: string) =>
+		req<{ id: number; name: string; position: number }>('POST', `/api/guilds/${id}/command-groups`, {
+			name
+		}),
+	renameCommandGroup: (id: string, gid: number, name: string) =>
+		req('PATCH', `/api/guilds/${id}/command-groups/${gid}`, { name }),
+	deleteCommandGroup: (id: string, gid: number) =>
+		req('DELETE', `/api/guilds/${id}/command-groups/${gid}`),
+	reorderCommandGroups: (id: string, ids: number[]) =>
+		req('PATCH', `/api/guilds/${id}/command-group-order`, { ids }),
 	commandRuns: (id: string, commandId?: number, limit = 25) =>
 		req<{ runs: any[] }>(
 			'GET',

@@ -223,6 +223,14 @@ export interface CommandSummary {
 	shape_more?: number;
 	runs_24h?: number;
 	last_run_at?: string | null;
+	group_id?: number | null;
+}
+
+export interface CommandGroup {
+	id: number;
+	name: string;
+	position: number;
+	created_at?: string;
 }
 
 export interface ValidationIssue {
