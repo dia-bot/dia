@@ -204,7 +204,7 @@ func hModalOpen(ctx context.Context, h *Halt) error {
 	if h.Scope.Deferred() {
 		return errors.New("modal_open cannot follow a defer (Discord constraint)")
 	}
-	customID := "ccmd:" + h.Run.ID + ":" + templated(ctx, h, spec.CustomIDSuffix)
+	customID := h.Engine.routePrefix + h.Run.ID + ":" + templated(ctx, h, spec.CustomIDSuffix)
 	title := templated(ctx, h, spec.Title)
 	rows := make([]discordgo.MessageComponent, 0, len(spec.Fields))
 	for _, f := range spec.Fields {
@@ -496,13 +496,13 @@ func renderComponent(ctx context.Context, h *Halt, c cc.Component) discordgo.Mes
 	if c.CustomIDSuffix != "" {
 		// Templated: per-item buttons (e.g. vote_{{ .Vars.idx }}) stay unique
 		// inside a loop; the run id already isolates concurrent users.
-		cid = "ccmd:" + h.Run.ID + ":" + templated(ctx, h, c.CustomIDSuffix)
+		cid = h.Engine.routePrefix + h.Run.ID + ":" + templated(ctx, h, c.CustomIDSuffix)
 	}
 	if c.OnClick == "none" && !strings.EqualFold(c.Style, "link") {
 		// Decorative: the custom_id references no run, so clicks resolve to a
 		// bare silent acknowledgement forever (suffix only keeps ids unique
 		// within the message). Link buttons never carry a custom_id.
-		cid = cc.NoopCustomIDPrefix + templated(ctx, h, c.CustomIDSuffix)
+		cid = h.Engine.noopPrefix + templated(ctx, h, c.CustomIDSuffix)
 	}
 	switch c.Type {
 	case "button":

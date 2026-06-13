@@ -45,13 +45,35 @@ type Deps struct {
 type Engine struct {
 	deps     Deps
 	handlers map[string]Handler
+	// routePrefix / noopPrefix namespace the component custom_ids this engine
+	// mints so a feature's clicks route back to its own resume handler. Custom
+	// commands use "ccmd:"; automations use "auto:" (set via SetRouting).
+	routePrefix string
+	noopPrefix  string
 }
 
 // New builds an engine and registers the standard step handlers.
 func New(d Deps) *Engine {
-	e := &Engine{deps: d, handlers: map[string]Handler{}}
+	e := &Engine{
+		deps:        d,
+		handlers:    map[string]Handler{},
+		routePrefix: "ccmd:",
+		noopPrefix:  cc.NoopCustomIDPrefix,
+	}
 	registerStdHandlers(e)
 	return e
+}
+
+// SetRouting overrides the component custom_id prefixes (routed + decorative).
+// Pass e.g. ("auto:", "auto:noop:") for the automations engine so component
+// clicks on automation-sent messages resume the right runs.
+func (e *Engine) SetRouting(routePrefix, noopPrefix string) {
+	if routePrefix != "" {
+		e.routePrefix = routePrefix
+	}
+	if noopPrefix != "" {
+		e.noopPrefix = noopPrefix
+	}
 }
 
 // Register adds (or replaces) a handler for a step kind.

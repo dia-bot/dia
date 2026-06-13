@@ -24,9 +24,12 @@ type Scope struct {
 // ScopeData is the JSON-serializable payload of a Scope. Persisted in
 // command_runs.scope and restored verbatim when a wait/wait_for resumes.
 type ScopeData struct {
-	Ctx                ContextVars          `json:"ctx"`
-	Input              map[string]any       `json:"input"`
-	Vars               map[string]any       `json:"vars"`
+	Ctx   ContextVars    `json:"ctx"`
+	Input map[string]any `json:"input"`
+	Vars  map[string]any `json:"vars"`
+	// Event carries the trigger payload for server-event automations, exposed
+	// to templates as `.Event.*`. Empty for slash-command runs.
+	Event              map[string]any       `json:"event,omitempty"`
 	Last               any                  `json:"last,omitempty"`
 	PendingAttachments []ScopeAttachment    `json:"pending_attachments,omitempty"`
 	ImageBlobs         map[string]ImageBlob `json:"image_blobs,omitempty"`
@@ -152,6 +155,15 @@ func (s *Scope) Set(name string, value any) {
 	s.Data.Last = value
 }
 
+// SetEvent attaches the trigger payload exposed to templates as `.Event.*`.
+// Used by server-event automations when building a run scope.
+func (s *Scope) SetEvent(ev map[string]any) {
+	if s == nil || s.Data == nil {
+		return
+	}
+	s.Data.Event = ev
+}
+
 // Get reads a variable (or returns nil).
 func (s *Scope) Get(name string) any {
 	if s == nil || s.Data == nil {
@@ -202,6 +214,8 @@ func (s *Scope) TemplateContext() *templating.Context {
 		Channel: templating.Channel{ID: d.Ctx.Channel.ID},
 		// Args carries declared input names so admins can iterate them in templates.
 		Args: inputNames(d.Input),
+		// Event is the trigger payload for automations (`.Event.*`).
+		Event: d.Event,
 	}
 	if d.Error != nil {
 		ctx.Error = templating.ErrorInfo{

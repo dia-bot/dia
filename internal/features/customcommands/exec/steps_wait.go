@@ -64,7 +64,7 @@ func hWaitFor(ctx context.Context, h *Halt) error {
 		// the router can match the suffix the admin set. The suffix is a
 		// template (e.g. vote_{{ .Vars.idx }}) so per-item buttons inside a
 		// loop each get their own wait; the run id already isolates users.
-		customID = "ccmd:" + h.Run.ID
+		customID = h.Engine.routePrefix + h.Run.ID
 		if spec.CustomIDSuffix != "" {
 			customID += ":" + templated(ctx, h, spec.CustomIDSuffix)
 		}
