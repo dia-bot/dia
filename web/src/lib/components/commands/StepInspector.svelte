@@ -2,8 +2,9 @@
 	import { getContext } from 'svelte';
 	import type { Step } from '$lib/commands/types';
 	import { STEP_KIND_BY_KIND } from '$lib/commands/types';
-	import { AUTOMATION_CTX, EXPR_SCOPE_CTX, type ExprScope } from '$lib/commands/expr-meta';
+	import { AUTOMATION_CTX, EXPR_SCOPE_CTX, stepProducedVar, type ExprScope } from '$lib/commands/expr-meta';
 	import ExprField from './ExprField.svelte';
+	import StepOutputHint from './StepOutputHint.svelte';
 	import MessageEditor from './MessageEditor.svelte';
 	import EmbedBuilder from './EmbedBuilder.svelte';
 	import EmojiPicker from './EmojiPicker.svelte';
@@ -82,6 +83,10 @@
 
 	const kindMeta = $derived(step ? STEP_KIND_BY_KIND.get(step.kind) : null);
 	const spec = $derived(getSpec());
+
+	// The variable (and its fields) this step makes available to later steps,
+	// resolved live from the spec — drives the "use this later" teaching panel.
+	const produced = $derived(stepProducedVar(step));
 </script>
 
 {#if !step}
@@ -172,7 +177,7 @@
 					<MessageRefField {step} {...exprBind('message')} onChannel={(v) => set('channel', v)} />
 				</Field>
 				<Field label="Channel"><ChannelExprField {...exprBind('channel')} /></Field>
-				<Field label="Save to variable" hint={"Read it as {{ .Vars.msg.content }}, .author_id, .pinned, .reaction_count…"}>
+				<Field label="Save to variable" hint="Name it, then use its text, author and more in later steps (shown below).">
 					<input class="input" value={spec.into ?? ''} oninput={(e) => set('into', (e.currentTarget as HTMLInputElement).value)} />
 				</Field>
 			{:else if step.kind === 'message_delete' || step.kind === 'pin_add' || step.kind === 'pin_remove'}
@@ -267,7 +272,7 @@
 				</Field>
 			{:else if step.kind === 'member_fetch'}
 				<Field label="User"><ExprField {...exprBind('user')} placeholder={'{{ .Input.target }}'} /></Field>
-				<Field label="Save to variable" hint={"Read it as {{ .Vars.member.nick }}, .roles, .joined_at, .timed_out_until…"}>
+				<Field label="Save to variable" hint="Name it, then use their roles, nickname, join date and more in later steps (shown below).">
 					<input class="input" value={spec.into ?? ''} oninput={(e) => set('into', (e.currentTarget as HTMLInputElement).value)} />
 				</Field>
 			{:else if step.kind === 'voice_set'}
@@ -308,7 +313,7 @@
 					<span class="text-sm">Temporary membership</span>
 					<Toggle checked={!!spec.temporary} onchange={(v) => set('temporary', v)} />
 				</label>
-				<Field label="Save to variable" hint={"The link is {{ .Vars.invite.url }}"}>
+				<Field label="Save to variable" hint="Name it, then use the invite link in later steps (shown below).">
 					<input class="input" value={spec.into ?? ''} oninput={(e) => set('into', (e.currentTarget as HTMLInputElement).value)} />
 				</Field>
 			{:else if step.kind === 'member_ban'}
@@ -470,7 +475,7 @@
 				<Field label="JSON text" hint="From a saved value, a form answer, or any value.">
 					<ExprField {...exprBind('value')} placeholder={'{{ .Vars.raw }}'} />
 				</Field>
-				<Field label="Save to variable" hint={"Then read fields: {{ .Vars.parsed.some_field }}"}>
+				<Field label="Save to variable" hint="Name it, then read its fields in later steps (shown below).">
 					<input class="input" value={spec.into ?? ''} oninput={(e) => set('into', (e.currentTarget as HTMLInputElement).value)} />
 				</Field>
 			{:else if step.kind === 'kv_get' || step.kind === 'kv_set' || step.kind === 'kv_delete'}
@@ -788,7 +793,7 @@
 								<div class="mt-1.5 flex items-center gap-1.5">
 									<input
 										class="input h-6 min-w-0 flex-1 font-mono text-[11px]"
-										placeholder={"answer_id — read it as {{ .Vars.form.answer_id }}"}
+										placeholder="answer_id (a short name for this answer)"
 										value={f.custom_id ?? ''}
 										oninput={(e) => {
 											const fields = [...(spec.fields ?? [])];
@@ -838,6 +843,10 @@
 				<Field label="Save answers to" hint="Submission lands in this variable.">
 					<input class="input" value={spec.into ?? ''} oninput={(e) => set('into', (e.currentTarget as HTMLInputElement).value)} />
 				</Field>
+			{/if}
+
+			{#if produced}
+				<StepOutputHint {produced} />
 			{/if}
 
 			<details class="rounded-md border border-line bg-ink-2/40">
