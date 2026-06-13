@@ -522,22 +522,76 @@
 					<input class="input" value={spec.duration ?? '30s'} oninput={(e) => set('duration', (e.currentTarget as HTMLInputElement).value)} />
 				</Field>
 			{:else if step.kind === 'wait_for'}
-				<Field label="Trigger">
+				{@const wt = spec.trigger ?? 'component'}
+				<Field label="Wait for">
 					<FieldSelect
-						value={spec.trigger ?? 'component'}
+						value={wt}
 						onChange={(v) => set('trigger', v)}
-						options={[
-							{ value: 'component', label: 'Button / select click' },
-							{ value: 'modal', label: 'Modal submission' }
-						]}
+						options={isAutomation
+							? [
+									{ value: 'component', label: 'A button / select click' },
+									{ value: 'modal', label: 'A modal submission' },
+									{ value: 'message', label: 'A message' },
+									{ value: 'reaction', label: 'A reaction' }
+								]
+							: [
+									{ value: 'component', label: 'Button / select click' },
+									{ value: 'modal', label: 'Modal submission' }
+								]}
 					/>
 				</Field>
-				<Field label="Custom id suffix" hint='The button must have custom_id_suffix="<suffix>" for the router to match it back.'>
-					<input class="input" value={spec.custom_id_suffix ?? ''} oninput={(e) => set('custom_id_suffix', (e.currentTarget as HTMLInputElement).value)} />
+
+				{#if wt === 'component' || wt === 'modal'}
+					<Field label="Custom id suffix" hint='The button must have custom_id_suffix="<suffix>" for the router to match it back.'>
+						<input class="input" value={spec.custom_id_suffix ?? ''} oninput={(e) => set('custom_id_suffix', (e.currentTarget as HTMLInputElement).value)} />
+					</Field>
+				{/if}
+
+				<Field
+					label={wt === 'message' ? 'From which member' : wt === 'reaction' ? 'Who reacts' : 'Restrict to user id'}
+					hint={isAutomation ? 'Blank = anyone. {{ .User.ID }} = the member this event is about.' : undefined}
+				>
+					<ExprField {...exprBind('from_user')} placeholder="(anyone)" />
 				</Field>
-				<Field label="Restrict to user id" hint={isAutomation ? 'Limit who can answer, e.g. {{ .User.ID }} for the member the event is about.' : undefined}>
-					<ExprField {...exprBind('from_user')} placeholder="(any)" />
-				</Field>
+
+				{#if wt === 'message' || wt === 'reaction'}
+					{@const cm = spec.channel_mode ?? 'any'}
+					<Field label="Where" hint="Which channels can satisfy this wait.">
+						<FieldSelect
+							value={cm}
+							onChange={(v) => set('channel_mode', v)}
+							options={[
+								{ value: 'any', label: 'Anywhere in the server' },
+								{ value: 'current', label: 'The channel this ran in' },
+								{ value: 'only', label: 'Only these channels' },
+								{ value: 'except', label: 'Everywhere except these' }
+							]}
+						/>
+					</Field>
+					{#if cm === 'only' || cm === 'except'}
+						<Field label="Channels" hint="Channel ids, comma separated.">
+							<input
+								class="input font-mono text-[12px]"
+								value={(spec.channels ?? []).join(', ')}
+								oninput={(e) =>
+									set(
+										'channels',
+										(e.currentTarget as HTMLInputElement).value
+											.split(/[\s,]+/)
+											.map((x) => x.replace(/[<#>]/g, '').trim())
+											.filter(Boolean)
+									)}
+							/>
+						</Field>
+					{/if}
+				{/if}
+
+				{#if wt === 'reaction'}
+					<Field label="Emoji" hint="One emoji (👍, a name, or an id). Blank = any.">
+						<input class="input" value={spec.emoji ?? ''} oninput={(e) => set('emoji', (e.currentTarget as HTMLInputElement).value)} />
+					</Field>
+				{/if}
+
 				<Field
 					label="Timeout"
 					hint={isAutomation
@@ -546,12 +600,23 @@
 				>
 					<input class="input" value={spec.timeout ?? (isAutomation ? '30s' : '10m')} oninput={(e) => set('timeout', (e.currentTarget as HTMLInputElement).value)} />
 				</Field>
-				<Field label="Save click to" hint={"Branch on it: {{ eq .Vars.click.user_id .User.ID }} = clicker is the invoker"}>
+
+				<Field
+					label={wt === 'message' ? 'Save the message to' : wt === 'reaction' ? 'Save the reaction to' : 'Save click to'}
+					hint={wt === 'message'
+						? 'e.g. reply → {{ .Vars.reply.content }} and {{ .Vars.reply.id }} (reply to it)'
+						: 'Branch on it: {{ eq .Vars.click.user_id .User.ID }} = clicker is the invoker'}
+				>
 					<input class="input" value={spec.into ?? ''} oninput={(e) => set('into', (e.currentTarget as HTMLInputElement).value)} />
 				</Field>
+
 				{#if isAutomation}
 					<p class="px-0.5 text-[10.5px] leading-snug text-faint">
-						Steps after this run when the click or modal arrives — replies are allowed there.
+						{#if wt === 'component' || wt === 'modal'}
+							Steps after this run when it arrives, and replies are allowed there.
+						{:else}
+							Steps after this run when it arrives (use Send message there).
+						{/if}
 						Drag the node's right dot to add an <span class="text-muted">on timeout</span> path.
 					</p>
 				{/if}
