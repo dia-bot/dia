@@ -64,6 +64,9 @@ func (p *Plugin) Init(ctx context.Context, d plugin.Deps, reg *plugin.Registrar)
 		HTTP:    &exec.HTTPAdapter{Client: &http.Client{Timeout: 10 * time.Second}},
 	})
 	p.eng.SetRouting(routePrefix, noopPrefix)
+	// Event runs have no interaction keeping them "live", so cap every wait_for
+	// / modal listening window at one minute.
+	p.eng.SetMaxWaitFor(time.Minute)
 
 	for _, et := range automations.SubscribedEvents() {
 		et := et

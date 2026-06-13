@@ -50,6 +50,10 @@ type Engine struct {
 	// commands use "ccmd:"; automations use "auto:" (set via SetRouting).
 	routePrefix string
 	noopPrefix  string
+	// maxWaitFor caps wait_for / modal listening windows. Custom commands allow
+	// up to the interaction-token lifetime (~10 min); automations clamp tighter
+	// (1 min) since there's no interaction keeping the run "live" (SetMaxWaitFor).
+	maxWaitFor time.Duration
 }
 
 // New builds an engine and registers the standard step handlers.
@@ -59,10 +63,22 @@ func New(d Deps) *Engine {
 		handlers:    map[string]Handler{},
 		routePrefix: "ccmd:",
 		noopPrefix:  cc.NoopCustomIDPrefix,
+		maxWaitFor:  10 * time.Minute,
 	}
 	registerStdHandlers(e)
 	return e
 }
+
+// SetMaxWaitFor overrides the cap on wait_for / modal listening windows (e.g.
+// 1 minute for automations). A non-positive value is ignored.
+func (e *Engine) SetMaxWaitFor(d time.Duration) {
+	if d > 0 {
+		e.maxWaitFor = d
+	}
+}
+
+// MaxWaitFor returns the configured wait_for / modal window cap.
+func (e *Engine) MaxWaitFor() time.Duration { return e.maxWaitFor }
 
 // SetRouting overrides the component custom_id prefixes (routed + decorative).
 // Pass e.g. ("auto:", "auto:noop:") for the automations engine so component

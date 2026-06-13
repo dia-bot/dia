@@ -244,8 +244,8 @@ func hModalOpen(ctx context.Context, h *Halt) error {
 			timeout = d
 		}
 	}
-	if timeout > 10*time.Minute {
-		timeout = 10 * time.Minute
+	if max := h.Engine.maxWaitFor; max > 0 && timeout > max {
+		timeout = max
 	}
 	resume := time.Now().Add(timeout)
 	h.Run.markDurable()

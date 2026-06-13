@@ -52,9 +52,10 @@ func hWaitFor(ctx context.Context, h *Halt) error {
 		}
 	}
 	// Hard cap: the interaction token itself dies after ~15 minutes, so a
-	// longer park can never be answered anyway.
-	if timeout > 10*time.Minute {
-		timeout = 10 * time.Minute
+	// longer park can never be answered anyway. Automations clamp tighter (the
+	// engine's MaxWaitFor), since an event run has no interaction keeping alive.
+	if max := h.Engine.maxWaitFor; max > 0 && timeout > max {
+		timeout = max
 	}
 	resume := time.Now().Add(timeout)
 
