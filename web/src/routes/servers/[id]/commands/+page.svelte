@@ -1,11 +1,18 @@
+<script lang="ts" module>
+	import type { CommandSummary as _CS, CommandGroup as _CG } from '$lib/commands/types';
+	// Per-guild cache so back-navigation shows the wall instantly (no skeleton
+	// flash) for the return zoom to play against; refreshed in the background.
+	const listCache = new Map<string, { commands: _CS[]; groups: _CG[] }>();
+</script>
+
 <script lang="ts">
 	// The Flow Atlas: the commands overview as the antechamber of the editor.
 	// Commands keep their living miniature-canvas tiles; the management layer
 	// is organized into group bands you can create, rename, collapse and move
-	// commands between. Entering a command launches it: the tile dives forward
-	// and the wall recedes before the editor opens.
-	import { onMount, getContext } from 'svelte';
-	import { goto } from '$app/navigation';
+	// commands between. Entering a command zooms the wall into the clicked card;
+	// returning flies back out of it.
+	import { onMount, tick, getContext } from 'svelte';
+	import { goto, afterNavigate } from '$app/navigation';
 	import { fade, fly, scale, slide } from 'svelte/transition';
 	import { flip } from 'svelte/animate';
 	import { cubicOut } from 'svelte/easing';
@@ -44,10 +51,19 @@
 	let searchEl = $state<HTMLInputElement | null>(null);
 	let booted = $state(false);
 
-	// Enter animation: the launching tile dives forward, the rest recede.
+	// Enter/return animation: the wall zooms into the clicked card on enter,
+	// and flies back out of it when you return from that command.
 	let launchingId = $state<number | null>(null);
 	let launchTimer: ReturnType<typeof setTimeout> | null = null;
 	let atlasEl = $state<HTMLDivElement | null>(null);
+	let returnFromId = $state<number | null>(null);
+	let didReturn = false;
+
+	// Capture which command we came back FROM, so the wall can zoom out of it.
+	afterNavigate((nav) => {
+		const m = (nav.from?.url.pathname ?? '').match(/\/commands\/(\d+)$/);
+		returnFromId = m ? Number(m[1]) : null;
+	});
 
 	// Group management state.
 	let collapsed = $state<Record<string, boolean>>({});
@@ -98,9 +114,18 @@
 	});
 
 	onMount(async () => {
+		// Cache-first: a returning view shows the wall immediately so the
+		// zoom-out plays against real tiles, not a skeleton.
+		const cached = listCache.get(store.id);
+		if (cached) {
+			commands = cached.commands;
+			groups = cached.groups;
+			loaded = true;
+			booted = true;
+		}
 		await reload();
 		loaded = true;
-		setTimeout(() => (booted = true), 600);
+		if (!cached) setTimeout(() => (booted = true), 600);
 	});
 
 	async function reload() {
@@ -110,6 +135,46 @@
 		]);
 		commands = cmdRes.commands ?? [];
 		groups = grpRes.groups ?? [];
+		listCache.set(store.id, { commands, groups });
+	}
+
+	// Return zoom: when arriving back from a command's editor, start the wall
+	// zoomed into that card and let it fly back out to rest.
+	$effect(() => {
+		if (didReturn || !loaded || returnFromId === null || !atlasEl) return;
+		const id = returnFromId;
+		didReturn = true;
+		returnFromId = null;
+		if (!motionOK()) return;
+		const el = atlasEl;
+		void tick().then(() => {
+			const tileEl = el.querySelector<HTMLElement>(`[data-cmd="${id}"]`);
+			if (tileEl) playReturn(el, tileEl);
+		});
+	});
+
+	// Inverse of the launch zoom: snap the wall to scaled-into the card (no
+	// transition), then ease it back out to its natural rest state.
+	function playReturn(atlas: HTMLDivElement, tileEl: HTMLElement) {
+		const a = atlas.getBoundingClientRect();
+		const t = tileEl.getBoundingClientRect();
+		atlas.style.setProperty('--zoom-x', `${t.left - a.left + t.width / 2}px`);
+		atlas.style.setProperty('--zoom-y', `${t.top - a.top + t.height / 2}px`);
+		atlas.style.transition = 'none';
+		atlas.style.transform = 'scale(1.85)';
+		atlas.style.opacity = '0';
+		atlas.style.filter = 'blur(2px)';
+		void atlas.offsetWidth; // commit the start frame
+		requestAnimationFrame(() => {
+			atlas.style.transition =
+				'transform 440ms cubic-bezier(0.16, 1, 0.3, 1), opacity 320ms ease-out, filter 320ms ease-out';
+			atlas.style.transform = '';
+			atlas.style.opacity = '';
+			atlas.style.filter = '';
+			setTimeout(() => {
+				atlas.style.transition = '';
+			}, 480);
+		});
 	}
 
 	async function duplicate(cmd: CommandSummary) {
@@ -479,6 +544,7 @@
 
 {#snippet tile(cmd: CommandSummary, i: number)}
 	<div
+		data-cmd={cmd.id}
 		class="tile group relative overflow-hidden rounded-xl border border-line bg-surface {booted ? '' : 'enter'}"
 		style="--i: {Math.min(i, 12)}"
 		out:scale|local={{ start: 0.97, duration: dur(140), easing: cubicOut }}
