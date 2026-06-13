@@ -1,19 +1,21 @@
 <script lang="ts">
 	// The Flow Atlas: the commands overview as the antechamber of the editor.
-	// The body is the canvas's own dotted floor holding a wall of miniature
-	// canvases, one per command, each drawn from the program's real shape.
-	// Hovering a tile runs its edges, the same dash-flow the editor uses.
+	// Commands keep their living miniature-canvas tiles; the management layer
+	// is organized into group bands you can create, rename, collapse and move
+	// commands between. Entering a command launches it: the tile dives forward
+	// and the wall recedes before the editor opens.
 	import { onMount, getContext } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { fade, fly, scale } from 'svelte/transition';
+	import { fade, fly, scale, slide } from 'svelte/transition';
 	import { flip } from 'svelte/animate';
 	import { cubicOut } from 'svelte/easing';
-	import { dur } from '$lib/motion';
+	import { dur, motionOK } from '$lib/motion';
 	import { GuildStore, GUILD_CTX } from '$lib/guild.svelte';
 	import { api } from '$lib/api';
-	import type { CommandSummary } from '$lib/commands/types';
+	import type { CommandSummary, CommandGroup } from '$lib/commands/types';
 	import NewCommandWizard from '$lib/components/commands/NewCommandWizard.svelte';
 	import FlowThumb from '$lib/components/commands/FlowThumb.svelte';
+	import { DropdownMenu } from '$lib/components/ui';
 
 	import Page from '$lib/components/page/Page.svelte';
 	import PageTopbar from '$lib/components/page/PageTopbar.svelte';
@@ -27,17 +29,31 @@
 	import Trash2 from 'lucide-svelte/icons/trash-2';
 	import Search from 'lucide-svelte/icons/search';
 	import Play from 'lucide-svelte/icons/play';
+	import ChevronDown from 'lucide-svelte/icons/chevron-down';
+	import FolderInput from 'lucide-svelte/icons/folder-input';
+	import FolderPlus from 'lucide-svelte/icons/folder-plus';
+	import Ellipsis from 'lucide-svelte/icons/ellipsis';
+	import Check from 'lucide-svelte/icons/check';
 
 	const store = getContext<GuildStore>(GUILD_CTX);
 
 	let commands = $state<CommandSummary[]>([]);
+	let groups = $state<CommandGroup[]>([]);
 	let loaded = $state(false);
 	let query = $state('');
 	let filter = $state<'all' | 'published' | 'draft' | 'enabled' | 'disabled'>('all');
 	let wizardOpen = $state(false);
 	let searchEl = $state<HTMLInputElement | null>(null);
-	// Entrance stagger plays once; later reflows are FLIP glides, never both.
 	let booted = $state(false);
+
+	// Enter animation: the launching tile dives forward, the rest recede.
+	let launchingId = $state<number | null>(null);
+	let launchTimer: ReturnType<typeof setTimeout> | null = null;
+
+	// Group management state.
+	let collapsed = $state<Record<string, boolean>>({});
+	let editingGroup = $state<number | null>(null);
+	let editName = $state('');
 
 	const filtered = $derived(
 		commands.filter((c) => {
@@ -60,6 +76,20 @@
 		enabled: commands.filter((c) => c.enabled).length
 	});
 
+	const activeQuery = $derived(query.trim() !== '' || filter !== 'all');
+	const showBands = $derived(groups.length > 0);
+
+	type Band = { key: string; group: CommandGroup | null; commands: CommandSummary[] };
+	const bands = $derived.by<Band[]>(() => {
+		const out: Band[] = [];
+		for (const g of groups) {
+			out.push({ key: `g${g.id}`, group: g, commands: filtered.filter((c) => c.group_id === g.id) });
+		}
+		out.push({ key: 'ungrouped', group: null, commands: filtered.filter((c) => c.group_id == null) });
+		// While filtering, drop empty bands; otherwise show structure (empty groups too).
+		return out.filter((b) => b.commands.length > 0 || !activeQuery);
+	});
+
 	onMount(async () => {
 		await reload();
 		loaded = true;
@@ -67,8 +97,12 @@
 	});
 
 	async function reload() {
-		const res = await api.commands(store.id);
-		commands = res.commands ?? [];
+		const [cmdRes, grpRes] = await Promise.all([
+			api.commands(store.id),
+			api.commandGroups(store.id).catch(() => ({ groups: [] as CommandGroup[] }))
+		]);
+		commands = cmdRes.commands ?? [];
+		groups = grpRes.groups ?? [];
 	}
 
 	async function duplicate(cmd: CommandSummary) {
@@ -90,6 +124,8 @@
 			enabled: false,
 			definition: full.definition
 		});
+		// Land the copy in the same group.
+		if (cmd.group_id != null) await api.setCommandGroup(store.id, res.id, cmd.group_id).catch(() => {});
 		await reload();
 		await goto(`/servers/${store.id}/commands/${res.id}`);
 	}
@@ -98,6 +134,61 @@
 		if (!confirm(`Delete /${cmd.name}?`)) return;
 		await api.deleteCommand(store.id, cmd.id);
 		await reload();
+	}
+
+	// Optimistic move; the bands re-flow via FLIP.
+	async function moveTo(cmd: CommandSummary, groupId: number | null) {
+		if ((cmd.group_id ?? null) === groupId) return;
+		commands = commands.map((c) => (c.id === cmd.id ? { ...c, group_id: groupId } : c));
+		try {
+			await api.setCommandGroup(store.id, cmd.id, groupId);
+		} catch {
+			await reload();
+		}
+	}
+
+	async function newGroup() {
+		const res = await api.createCommandGroup(store.id, 'New group');
+		groups = [...groups, { id: res.id, name: res.name, position: res.position }];
+		startRename(res.id, res.name);
+	}
+
+	function startRename(id: number, name: string) {
+		editingGroup = id;
+		editName = name;
+	}
+
+	async function commitRename() {
+		const id = editingGroup;
+		editingGroup = null;
+		if (id == null) return;
+		const name = editName.trim();
+		const g = groups.find((x) => x.id === id);
+		if (!name || !g || g.name === name) return;
+		groups = groups.map((x) => (x.id === id ? { ...x, name } : x));
+		await api.renameCommandGroup(store.id, id, name).catch(() => reload());
+	}
+
+	async function deleteGroup(g: CommandGroup) {
+		if (!confirm(`Delete group "${g.name}"? Its commands stay, just ungrouped.`)) return;
+		groups = groups.filter((x) => x.id !== g.id);
+		commands = commands.map((c) => (c.group_id === g.id ? { ...c, group_id: null } : c));
+		await api.deleteCommandGroup(store.id, g.id).catch(() => reload());
+	}
+
+	// Focus + select a rename input the moment it mounts (more reliable than
+	// the autofocus attribute for dynamically inserted fields).
+	function focusSelect(el: HTMLInputElement) {
+		// rAF so the field is fully laid out before we grab + select it;
+		// without it the selection can collapse and typing appends.
+		requestAnimationFrame(() => {
+			el.focus();
+			el.select();
+		});
+	}
+
+	function toggleCollapse(key: string) {
+		collapsed = { ...collapsed, [key]: !collapsed[key] };
 	}
 
 	function relTime(iso: string): string {
@@ -109,7 +200,6 @@
 		return `${Math.round(diff / 86400)}d`;
 	}
 
-	// Empty description: the program speaks for itself with a kind trace.
 	function kindTrace(cmd: CommandSummary): string {
 		const shape = cmd.flow_shape ?? [];
 		if (shape.length === 0) return '';
@@ -118,7 +208,6 @@
 		return kinds.join(' -> ') + (rest > 0 ? ` +${rest}` : '');
 	}
 
-	// Runs readout: recent activity, then last-seen, then truly never.
 	function runsLabel(c: CommandSummary): string {
 		if ((c.runs_24h ?? 0) > 0) return `${c.runs_24h} runs 24h`;
 		if (c.last_run_at) return `last run ${relTime(c.last_run_at)}`;
@@ -137,6 +226,18 @@
 			e.preventDefault();
 			searchEl?.focus();
 		}
+	}
+
+	// Launch into the editor: dive the tile, recede the wall, then navigate.
+	// Modified clicks keep native behaviour (open in a new tab / window).
+	function launch(cmd: CommandSummary, e: MouseEvent) {
+		if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
+		e.preventDefault();
+		if (launchingId !== null) return;
+		launchingId = cmd.id;
+		const href = `/servers/${store.id}/commands/${cmd.id}`;
+		if (launchTimer) clearTimeout(launchTimer);
+		launchTimer = setTimeout(() => goto(href), motionOK() ? 320 : 0);
 	}
 
 	const filterOptions: { id: typeof filter; label: string }[] = [
@@ -173,39 +274,23 @@
 		{/snippet}
 	</PageTopbar>
 
-	<!-- Quiet stat strip — each cell filters the wall. -->
 	<StatStrip cols={4}>
-		<Stat
-			label="Commands"
-			value={loaded ? stats.total : '—'}
-			onclick={() => (filter = 'all')}
-			active={filter === 'all'}
-		/>
-		<Stat
-			label="Live"
-			value={loaded ? stats.published : '—'}
-			sub="published to Discord"
-			onclick={() => (filter = 'published')}
-			active={filter === 'published'}
-		/>
-		<Stat
-			label="Drafts"
-			value={loaded ? stats.drafts : '—'}
-			sub="not published yet"
-			onclick={() => (filter = 'draft')}
-			active={filter === 'draft'}
-		/>
-		<Stat
-			label="Enabled"
-			value={loaded ? stats.enabled : '—'}
-			sub="switched on"
-			onclick={() => (filter = 'enabled')}
-			active={filter === 'enabled'}
-			last
-		/>
+		<Stat label="Commands" value={loaded ? stats.total : '—'} onclick={() => (filter = 'all')} active={filter === 'all'} />
+		<Stat label="Live" value={loaded ? stats.published : '—'} sub="published to Discord" onclick={() => (filter = 'published')} active={filter === 'published'} />
+		<Stat label="Drafts" value={loaded ? stats.drafts : '—'} sub="not published yet" onclick={() => (filter = 'draft')} active={filter === 'draft'} />
+		<Stat label="Enabled" value={loaded ? stats.enabled : '—'} sub="switched on" onclick={() => (filter = 'enabled')} active={filter === 'enabled'} last />
 	</StatStrip>
 
 	<SectionBar label="Flows" count={loaded ? filtered.length : undefined}>
+		<button
+			type="button"
+			class="inline-flex h-7 items-center gap-1.5 rounded-md border border-line bg-bg px-2 text-[11.5px] font-medium text-muted transition-colors hover:border-line-strong hover:text-ink"
+			onclick={newGroup}
+			title="Create a group to organize commands"
+		>
+			<FolderPlus size={12} /> New group
+		</button>
+		<div class="mx-0.5 h-3.5 w-px bg-line"></div>
 		<div class="flex items-center gap-0.5">
 			{#each filterOptions as f (f.id)}
 				<button
@@ -233,10 +318,9 @@
 		</div>
 	</div>
 
-	<!-- ── The atlas: the canvas floor, tiled with miniature programs ── -->
-	<div class="atlas relative flex-1 overflow-y-auto">
-		<div class="grid grid-cols-1 gap-4 p-4 sm:grid-cols-2 md:p-6 lg:grid-cols-3 2xl:grid-cols-4">
-			{#if !loaded}
+	<div class="atlas relative min-h-0 flex-1 overflow-y-auto {launchingId !== null ? 'launching' : ''}">
+		{#if !loaded}
+			<div class="grid grid-cols-1 gap-4 p-4 sm:grid-cols-2 md:p-6 lg:grid-cols-3 2xl:grid-cols-4">
 				{#each [0, 1, 2, 3, 4, 5] as i (i)}
 					<div class="overflow-hidden rounded-xl border border-line bg-surface">
 						<div class="skeleton aspect-[5/3] rounded-none"></div>
@@ -246,233 +330,340 @@
 						</div>
 					</div>
 				{/each}
-			{:else if commands.length === 0}
-				<div class="col-span-full grid place-items-center py-16" in:fade={{ duration: dur(300) }}>
-					<div
-						class="max-w-sm rounded-xl border border-line bg-surface p-6 text-center"
-						in:fly={{ y: 8, duration: dur(220), easing: cubicOut }}
-					>
-						<p class="text-[14px] font-medium text-ink">No commands yet</p>
-						<p class="mt-1.5 text-[12.5px] leading-relaxed text-muted">
-							Create your first slash command. Name it, add the properties members fill in,
-							and pick its first reply.
-						</p>
-						<div class="mt-4 flex justify-center">
-							<TopbarAction onclick={() => (wizardOpen = true)}>
-								{#snippet icon()}<Plus size={12} />{/snippet}
-								New command
-							</TopbarAction>
-						</div>
+			</div>
+		{:else if commands.length === 0}
+			<div class="grid place-items-center py-16" in:fade={{ duration: dur(300) }}>
+				<div class="max-w-sm rounded-xl border border-line bg-surface p-6 text-center" in:fly={{ y: 8, duration: dur(220), easing: cubicOut }}>
+					<p class="text-[14px] font-medium text-ink">No commands yet</p>
+					<p class="mt-1.5 text-[12.5px] leading-relaxed text-muted">
+						Create your first slash command. Name it, add the properties members fill in, and pick its first reply.
+					</p>
+					<div class="mt-4 flex justify-center">
+						<TopbarAction onclick={() => (wizardOpen = true)}>
+							{#snippet icon()}<Plus size={12} />{/snippet}
+							New command
+						</TopbarAction>
 					</div>
 				</div>
-			{:else if filtered.length === 0}
-				<div class="col-span-full grid place-items-center py-16" in:fade={{ duration: dur(200) }}>
-					<div class="max-w-sm rounded-xl border border-line bg-surface p-6 text-center">
-						<p class="text-[14px] font-medium text-ink">No commands match</p>
-						<p class="mt-1.5 text-[12.5px] text-muted">
-							{query.trim() ? `Nothing for "${query.trim()}".` : 'Nothing under this filter.'}
-						</p>
-						<div class="mt-4 flex justify-center">
-							<TopbarAction
-								variant="ghost"
-								onclick={() => {
-									query = '';
-									filter = 'all';
-								}}
-							>
-								Show all
-							</TopbarAction>
-						</div>
+			</div>
+		{:else if filtered.length === 0}
+			<div class="grid place-items-center py-16" in:fade={{ duration: dur(200) }}>
+				<div class="max-w-sm rounded-xl border border-line bg-surface p-6 text-center">
+					<p class="text-[14px] font-medium text-ink">No commands match</p>
+					<p class="mt-1.5 text-[12.5px] text-muted">
+						{query.trim() ? `Nothing for "${query.trim()}".` : 'Nothing under this filter.'}
+					</p>
+					<div class="mt-4 flex justify-center">
+						<TopbarAction variant="ghost" onclick={() => { query = ''; filter = 'all'; }}>Show all</TopbarAction>
 					</div>
 				</div>
-			{:else}
+			</div>
+		{:else if !showBands}
+			<!-- No groups yet: the clean flat wall. -->
+			<div class="grid grid-cols-1 gap-4 p-4 sm:grid-cols-2 md:p-6 lg:grid-cols-3 2xl:grid-cols-4">
 				{#each filtered as cmd, i (cmd.id)}
-					<div
-						class="tile group relative overflow-hidden rounded-xl border border-line bg-surface {booted
-							? ''
-							: 'enter'}"
-						style="--i: {Math.min(i, 12)}"
-						animate:flip={{ duration: dur(280), easing: cubicOut }}
-						out:scale|local={{ start: 0.97, duration: dur(140), easing: cubicOut }}
-						in:fade|local={{ duration: dur(180) }}
-					>
-						<!-- The whole tile navigates; a stretched link sits under the
-						     content so the action buttons stay valid, focusable siblings. -->
-						<a
-							href={`/servers/${store.id}/commands/${cmd.id}`}
-							class="absolute inset-0 z-0 rounded-xl focus-visible:outline focus-visible:outline-1 focus-visible:outline-line-strong"
-							aria-label={`Open /${cmd.name}`}
-						></a>
-
-						<!-- Zone 1: the miniature canvas -->
-						<div class="pointer-events-none relative aspect-[5/3]">
-							<div class="thumb absolute inset-0 border-b border-line/60"></div>
-							<div
-								class="absolute inset-0 transition-[opacity,filter] duration-300 {cmd.enabled
-									? ''
-									: 'opacity-50 saturate-0'}"
-							>
-								<FlowThumb shape={cmd.flow_shape} name={cmd.name} more={cmd.shape_more ?? 0} />
-							</div>
-
-							<!-- Status chip -->
-							<span
-								class="absolute left-2 top-2 flex h-[18px] items-center gap-1 rounded-full border border-line bg-surface/90 px-1.5 font-mono text-[9px] uppercase tracking-[0.12em] text-muted backdrop-blur"
-							>
-								{#if cmd.enabled && cmd.status === 'published'}
-									<span class="live-dot size-1.5 rounded-full bg-success"></span>
-									Live v{cmd.version}
-								{:else if !cmd.enabled}
-									<span class="size-1.5 rounded-full bg-faint/50"></span>
-									Off
-								{:else}
-									<span class="size-1.5 rounded-full border border-faint"></span>
-									Draft
-								{/if}
-							</span>
-
-							<!-- Hover actions: above the stretched link, clickable. -->
-							<div class="acts pointer-events-auto absolute right-2 top-2 z-10 flex overflow-hidden rounded-md border border-line bg-surface/90 backdrop-blur">
-								<button
-									type="button"
-									class="grid size-6 place-items-center text-muted transition-colors hover:bg-ink-2 hover:text-ink focus-visible:ring-1 focus-visible:ring-line-strong"
-									aria-label="Duplicate"
-									title="Duplicate"
-									onclick={() => duplicate(cmd)}
-								>
-									<Copy size={12} />
-								</button>
-								<button
-									type="button"
-									class="grid size-6 place-items-center text-muted transition-colors hover:bg-ink-2 hover:text-danger focus-visible:ring-1 focus-visible:ring-line-strong"
-									aria-label="Delete"
-									title="Delete"
-									onclick={() => remove(cmd)}
-								>
-									<Trash2 size={12} />
-								</button>
-							</div>
-						</div>
-
-						<!-- Zone 2: nameplate (decorative; clicks fall to the link) -->
-						<div class="pointer-events-none px-3.5 pt-2.5">
-							<div class="flex items-baseline gap-1.5">
-								<Play size={9} class="shrink-0 -translate-y-px self-center text-accent-ink" />
-								<span class="min-w-0 truncate font-mono text-[13px] font-medium text-ink">
-									<span class="text-faint">/</span>{cmd.name}
-								</span>
-								<span class="ml-auto shrink-0 font-mono text-[10px] tabular-nums text-faint">
-									v{cmd.version}
-								</span>
-							</div>
-							{#if cmd.description}
-								<p class="mt-0.5 truncate text-[11.5px] text-muted">{cmd.description}</p>
-							{:else if kindTrace(cmd)}
-								<p class="mt-0.5 truncate font-mono text-[10px] text-faint">{kindTrace(cmd)}</p>
-							{:else}
-								<p class="mt-0.5 truncate text-[11.5px] text-faint">No description</p>
-							{/if}
-						</div>
-
-						<!-- Zone 3: readout rail -->
-						<div class="pointer-events-none px-3.5 pb-2.5 pt-1.5 font-mono text-[10px] tabular-nums text-faint">
-							{#if cmd.step_count !== undefined}
-								<span>{cmd.step_count} {cmd.step_count === 1 ? 'step' : 'steps'}</span>
-								<span class="mx-1 opacity-50">·</span>
-							{/if}
-							{#if cmd.option_count !== undefined && cmd.option_count > 0}
-								<span>{cmd.option_count} {cmd.option_count === 1 ? 'prop' : 'props'}</span>
-								<span class="mx-1 opacity-50">·</span>
-							{/if}
-							{#if cmd.runs_24h !== undefined}
-								<span>{runsLabel(cmd)}</span>
-								<span class="mx-1 opacity-50">·</span>
-							{/if}
-							<span>edited {relTime(cmd.updated_at)}</span>
-							{#if cmd.requires_defer}
-								<span class="mx-1 opacity-50">·</span>
-								<span title="Auto-defers, worst-case path over 3 seconds">defers</span>
-							{/if}
-						</div>
-					</div>
+					{@render tile(cmd, i)}
 				{/each}
+				{@render ghost()}
+			</div>
+		{:else}
+			<!-- Grouped bands. -->
+			<div class="flex flex-col gap-1 p-4 md:p-6">
+				{#each bands as band (band.key)}
+					<section animate:flip={{ duration: dur(280), easing: cubicOut }}>
+						<!-- Band header -->
+						<div class="group/band sticky top-0 z-[5] -mx-1 mb-2 flex items-center gap-2 bg-bg/80 px-1 py-1 backdrop-blur">
+							<button
+								type="button"
+								class="grid size-5 place-items-center rounded text-faint transition-colors hover:text-ink"
+								onclick={() => toggleCollapse(band.key)}
+								aria-label={collapsed[band.key] ? 'Expand' : 'Collapse'}
+							>
+								<ChevronDown size={13} class="transition-transform duration-200 {collapsed[band.key] ? '-rotate-90' : ''}" />
+							</button>
 
-				<!-- The ghost slot: an empty canvas waiting to be switched on -->
-				<button
-					type="button"
-					class="ghost relative grid min-h-[15rem] place-items-center rounded-xl border-[1.5px] border-dashed border-line bg-transparent"
-					onclick={() => (wizardOpen = true)}
-				>
-					<span class="ghost-dots absolute inset-0 rounded-xl"></span>
-					<span class="relative flex flex-col items-center gap-2">
-						<span class="ghost-plus grid size-9 place-items-center rounded-lg border border-line text-muted">
-							<Plus size={16} />
-						</span>
-						<span class="text-[12px] font-medium text-ink">New command</span>
-						<span class="font-mono text-[10px] text-faint">/your-command</span>
-					</span>
-				</button>
-			{/if}
-		</div>
+							{#if band.group && editingGroup === band.group.id}
+								<input
+									use:focusSelect
+									class="h-6 w-40 rounded border border-line-strong bg-bg px-1.5 font-mono text-[11px] font-medium uppercase tracking-[0.1em] text-ink focus:outline-none"
+									bind:value={editName}
+									onblur={commitRename}
+									onkeydown={(e) => {
+										if (e.key === 'Enter') commitRename();
+										if (e.key === 'Escape') editingGroup = null;
+									}}
+								/>
+							{:else if band.group}
+								<button
+									type="button"
+									class="font-mono text-[11px] font-medium uppercase tracking-[0.12em] text-ink transition-colors hover:text-accent-ink"
+									onclick={() => band.group && startRename(band.group.id, band.group.name)}
+									title="Rename group"
+								>
+									{band.group.name}
+								</button>
+							{:else}
+								<span class="font-mono text-[11px] font-medium uppercase tracking-[0.12em] text-faint">
+									Ungrouped
+								</span>
+							{/if}
+
+							<span class="font-mono text-[10px] tabular-nums text-faint">{band.commands.length}</span>
+							<div class="h-px flex-1 bg-line/60"></div>
+
+							{#if band.group}
+								<DropdownMenu.Root>
+									<DropdownMenu.Trigger
+										class="grid size-6 place-items-center rounded text-faint opacity-0 transition-colors hover:bg-surface hover:text-ink focus-visible:opacity-100 group-hover/band:opacity-100"
+										aria-label="Group actions"
+									>
+										<Ellipsis size={14} />
+									</DropdownMenu.Trigger>
+									<DropdownMenu.Content align="end">
+										<DropdownMenu.Item onSelect={() => band.group && startRename(band.group.id, band.group.name)}>
+											Rename
+										</DropdownMenu.Item>
+										<DropdownMenu.Separator />
+										<DropdownMenu.Item class="text-danger data-[highlighted]:text-danger" onSelect={() => band.group && deleteGroup(band.group)}>
+											<Trash2 size={13} /> Delete group
+										</DropdownMenu.Item>
+									</DropdownMenu.Content>
+								</DropdownMenu.Root>
+							{/if}
+						</div>
+
+						{#if !collapsed[band.key]}
+							<div transition:slide={{ duration: dur(200), easing: cubicOut }}>
+								{#if band.commands.length === 0}
+									<p class="px-1 pb-3 font-mono text-[10.5px] text-faint">
+										Empty group. Move a command in with its
+										<FolderInput size={11} class="mb-px inline" /> button.
+									</p>
+								{:else}
+									<div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
+										{#each band.commands as cmd, i (cmd.id)}
+											{@render tile(cmd, i)}
+										{/each}
+										{#if band.group === null && !activeQuery}
+											{@render ghost()}
+										{/if}
+									</div>
+								{/if}
+							</div>
+						{/if}
+					</section>
+				{/each}
+			</div>
+		{/if}
 	</div>
 </Page>
 
-<NewCommandWizard
-	bind:open={wizardOpen}
-	guildId={store.id}
-	existingNames={commands.map((c) => c.name)}
-/>
+{#snippet tile(cmd: CommandSummary, i: number)}
+	<div
+		class="tile group relative overflow-hidden rounded-xl border border-line bg-surface {booted ? '' : 'enter'} {launchingId === cmd.id ? 'is-launching' : ''} {launchingId !== null && launchingId !== cmd.id ? 'receding' : ''}"
+		style="--i: {Math.min(i, 12)}"
+		out:scale|local={{ start: 0.97, duration: dur(140), easing: cubicOut }}
+		in:fade|local={{ duration: dur(180) }}
+	>
+		<a
+			href={`/servers/${store.id}/commands/${cmd.id}`}
+			class="absolute inset-0 z-0 rounded-xl focus-visible:outline focus-visible:outline-1 focus-visible:outline-line-strong"
+			aria-label={`Open /${cmd.name}`}
+			onclick={(e) => launch(cmd, e)}
+		></a>
+
+		<div class="pointer-events-none relative aspect-[5/3]">
+			<div class="thumb absolute inset-0 border-b border-line/60"></div>
+			<div class="absolute inset-0 transition-[opacity,filter] duration-300 {cmd.enabled ? '' : 'opacity-50 saturate-0'}">
+				<FlowThumb shape={cmd.flow_shape} name={cmd.name} more={cmd.shape_more ?? 0} />
+			</div>
+
+			<span class="absolute left-2 top-2 flex h-[18px] items-center gap-1 rounded-full border border-line bg-surface/90 px-1.5 font-mono text-[9px] uppercase tracking-[0.12em] text-muted backdrop-blur">
+				{#if cmd.enabled && cmd.status === 'published'}
+					<span class="live-dot size-1.5 rounded-full bg-success"></span>
+					Live v{cmd.version}
+				{:else if !cmd.enabled}
+					<span class="size-1.5 rounded-full bg-faint/50"></span>
+					Off
+				{:else}
+					<span class="size-1.5 rounded-full border border-faint"></span>
+					Draft
+				{/if}
+			</span>
+
+			<div class="acts pointer-events-auto absolute right-2 top-2 z-10 flex overflow-hidden rounded-md border border-line bg-surface/90 backdrop-blur">
+				{#if showBands}
+					<DropdownMenu.Root>
+						<DropdownMenu.Trigger
+							class="grid size-6 place-items-center text-muted transition-colors hover:bg-ink-2 hover:text-ink focus-visible:ring-1 focus-visible:ring-line-strong"
+							aria-label="Move to group"
+							title="Move to group"
+						>
+							<FolderInput size={12} />
+						</DropdownMenu.Trigger>
+						<DropdownMenu.Content align="end" class="min-w-[11rem]">
+							<div class="px-2 py-1 font-mono text-[9.5px] uppercase tracking-[0.14em] text-muted-foreground">
+								Move to
+							</div>
+							{#each groups as g (g.id)}
+								<DropdownMenu.Item onSelect={() => moveTo(cmd, g.id)}>
+									<span class="size-3.5">{#if cmd.group_id === g.id}<Check size={13} />{/if}</span>
+									<span class="truncate">{g.name}</span>
+								</DropdownMenu.Item>
+							{/each}
+							<DropdownMenu.Separator />
+							<DropdownMenu.Item onSelect={() => moveTo(cmd, null)}>
+								<span class="size-3.5">{#if cmd.group_id == null}<Check size={13} />{/if}</span>
+								Ungrouped
+							</DropdownMenu.Item>
+						</DropdownMenu.Content>
+					</DropdownMenu.Root>
+				{/if}
+				<button
+					type="button"
+					class="grid size-6 place-items-center text-muted transition-colors hover:bg-ink-2 hover:text-ink focus-visible:ring-1 focus-visible:ring-line-strong"
+					aria-label="Duplicate"
+					title="Duplicate"
+					onclick={() => duplicate(cmd)}
+				>
+					<Copy size={12} />
+				</button>
+				<button
+					type="button"
+					class="grid size-6 place-items-center text-muted transition-colors hover:bg-ink-2 hover:text-danger focus-visible:ring-1 focus-visible:ring-line-strong"
+					aria-label="Delete"
+					title="Delete"
+					onclick={() => remove(cmd)}
+				>
+					<Trash2 size={12} />
+				</button>
+			</div>
+		</div>
+
+		<div class="pointer-events-none px-3.5 pt-2.5">
+			<div class="flex items-baseline gap-1.5">
+				<Play size={9} class="shrink-0 -translate-y-px self-center text-accent-ink" />
+				<span class="min-w-0 truncate font-mono text-[13px] font-medium text-ink">
+					<span class="text-faint">/</span>{cmd.name}
+				</span>
+				<span class="ml-auto shrink-0 font-mono text-[10px] tabular-nums text-faint">v{cmd.version}</span>
+			</div>
+			{#if cmd.description}
+				<p class="mt-0.5 truncate text-[11.5px] text-muted">{cmd.description}</p>
+			{:else if kindTrace(cmd)}
+				<p class="mt-0.5 truncate font-mono text-[10px] text-faint">{kindTrace(cmd)}</p>
+			{:else}
+				<p class="mt-0.5 truncate text-[11.5px] text-faint">No description</p>
+			{/if}
+		</div>
+
+		<div class="pointer-events-none px-3.5 pb-2.5 pt-1.5 font-mono text-[10px] tabular-nums text-faint">
+			{#if cmd.step_count !== undefined}
+				<span>{cmd.step_count} {cmd.step_count === 1 ? 'step' : 'steps'}</span>
+				<span class="mx-1 opacity-50">·</span>
+			{/if}
+			{#if cmd.option_count !== undefined && cmd.option_count > 0}
+				<span>{cmd.option_count} {cmd.option_count === 1 ? 'prop' : 'props'}</span>
+				<span class="mx-1 opacity-50">·</span>
+			{/if}
+			{#if cmd.runs_24h !== undefined}
+				<span>{runsLabel(cmd)}</span>
+				<span class="mx-1 opacity-50">·</span>
+			{/if}
+			<span>edited {relTime(cmd.updated_at)}</span>
+			{#if cmd.requires_defer}
+				<span class="mx-1 opacity-50">·</span>
+				<span title="Auto-defers, worst-case path over 3 seconds">defers</span>
+			{/if}
+		</div>
+	</div>
+{/snippet}
+
+{#snippet ghost()}
+	<button
+		type="button"
+		class="ghost relative grid min-h-[15rem] place-items-center rounded-xl border-[1.5px] border-dashed border-line bg-transparent {launchingId !== null ? 'receding' : ''}"
+		onclick={() => (wizardOpen = true)}
+	>
+		<span class="ghost-dots absolute inset-0 rounded-xl"></span>
+		<span class="relative flex flex-col items-center gap-2">
+			<span class="ghost-plus grid size-9 place-items-center rounded-lg border border-line text-muted">
+				<Plus size={16} />
+			</span>
+			<span class="text-[12px] font-medium text-ink">New command</span>
+			<span class="font-mono text-[10px] text-faint">/your-command</span>
+		</span>
+	</button>
+{/snippet}
+
+<NewCommandWizard bind:open={wizardOpen} guildId={store.id} existingNames={commands.map((c) => c.name)} />
 
 <style>
-	/* The canvas's own floor, holding the wall of programs. */
 	.atlas {
 		background-image: radial-gradient(rgba(255, 255, 255, 0.05) 1px, transparent 1px);
 		background-size: 28px 28px;
+		transition: filter 320ms var(--canvas-ease, cubic-bezier(0.22, 1, 0.36, 1));
 	}
-	/* Each thumbnail viewport gets a denser private dot field. */
+	.atlas.launching {
+		filter: brightness(0.92);
+	}
 	.thumb {
 		background-color: var(--color-ink-2);
 		background-image: radial-gradient(rgba(255, 255, 255, 0.05) 1px, transparent 1px);
 		background-size: 14px 14px;
 	}
 
-	/* Entrance: the canvas-node-enter stagger, first paint only. */
 	.enter {
 		animation: canvas-node-enter 220ms var(--canvas-ease, cubic-bezier(0.22, 1, 0.36, 1)) both;
 		animation-delay: calc(var(--i) * 30ms);
 	}
 
-	/* Hover physics: StepNode's grammar at poster size. */
 	.tile {
 		box-shadow:
 			inset 0 1px 0 rgba(255, 255, 255, 0.04),
 			0 1px 2px rgba(0, 0, 0, 0.4);
 		transition:
-			transform 200ms var(--canvas-ease, cubic-bezier(0.22, 1, 0.36, 1)),
-			border-color 200ms var(--canvas-ease, cubic-bezier(0.22, 1, 0.36, 1)),
-			box-shadow 200ms var(--canvas-ease, cubic-bezier(0.22, 1, 0.36, 1));
+			transform 300ms var(--canvas-ease, cubic-bezier(0.22, 1, 0.36, 1)),
+			border-color 300ms var(--canvas-ease, cubic-bezier(0.22, 1, 0.36, 1)),
+			box-shadow 300ms var(--canvas-ease, cubic-bezier(0.22, 1, 0.36, 1)),
+			opacity 300ms var(--canvas-ease, cubic-bezier(0.22, 1, 0.36, 1)),
+			filter 300ms var(--canvas-ease, cubic-bezier(0.22, 1, 0.36, 1));
 	}
-	.tile:hover,
-	.tile:focus-within {
+	.tile:hover:not(.is-launching):not(.receding),
+	.tile:focus-within:not(.is-launching):not(.receding) {
 		transform: translateY(-2px);
 		border-color: rgba(255, 255, 255, 0.14);
 		box-shadow:
 			inset 0 1px 0 rgba(255, 255, 255, 0.04),
 			0 12px 32px -12px rgba(0, 0, 0, 0.5);
 	}
-	.tile:active {
+	.tile:active:not(.is-launching) {
 		transform: translateY(-2px) scale(0.99);
 		transition-duration: 90ms;
 	}
+	/* Launch: the chosen tile dives forward; the wall recedes behind it. */
+	.tile.is-launching {
+		transform: translateY(-4px) scale(1.06);
+		border-color: color-mix(in srgb, var(--color-accent) 50%, transparent);
+		box-shadow:
+			0 0 0 1px color-mix(in srgb, var(--color-accent) 35%, transparent),
+			0 28px 60px -16px rgba(0, 0, 0, 0.7);
+		z-index: 20;
+	}
+	.tile.receding,
+	.ghost.receding {
+		opacity: 0.3;
+		filter: blur(1px);
+	}
 
-	/* The hero: hovering a tile runs its program. Hover-gated so a large
-	   wall idles at zero animation cost; never runs on touch. */
 	@media (hover: hover) {
-		.tile:hover :global(.tedge) {
+		.tile:hover :global(.tedge),
+		.tile.is-launching :global(.tedge) {
 			stroke-dasharray: 4 2;
 			animation: connect-dash 600ms linear infinite;
 		}
-		.tile:hover :global(.terr) {
+		.tile:hover :global(.terr),
+		.tile.is-launching :global(.terr) {
 			animation: connect-dash 600ms linear infinite;
 		}
 		.tile:hover :global(.tg) {
@@ -480,7 +671,6 @@
 		}
 	}
 
-	/* Action cluster: hidden until hover/focus; always present on touch. */
 	.acts {
 		opacity: 0;
 		transform: translateY(2px);
@@ -500,14 +690,15 @@
 		}
 	}
 
-	/* LIVE dot breathes like the canvas drop indicator. */
 	.live-dot {
 		animation: drop-breathe 2.4s ease-in-out infinite;
 	}
 
-	/* Ghost slot: a fresh canvas switching on. */
 	.ghost {
-		transition: border-color 150ms ease-out;
+		transition:
+			border-color 150ms ease-out,
+			opacity 300ms ease-out,
+			filter 300ms ease-out;
 	}
 	.ghost:hover {
 		border-color: var(--color-line-strong);
@@ -537,11 +728,17 @@
 		.acts,
 		.ghost,
 		.ghost-dots,
-		.ghost-plus {
+		.ghost-plus,
+		.atlas {
 			transition-duration: 0s;
 		}
+		.tile.is-launching {
+			transform: none;
+		}
 		.tile:hover :global(.tedge),
-		.tile:hover :global(.terr) {
+		.tile.is-launching :global(.tedge),
+		.tile:hover :global(.terr),
+		.tile.is-launching :global(.terr) {
 			animation: none;
 		}
 		.tile:hover :global(.tg) {
