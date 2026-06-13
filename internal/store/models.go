@@ -85,9 +85,19 @@ type CustomCommand struct {
 	Version       int
 	RequiresDefer bool
 	Definition    json.RawMessage
+	GroupID       *int64 // organizational folder; nil = ungrouped
 	CreatedBy     int64
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
+}
+
+// CommandGroup is a dashboard organizational folder for custom commands.
+type CommandGroup struct {
+	ID        int64
+	GuildID   int64
+	Name      string
+	Position  int
+	CreatedAt time.Time
 }
 
 // CustomCommandVersion is an immutable snapshot of the Definition at publish.

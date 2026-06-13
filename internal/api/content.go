@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"sort"
 	"strconv"
+	"strings"
 
 	"github.com/dia-bot/dia/internal/event"
 	cc "github.com/dia-bot/dia/internal/features/customcommands"
@@ -248,6 +249,158 @@ func (s *Server) handleDeleteCommand(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
+// ── Command groups (organizational folders) ────────────────
+
+func groupJSON(g store.CommandGroup) gin.H {
+	return gin.H{"id": g.ID, "name": g.Name, "position": g.Position, "created_at": g.CreatedAt}
+}
+
+func (s *Server) handleListCommandGroups(c *gin.Context) {
+	gidInt, _ := event.ParseID(guildID(c))
+	rows, err := s.store.CommandGroups.List(c.Request.Context(), gidInt)
+	if err != nil {
+		fail(c, http.StatusInternalServerError, "could not load groups")
+		return
+	}
+	out := make([]gin.H, 0, len(rows))
+	for _, g := range rows {
+		out = append(out, groupJSON(g))
+	}
+	c.JSON(http.StatusOK, gin.H{"groups": out})
+}
+
+type groupReq struct {
+	Name string `json:"name"`
+}
+
+func cleanGroupName(s string) string {
+	s = strings.TrimSpace(s)
+	if len(s) > 40 {
+		s = s[:40]
+	}
+	return s
+}
+
+func (s *Server) handleCreateCommandGroup(c *gin.Context) {
+	var req groupReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		fail(c, http.StatusBadRequest, "invalid body")
+		return
+	}
+	name := cleanGroupName(req.Name)
+	if name == "" {
+		fail(c, http.StatusBadRequest, "group name required")
+		return
+	}
+	gidInt, _ := event.ParseID(guildID(c))
+	g, err := s.store.CommandGroups.Create(c.Request.Context(), gidInt, name)
+	if err != nil {
+		fail(c, http.StatusInternalServerError, "could not create group")
+		return
+	}
+	s.audit(c, gidInt, "command_group.create", gin.H{"id": g.ID, "name": name})
+	c.JSON(http.StatusOK, groupJSON(g))
+}
+
+func (s *Server) handleRenameCommandGroup(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("gid"), 10, 64)
+	if err != nil {
+		fail(c, http.StatusBadRequest, "invalid id")
+		return
+	}
+	var req groupReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		fail(c, http.StatusBadRequest, "invalid body")
+		return
+	}
+	name := cleanGroupName(req.Name)
+	if name == "" {
+		fail(c, http.StatusBadRequest, "group name required")
+		return
+	}
+	gidInt, _ := event.ParseID(guildID(c))
+	if err := s.store.CommandGroups.Rename(c.Request.Context(), gidInt, id, name); err != nil {
+		fail(c, http.StatusNotFound, "group not found")
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+func (s *Server) handleDeleteCommandGroup(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("gid"), 10, 64)
+	if err != nil {
+		fail(c, http.StatusBadRequest, "invalid id")
+		return
+	}
+	gidInt, _ := event.ParseID(guildID(c))
+	if err := s.store.CommandGroups.Delete(c.Request.Context(), gidInt, id); err != nil {
+		fail(c, http.StatusInternalServerError, "could not delete group")
+		return
+	}
+	s.audit(c, gidInt, "command_group.delete", gin.H{"id": id})
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+type reorderGroupsReq struct {
+	IDs []int64 `json:"ids"`
+}
+
+func (s *Server) handleReorderCommandGroups(c *gin.Context) {
+	var req reorderGroupsReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		fail(c, http.StatusBadRequest, "invalid body")
+		return
+	}
+	gidInt, _ := event.ParseID(guildID(c))
+	if err := s.store.CommandGroups.Reorder(c.Request.Context(), gidInt, req.IDs); err != nil {
+		fail(c, http.StatusInternalServerError, "could not reorder groups")
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+type setGroupReq struct {
+	GroupID *int64 `json:"group_id"`
+}
+
+func (s *Server) handleSetCommandGroup(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("cid"), 10, 64)
+	if err != nil {
+		fail(c, http.StatusBadRequest, "invalid id")
+		return
+	}
+	var req setGroupReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		fail(c, http.StatusBadRequest, "invalid body")
+		return
+	}
+	gidInt, _ := event.ParseID(guildID(c))
+	// A non-nil group must belong to this guild.
+	if req.GroupID != nil {
+		groups, err := s.store.CommandGroups.List(c.Request.Context(), gidInt)
+		if err != nil {
+			fail(c, http.StatusInternalServerError, "could not verify group")
+			return
+		}
+		ok := false
+		for _, g := range groups {
+			if g.ID == *req.GroupID {
+				ok = true
+				break
+			}
+		}
+		if !ok {
+			fail(c, http.StatusBadRequest, "unknown group")
+			return
+		}
+	}
+	if err := s.store.CustomCommands.SetGroup(c.Request.Context(), gidInt, id, req.GroupID); err != nil {
+		fail(c, http.StatusNotFound, "command not found")
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
 func summarizeCommand(r store.CustomCommand) gin.H {
 	return gin.H{
 		"id":             r.ID,
@@ -257,6 +410,7 @@ func summarizeCommand(r store.CustomCommand) gin.H {
 		"status":         r.Status,
 		"version":        r.Version,
 		"requires_defer": r.RequiresDefer,
+		"group_id":       r.GroupID,
 		"updated_at":     r.UpdatedAt,
 	}
 }
