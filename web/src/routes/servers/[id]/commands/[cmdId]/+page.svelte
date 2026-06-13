@@ -33,10 +33,10 @@
 	// Reactive: SvelteKit reuses this component on param-only navigations
 	// (e.g. multi-step history traversal between two editors), so the id must
 	// track the URL and the load below re-keys on it.
-	const cmdId = $derived(Number($page.params.cmdId ?? 0));
+	const cmdId = $derived($page.params.cmdId ?? '');
 
 	type EditCommand = {
-		id: number;
+		id: string;
 		name: string;
 		description: string;
 		enabled: boolean;

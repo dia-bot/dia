@@ -107,36 +107,36 @@ export const api = {
 		req('DELETE', `/api/guilds/${id}/level-rewards/${level}`),
 
 	commands: (id: string) => req<{ commands: any[] }>('GET', `/api/guilds/${id}/commands`),
-	command: (id: string, cid: number) => req<any>('GET', `/api/guilds/${id}/commands/${cid}`),
+	command: (id: string, cid: string) => req<any>('GET', `/api/guilds/${id}/commands/${cid}`),
 	emojis: (id: string) =>
 		req<{ emojis: { id: string; name: string; animated: boolean }[] }>(
 			'GET',
 			`/api/guilds/${id}/emojis`
 		),
 	upsertCommand: (id: string, cmd: unknown) =>
-		req<{ id: number; validation: any }>('PUT', `/api/guilds/${id}/commands`, cmd),
+		req<{ id: string; validation: any }>('PUT', `/api/guilds/${id}/commands`, cmd),
 	validateCommand: (id: string, cmd: unknown) =>
 		req<{ validation: any }>('POST', `/api/guilds/${id}/commands/validate`, cmd),
-	deleteCommand: (id: string, cid: number) =>
+	deleteCommand: (id: string, cid: string) =>
 		req('DELETE', `/api/guilds/${id}/commands/${cid}`),
-	setCommandGroup: (id: string, cid: number, groupId: number | null) =>
+	setCommandGroup: (id: string, cid: string, groupId: string | null) =>
 		req('PATCH', `/api/guilds/${id}/commands/${cid}/group`, { group_id: groupId }),
 	commandGroups: (id: string) =>
-		req<{ groups: { id: number; name: string; position: number; created_at: string }[] }>(
+		req<{ groups: { id: string; name: string; position: number; created_at: string }[] }>(
 			'GET',
 			`/api/guilds/${id}/command-groups`
 		),
 	createCommandGroup: (id: string, name: string) =>
-		req<{ id: number; name: string; position: number }>('POST', `/api/guilds/${id}/command-groups`, {
+		req<{ id: string; name: string; position: number }>('POST', `/api/guilds/${id}/command-groups`, {
 			name
 		}),
-	renameCommandGroup: (id: string, gid: number, name: string) =>
+	renameCommandGroup: (id: string, gid: string, name: string) =>
 		req('PATCH', `/api/guilds/${id}/command-groups/${gid}`, { name }),
-	deleteCommandGroup: (id: string, gid: number) =>
+	deleteCommandGroup: (id: string, gid: string) =>
 		req('DELETE', `/api/guilds/${id}/command-groups/${gid}`),
-	reorderCommandGroups: (id: string, ids: number[]) =>
+	reorderCommandGroups: (id: string, ids: string[]) =>
 		req('PATCH', `/api/guilds/${id}/command-group-order`, { ids }),
-	commandRuns: (id: string, commandId?: number, limit = 25) =>
+	commandRuns: (id: string, commandId?: string, limit = 25) =>
 		req<{ runs: any[] }>(
 			'GET',
 			`/api/guilds/${id}/command-runs?limit=${limit}` +

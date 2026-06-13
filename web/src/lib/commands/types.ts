@@ -208,7 +208,7 @@ export interface ShapeNode {
 }
 
 export interface CommandSummary {
-	id: number;
+	id: string;
 	name: string;
 	description: string;
 	enabled: boolean;
@@ -223,11 +223,11 @@ export interface CommandSummary {
 	shape_more?: number;
 	runs_24h?: number;
 	last_run_at?: string | null;
-	group_id?: number | null;
+	group_id?: string | null;
 }
 
 export interface CommandGroup {
-	id: number;
+	id: string;
 	name: string;
 	position: number;
 	created_at?: string;

@@ -7,7 +7,7 @@
 		steps,
 		scratch = [],
 		commandName,
-		commandId = 0,
+		commandId = '',
 		selectedId = $bindable<string>(),
 		errorPaths = new Set<string>(),
 		onAddAtRoot,
@@ -26,7 +26,7 @@
 		steps: Step[];
 		scratch?: Step[][];
 		commandName: string;
-		commandId?: number;
+		commandId?: string;
 		selectedId: string;
 		errorPaths?: Set<string>;
 		showLegend?: boolean;

@@ -53,21 +53,21 @@
 
 	// Enter/return animation: the wall zooms into the clicked card on enter,
 	// and flies back out of it when you return from that command.
-	let launchingId = $state<number | null>(null);
+	let launchingId = $state<string | null>(null);
 	let launchTimer: ReturnType<typeof setTimeout> | null = null;
 	let atlasEl = $state<HTMLDivElement | null>(null);
-	let returnFromId = $state<number | null>(null);
+	let returnFromId = $state<string | null>(null);
 	let didReturn = false;
 
 	// Capture which command we came back FROM, so the wall can zoom out of it.
 	afterNavigate((nav) => {
-		const m = (nav.from?.url.pathname ?? '').match(/\/commands\/(\d+)$/);
-		returnFromId = m ? Number(m[1]) : null;
+		const m = (nav.from?.url.pathname ?? '').match(/\/commands\/([^/?#]+)$/);
+		returnFromId = m ? m[1] : null;
 	});
 
 	// Group management state.
 	let collapsed = $state<Record<string, boolean>>({});
-	let editingGroup = $state<number | null>(null);
+	let editingGroup = $state<string | null>(null);
 	let editName = $state('');
 
 	const filtered = $derived(
@@ -209,7 +209,7 @@
 	}
 
 	// Optimistic move; the bands re-flow via FLIP.
-	async function moveTo(cmd: CommandSummary, groupId: number | null) {
+	async function moveTo(cmd: CommandSummary, groupId: string | null) {
 		if ((cmd.group_id ?? null) === groupId) return;
 		commands = commands.map((c) => (c.id === cmd.id ? { ...c, group_id: groupId } : c));
 		try {
@@ -225,7 +225,7 @@
 		startRename(res.id, res.name);
 	}
 
-	function startRename(id: number, name: string) {
+	function startRename(id: string, name: string) {
 		editingGroup = id;
 		editName = name;
 	}
