@@ -170,6 +170,15 @@ func (s *Server) Handler() http.Handler {
 	g.PUT("/command-templates", s.handleUpsertImageTemplate)
 	g.DELETE("/command-templates/:tid", s.handleDeleteImageTemplate)
 
+	g.GET("/automations", s.handleListAutomations)
+	g.GET("/automations/:aid", s.handleGetAutomation)
+	g.PUT("/automations", s.handleUpsertAutomation)
+	g.POST("/automations/validate", s.handleValidateAutomation)
+	g.DELETE("/automations/:aid", s.handleDeleteAutomation)
+	g.GET("/automation-triggers", s.handleListTriggers)
+	g.GET("/automation-runs", s.handleListAutomationRuns)
+	g.GET("/automation-runs/:rid", s.handleGetAutomationRun)
+
 	g.GET("/reaction-roles", s.handleListMenus)
 	g.PUT("/reaction-roles", s.handleUpsertMenu)
 	g.DELETE("/reaction-roles/:mid", s.handleDeleteMenu)

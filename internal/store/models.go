@@ -175,6 +175,81 @@ type CommandImageTemplate struct {
 	UpdatedAt   time.Time
 }
 
+// ── Automations (server-event step programs) ─────────────────
+
+// Automation is one admin-defined server-event automation: a trigger (a gateway
+// event + filters) paired with the same JSONB Step[] program custom commands
+// use. EventType is the resolved gateway event the TriggerType maps to (stored
+// so per-event dispatch is an indexed lookup).
+type Automation struct {
+	ID            string // UUID
+	GuildID       int64
+	Name          string
+	Description   string
+	Enabled       bool
+	Status        string // draft | published | archived
+	Version       int
+	TriggerType   string // catalogue key (member_join, message_create, ...)
+	EventType     string // gateway event (GUILD_MEMBER_ADD, MESSAGE_CREATE, ...)
+	TriggerConfig json.RawMessage
+	Definition    json.RawMessage
+	CreatedBy     int64
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
+}
+
+// AutomationVersion is an immutable snapshot of an automation at publish.
+type AutomationVersion struct {
+	AutomationID  string
+	Version       int
+	Definition    json.RawMessage
+	TriggerType   string
+	TriggerConfig json.RawMessage
+	PublishedBy   int64
+	PublishedAt   time.Time
+}
+
+// AutomationRun is a persisted in-flight (or completed) automation execution.
+// Like CommandRun, it exists only for durable steps (wait, wait_for, parallel).
+type AutomationRun struct {
+	ID                 string
+	AutomationID       string // UUID
+	AutomationVersion  int
+	GuildID            int64
+	InvokerID          int64 // the event actor
+	ChannelID          int64
+	TriggerKind        string
+	InteractionID      string
+	InteractionToken   string
+	InteractionExpires *time.Time
+	Scope              json.RawMessage
+	Cursor             json.RawMessage
+	Status             string
+	ResumeAt           *time.Time
+	AwaitingCustomID   string
+	AwaitingUserID     int64
+	AwaitingKind       string
+	DefinitionSnapshot json.RawMessage
+	StartedAt          time.Time
+	CompletedAt        *time.Time
+	Error              string
+}
+
+// AutomationRunLog is one structured log row per executed automation step.
+type AutomationRunLog struct {
+	ID         int64
+	RunID      string
+	StepID     string
+	StepKind   string
+	CursorPath string
+	StartedAt  time.Time
+	DurationMs int
+	Status     string
+	Input      json.RawMessage
+	Output     json.RawMessage
+	Error      string
+}
+
 // AuditEntry is a dashboard audit-log row.
 type AuditEntry struct {
 	ID        int64
