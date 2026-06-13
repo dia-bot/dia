@@ -11,9 +11,9 @@
 	import NumberField from '$lib/components/commands/NumberField.svelte';
 	import ReleaseDock, { type DockState } from '$lib/components/commands/ReleaseDock.svelte';
 	import PreflightIssues from '$lib/components/commands/PreflightIssues.svelte';
-	import type { Definition, Step, ValidationResult, ValidationIssue } from '$lib/commands/types';
-	import { newStep } from '$lib/commands/types';
-	import { EXPR_SCOPE_CTX, type ExprScope } from '$lib/commands/expr-meta';
+	import type { Definition, Step, ValidationResult, ValidationIssue, StepKindMeta } from '$lib/commands/types';
+	import { newStep, STEP_KINDS, STEP_KIND_BY_KIND } from '$lib/commands/types';
+	import { EXPR_SCOPE_CTX, AUTOMATION_CTX, type ExprScope } from '$lib/commands/expr-meta';
 	import { TRIGGERS, TRIGGER_BY_KEY, triggerEventVars, type TriggerConfig } from '$lib/automations/types';
 
 	import { Dialog, Popover } from '$lib/components/ui';
@@ -114,6 +114,58 @@
 	// the trigger contributes `.Event.*` fields as extraVars.
 	const exprScope: ExprScope = $state({ options: [], variables: [], extraVars: [] });
 	setContext(EXPR_SCOPE_CTX, exprScope);
+	// Tell shared step editors they're in an automation (1-min waits, replies
+	// are click responses, etc.).
+	setContext(AUTOMATION_CTX, true);
+
+	// ── Event-native palette ──
+	// At the root there's no interaction, so reply/defer/modal are hidden; a
+	// Wait-for is first-class. Reply/modal reappear only when adding onto a
+	// click path or a component/modal wait's continuation (there's an
+	// interaction there to respond to).
+	const EVENT_EXCLUDE = new Set([
+		'reply',
+		'edit_reply',
+		'defer_reply',
+		'modal_open',
+		'embed_send',
+		'run_command',
+		'image_attach'
+	]);
+	const baseKinds: StepKindMeta[] = STEP_KINDS.filter(
+		(k) => !EVENT_EXCLUDE.has(k.kind) && (!k.hidden || k.kind === 'wait_for')
+	).map((k) =>
+		k.kind === 'wait_for'
+			? {
+					...k,
+					hidden: false,
+					label: 'Wait for reply',
+					short: 'Pause up to 1 min for a button click or modal, then continue (or take a timeout path).'
+				}
+			: k
+	);
+	const interactionExtra: StepKindMeta[] = [
+		{ ...(STEP_KIND_BY_KIND.get('reply') as StepKindMeta), short: 'Reply to the button click or modal.' },
+		{ ...(STEP_KIND_BY_KIND.get('modal_open') as StepKindMeta), short: 'Open a modal in response to the click.' }
+	];
+
+	function interactionContext(ctx: { root: boolean; sourceId: string | null; handle: string | null }): boolean {
+		if (ctx.root) return false;
+		const h = ctx.handle ?? '';
+		if (h.startsWith('component-')) return true; // a button-click path
+		if ((h === 'out' || h === 'after' || h === '') && ctx.sourceId && auto) {
+			const src = findStep(auto.definition.steps ?? [], ctx.sourceId);
+			if (src?.kind === 'wait_for') {
+				// eslint-disable-next-line @typescript-eslint/no-explicit-any
+				const t = ((src.spec as any)?.trigger ?? 'component') as string;
+				return t === 'component' || t === 'modal';
+			}
+		}
+		return false;
+	}
+	function paletteFor(ctx: { root: boolean; sourceId: string | null; handle: string | null }): StepKindMeta[] {
+		return interactionContext(ctx) ? [...interactionExtra, ...baseKinds] : baseKinds;
+	}
 	$effect(() => {
 		exprScope.options = [];
 		exprScope.variables = auto?.definition.variables ?? [];
@@ -390,9 +442,19 @@
 	}
 
 	// ── step mutations (identical canvas semantics to the command editor) ──
+	// tuneForEvent adjusts a freshly-created step's defaults for event context:
+	// waits cap at 1 minute, so a new Wait-for defaults to 30s, not the
+	// command-side 10m.
+	function tuneForEvent(ns: Step) {
+		if (ns.kind === 'wait_for') {
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any
+			ns.spec = { ...((ns.spec ?? {}) as any), timeout: '30s' };
+		}
+	}
 	function addAtRoot(kind: string) {
 		if (!auto) return;
 		const ns = newStep(kind);
+		tuneForEvent(ns);
 		auto.definition.steps = [...(auto.definition.steps ?? []), ns];
 		selectedId = ns.id;
 	}
@@ -406,6 +468,7 @@
 	function addFromHandle(sourceNodeId: string, handle: string | null, kind: string) {
 		if (!auto) return;
 		const ns = newStep(kind);
+		tuneForEvent(ns);
 		if (sourceNodeId === ENTRY_ID) {
 			const rest = (auto.definition.steps ?? []).slice();
 			auto.definition.steps = absorbFollowing(ns, rest) ? [ns] : [ns, ...rest];
@@ -452,6 +515,11 @@
 			spec.branches = spec.branches ?? [];
 			if (!spec.branches[bi]) spec.branches[bi] = [];
 			spec.branches[bi].push(ns);
+			src.spec = spec;
+		} else if (h === 'on_timeout') {
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any
+			const spec = (src.spec ?? {}) as any;
+			spec.on_timeout = [...(spec.on_timeout ?? []), ns];
 			src.spec = spec;
 		} else if (h.startsWith('component-')) {
 			addClickAction(branch, index, h.slice('component-'.length), ns);
@@ -550,7 +618,7 @@
 			return;
 		}
 		const wait = newStep('wait_for');
-		wait.spec = { trigger: 'component', into: 'click', timeout: '5m' };
+		wait.spec = { trigger: 'component', into: 'click', timeout: '30s' };
 		const sw = newStep('switch');
 		sw.spec = { on: { lang: 'tmpl', src: '{{ .Vars.click.id }}' } };
 		sw.cases = [{ when: { lang: 'tmpl', src: sfx }, do: [ns] }];
@@ -602,6 +670,11 @@
 			spec.branches = spec.branches ?? [];
 			if (!spec.branches[bi]) spec.branches[bi] = [];
 			spec.branches[bi].push(...chain);
+			src.spec = spec;
+		} else if (h === 'on_timeout') {
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any
+			const spec = (src.spec ?? {}) as any;
+			spec.on_timeout = [...(spec.on_timeout ?? []), ...chain];
 			src.spec = spec;
 		} else branch.splice(index + 1, 0, ...chain);
 	}
@@ -908,6 +981,7 @@
 						commandId={auto.id}
 						bind:selectedId
 						{errorPaths}
+						palette={paletteFor}
 						showLegend={dockState === 'hidden' && !pillVisible}
 						onAddAtRoot={addAtRoot}
 						onAddFromHandle={addFromHandle}
