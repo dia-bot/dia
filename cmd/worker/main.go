@@ -23,6 +23,7 @@ import (
 	"github.com/dia-bot/dia/internal/plugin"
 	"github.com/dia-bot/dia/internal/store"
 
+	automations "github.com/dia-bot/dia/internal/features/automations/runtime"
 	customcommands "github.com/dia-bot/dia/internal/features/customcommands/runtime"
 	"github.com/dia-bot/dia/internal/features/leveling"
 	"github.com/dia-bot/dia/internal/features/moderation"
@@ -91,6 +92,7 @@ func main() {
 		roles.New(),
 		moderation.New(),
 		customcommands.New(),
+		automations.New(),
 	); err != nil {
 		fatal(log, "register plugins", err)
 	}
