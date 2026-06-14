@@ -683,6 +683,39 @@
 														})}
 												/>
 												{#if c.type === 'select_string'}
+													<div class="mt-2 flex items-center gap-1.5">
+														<span class="text-[10.5px] text-muted-foreground">Members can pick</span>
+														<input
+															class="h-6 w-12 rounded border border-input bg-background px-1.5 text-[11px] text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+															type="number"
+															min="0"
+															placeholder="min"
+															value={c.min_values ?? ''}
+															oninput={(e) =>
+																patchComponent(ri, ci, {
+																	min_values:
+																		(e.currentTarget as HTMLInputElement).value === ''
+																			? undefined
+																			: Number((e.currentTarget as HTMLInputElement).value)
+																})}
+														/>
+														<span class="text-[10.5px] text-muted-foreground">to</span>
+														<input
+															class="h-6 w-12 rounded border border-input bg-background px-1.5 text-[11px] text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+															type="number"
+															min="1"
+															placeholder="max"
+															value={c.max_values ?? ''}
+															oninput={(e) =>
+																patchComponent(ri, ci, {
+																	max_values:
+																		(e.currentTarget as HTMLInputElement).value === ''
+																			? undefined
+																			: Number((e.currentTarget as HTMLInputElement).value)
+																})}
+														/>
+														<span class="text-[10.5px] text-muted-foreground">options</span>
+													</div>
 													<div class="mt-2 space-y-1">
 														{#each c.options ?? [] as o, oi (oi)}
 															<div class="flex items-center gap-1.5">

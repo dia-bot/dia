@@ -520,7 +520,7 @@ export function newStep(kind: string): Step {
 			step.spec = { message: '' };
 			break;
 		case 'run_command':
-			step.spec = { command: '', inherit_scope: true };
+			step.spec = { command: '' };
 			break;
 		case 'audit_note':
 			step.spec = { action: 'note', detail: { lang: 'tmpl', src: '' } };

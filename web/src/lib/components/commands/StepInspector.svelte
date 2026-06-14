@@ -73,6 +73,24 @@
 		return step.spec as any;
 	}
 
+	// HTTP headers are stored as an object; edit them as "Key: Value" lines so
+	// values stay templatable (e.g. Authorization: Bearer {{ .Vars.token }}).
+	function headersToText(h?: Record<string, string>): string {
+		return Object.entries(h ?? {})
+			.map(([k, v]) => `${k}: ${v}`)
+			.join('\n');
+	}
+	function textToHeaders(s: string): Record<string, string> {
+		const out: Record<string, string> = {};
+		for (const line of s.split('\n')) {
+			const i = line.indexOf(':');
+			if (i < 0) continue;
+			const k = line.slice(0, i).trim();
+			if (k) out[k] = line.slice(i + 1).trim();
+		}
+		return out;
+	}
+
 	function set<K extends string>(field: K, value: unknown) {
 		if (!step) return;
 		const s = getSpec();
@@ -161,17 +179,20 @@
 					<input class="input" value={spec.into ?? ''} oninput={(e) => set('into', (e.currentTarget as HTMLInputElement).value)} />
 				</Field>
 			{:else if step.kind === 'message_edit'}
-				<Field label="What to edit">
-					<FieldSelect
-						value={spec.target ?? ''}
-						onChange={(v) => set('target', v)}
-						options={[
-							{ value: 'reply', label: "The command's reply" },
-							{ value: '', label: 'A specific message' }
-						]}
-					/>
-				</Field>
-				{#if spec.target !== 'reply'}
+				{#if !isAutomation}
+					<Field label="What to edit">
+						<FieldSelect
+							value={spec.target ?? ''}
+							onChange={(v) => set('target', v)}
+							options={[
+								{ value: 'reply', label: "The command's reply" },
+								{ value: '', label: 'A specific message' }
+							]}
+						/>
+					</Field>
+				{/if}
+				{#if isAutomation || spec.target !== 'reply'}
+					<!-- Automations have no slash reply to edit, so they always target a real message. -->
 					<Field label="Message" hint="Pick it from a previous step with the link button, or template an id.">
 						<MessageRefField {step} {...exprBind('message')} onChannel={(v) => set('channel', v)} />
 					</Field>
@@ -277,7 +298,7 @@
 					<input class="input" value={spec.reason ?? ''} oninput={(e) => set('reason', (e.currentTarget as HTMLInputElement).value)} />
 				</Field>
 			{:else if step.kind === 'member_fetch'}
-				<Field label="User"><ExprField {...exprBind('user')} placeholder={'{{ .Input.target }}'} /></Field>
+				<Field label="User"><ExprField {...exprBind('user')} placeholder={isAutomation ? '{{ .User.ID }}' : '{{ .Input.target }}'} /></Field>
 				<Field label="Save to variable" hint="Name it, then use their roles, nickname, join date and more in later steps (shown below).">
 					<input class="input" value={spec.into ?? ''} oninput={(e) => set('into', (e.currentTarget as HTMLInputElement).value)} />
 				</Field>
@@ -319,6 +340,13 @@
 					<span class="text-sm">Temporary membership</span>
 					<Toggle checked={!!spec.temporary} onchange={(v) => set('temporary', v)} />
 				</label>
+				<label class="flex items-center justify-between gap-3">
+					<span class="text-sm">Always a fresh invite</span>
+					<Toggle checked={!!spec.unique} onchange={(v) => set('unique', v)} />
+				</label>
+				<Field label="Reason (audit log)">
+					<input class="input" value={spec.reason ?? ''} oninput={(e) => set('reason', (e.currentTarget as HTMLInputElement).value)} />
+				</Field>
 				<Field label="Save to variable" hint="Name it, then use the invite link in later steps (shown below).">
 					<input class="input" value={spec.into ?? ''} oninput={(e) => set('into', (e.currentTarget as HTMLInputElement).value)} />
 				</Field>
@@ -366,16 +394,72 @@
 				<Field label="Topic">
 					<input class="input" value={spec.topic ?? ''} oninput={(e) => set('topic', (e.currentTarget as HTMLInputElement).value)} />
 				</Field>
+				<label class="flex items-center justify-between gap-3">
+					<span class="text-sm">Age-restricted (NSFW)</span>
+					<Toggle checked={!!spec.nsfw} onchange={(v) => set('nsfw', v)} />
+				</label>
+				<Field label="Slowmode (seconds)" hint="0 = off.">
+					<NumberField min={0} max={21600} suffix="s" value={spec.rate_limit_per_user ?? 0} onChange={(n) => set('rate_limit_per_user', n ?? 0)} />
+				</Field>
+				<Field label="Reason (audit log)">
+					<input class="input" value={spec.reason ?? ''} oninput={(e) => set('reason', (e.currentTarget as HTMLInputElement).value)} />
+				</Field>
 				<Field label="Save to variable">
 					<input class="input" value={spec.into ?? ''} oninput={(e) => set('into', (e.currentTarget as HTMLInputElement).value)} />
 				</Field>
 			{:else if step.kind === 'channel_edit'}
 				<Field label="Channel"><ChannelExprField {...exprBind('channel')} /></Field>
-				<Field label="Name">
+				<Field label="Name" hint="Leave blank to keep the current name.">
 					<input class="input" value={spec.name ?? ''} oninput={(e) => set('name', (e.currentTarget as HTMLInputElement).value)} />
 				</Field>
-				<Field label="Topic">
+				<Field label="Topic" hint="Leave blank to keep the current topic.">
 					<input class="input" value={spec.topic ?? ''} oninput={(e) => set('topic', (e.currentTarget as HTMLInputElement).value)} />
+				</Field>
+				<Field label="Move to category" hint="Optional — a category id, or leave blank.">
+					<ExprField {...exprBind('parent')} placeholder="(unchanged)" />
+				</Field>
+				<Field label="Slowmode">
+					<FieldSelect
+						value={spec.rate_limit_per_user == null ? '' : String(spec.rate_limit_per_user)}
+						onChange={(v) => set('rate_limit_per_user', v === '' ? undefined : Number(v))}
+						options={[
+							{ value: '', label: 'Leave unchanged' },
+							{ value: '0', label: 'Off' },
+							{ value: '5', label: '5 seconds' },
+							{ value: '10', label: '10 seconds' },
+							{ value: '30', label: '30 seconds' },
+							{ value: '60', label: '1 minute' },
+							{ value: '300', label: '5 minutes' },
+							{ value: '900', label: '15 minutes' },
+							{ value: '3600', label: '1 hour' },
+							{ value: '21600', label: '6 hours' }
+						]}
+					/>
+				</Field>
+				<Field label="Age-restricted (NSFW)">
+					<FieldSelect
+						value={spec.nsfw == null ? '' : spec.nsfw ? 'on' : 'off'}
+						onChange={(v) => set('nsfw', v === '' ? undefined : v === 'on')}
+						options={[
+							{ value: '', label: 'Leave unchanged' },
+							{ value: 'on', label: 'On' },
+							{ value: 'off', label: 'Off' }
+						]}
+					/>
+				</Field>
+				<Field label="Lock channel" hint="Locks (or unlocks) who can post.">
+					<FieldSelect
+						value={spec.locked == null ? '' : spec.locked ? 'on' : 'off'}
+						onChange={(v) => set('locked', v === '' ? undefined : v === 'on')}
+						options={[
+							{ value: '', label: 'Leave unchanged' },
+							{ value: 'on', label: 'Locked' },
+							{ value: 'off', label: 'Unlocked' }
+						]}
+					/>
+				</Field>
+				<Field label="Reason (audit log)">
+					<input class="input" value={spec.reason ?? ''} oninput={(e) => set('reason', (e.currentTarget as HTMLInputElement).value)} />
 				</Field>
 			{:else if step.kind === 'channel_delete'}
 				<Field label="Channel"><ChannelExprField {...exprBind('channel')} /></Field>
@@ -388,18 +472,28 @@
 				<Field label="Name">
 					<input class="input" value={spec.name ?? ''} oninput={(e) => set('name', (e.currentTarget as HTMLInputElement).value)} />
 				</Field>
-				<Field label="Auto-archive minutes">
-					<NumberField
-						min={0}
-						suffix="min"
-						value={spec.auto_archive_minutes ?? 60}
-						onChange={(n) => set('auto_archive_minutes', n)}
+				<Field label="Auto-archive after" hint="The thread hides itself after this much inactivity.">
+					<FieldSelect
+						value={String(spec.auto_archive_minutes ?? 1440)}
+						onChange={(v) => set('auto_archive_minutes', Number(v))}
+						options={[
+							{ value: '60', label: '1 hour' },
+							{ value: '1440', label: '1 day' },
+							{ value: '4320', label: '3 days' },
+							{ value: '10080', label: '1 week' }
+						]}
 					/>
 				</Field>
 				<label class="flex items-center justify-between gap-3">
 					<span class="text-sm">Private</span>
 					<Toggle checked={!!spec.private} onchange={(v) => set('private', v)} />
 				</label>
+				{#if spec.private}
+					<label class="flex items-center justify-between gap-3">
+						<span class="text-sm">Members can invite others</span>
+						<Toggle checked={!!spec.invitable} onchange={(v) => set('invitable', v)} />
+					</label>
+				{/if}
 				<Field label="Save to variable">
 					<input class="input" value={spec.into ?? ''} oninput={(e) => set('into', (e.currentTarget as HTMLInputElement).value)} />
 				</Field>
@@ -525,6 +619,19 @@
 				<Field label="URL">
 					<input class="input font-mono text-[12px]" value={spec.url ?? ''} oninput={(e) => set('url', (e.currentTarget as HTMLInputElement).value)} />
 				</Field>
+				<Field label="Headers" hint="One per line, like  Authorization: Bearer 123. Values can use templates.">
+					<textarea
+						class="input font-mono text-[12px]"
+						rows="2"
+						value={headersToText(spec.headers)}
+						oninput={(e) => set('headers', textToHeaders((e.currentTarget as HTMLTextAreaElement).value))}
+					></textarea>
+				</Field>
+				{#if (spec.method ?? 'GET') !== 'GET'}
+					<Field label="Body" hint="Sent as the request body. JSON or a template.">
+						<ExprField {...exprBind('body')} placeholder={'{"key": "value"}'} />
+					</Field>
+				{/if}
 				<Field label="Timeout (ms)">
 					<NumberField
 						min={0}
@@ -590,8 +697,7 @@
 							? [
 									{ value: 'component', label: 'A button is clicked', description: 'On a message this flow sent' },
 									{ value: 'message', label: 'A message is sent', description: 'Wait for someone to write something' },
-									{ value: 'reaction', label: 'A reaction is added', description: 'Wait for an emoji reaction' },
-									{ value: 'modal', label: 'A form is submitted', description: 'After you open a form' }
+									{ value: 'reaction', label: 'A reaction is added', description: 'Wait for an emoji reaction' }
 								]
 							: [
 									{ value: 'component', label: 'A button / select click' },
@@ -757,10 +863,7 @@
 				<Field label="Command name">
 					<input class="input" value={spec.command ?? ''} oninput={(e) => set('command', (e.currentTarget as HTMLInputElement).value)} />
 				</Field>
-				<label class="flex items-center justify-between gap-3">
-					<span class="text-sm">Inherit scope</span>
-					<Toggle checked={spec.inherit_scope ?? true} onchange={(v) => set('inherit_scope', v)} />
-				</label>
+				<p class="hint">The called command runs with this flow's variables and inputs.</p>
 			{:else if step.kind === 'audit_note'}
 				<Field label="Action">
 					<input class="input" value={spec.action ?? ''} oninput={(e) => set('action', (e.currentTarget as HTMLInputElement).value)} />
@@ -853,6 +956,46 @@
 										set('fields', fields);
 									}}
 								/>
+								<div class="mt-1.5 flex items-center gap-1.5">
+									<input
+										class="input h-6 w-16 text-[11px]"
+										type="number"
+										min="0"
+										max="4000"
+										placeholder="min"
+										value={f.min_length ?? ''}
+										oninput={(e) => {
+											const fields = [...(spec.fields ?? [])];
+											const n = (e.currentTarget as HTMLInputElement).value;
+											fields[fi] = { ...fields[fi], min_length: n === '' ? undefined : Number(n) };
+											set('fields', fields);
+										}}
+									/>
+									<input
+										class="input h-6 w-16 text-[11px]"
+										type="number"
+										min="0"
+										max="4000"
+										placeholder="max"
+										value={f.max_length ?? ''}
+										oninput={(e) => {
+											const fields = [...(spec.fields ?? [])];
+											const n = (e.currentTarget as HTMLInputElement).value;
+											fields[fi] = { ...fields[fi], max_length: n === '' ? undefined : Number(n) };
+											set('fields', fields);
+										}}
+									/>
+									<input
+										class="input h-6 min-w-0 flex-1 text-[11px]"
+										placeholder="Prefilled value (optional)"
+										value={f.value ?? ''}
+										oninput={(e) => {
+											const fields = [...(spec.fields ?? [])];
+											fields[fi] = { ...fields[fi], value: (e.currentTarget as HTMLInputElement).value };
+											set('fields', fields);
+										}}
+									/>
+								</div>
 							</div>
 						{/each}
 					</div>
