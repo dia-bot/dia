@@ -55,6 +55,11 @@
 		return out;
 	});
 
+	// Power-user escape hatch for "Which button?": which step has been switched
+	// to typing a raw custom id (vs picking a button by label). Keyed by step id
+	// so re-selecting a different step doesn't carry the mode over.
+	let customIdStepId = $state<string | null>(null);
+
 	// "Remember it as" hint, in plain words per wait kind.
 	function rememberHint(wt: string): string {
 		if (wt === 'message') return 'Give it a short name so later steps can use their text or reply to it.';
@@ -596,17 +601,41 @@
 				</Field>
 
 				{#if wt === 'component'}
+					{@const suffix = spec.custom_id_suffix ?? ''}
+					{@const known = flowButtons.some((b) => b.value === suffix)}
+					{@const useCustom = customIdStepId === step.id || (suffix !== '' && !known)}
 					<Field
 						label="Which button?"
 						hint={flowButtons.length === 0
-							? 'Tip: add buttons to a Send message step above, then pick one here.'
-							: 'Pick a button you sent earlier in the flow.'}
+							? 'Buttons you add to a Send message step show up here, or enter a custom id for one you set yourself.'
+							: 'Pick a button you sent earlier, or enter a custom id.'}
 					>
 						<FieldSelect
-							value={spec.custom_id_suffix ?? ''}
-							onChange={(v) => set('custom_id_suffix', v)}
-							options={[{ value: '', label: 'Any button I sent' }, ...flowButtons]}
+							value={useCustom ? '__custom__' : suffix}
+							onChange={(v) => {
+								if (v === '__custom__') customIdStepId = step.id;
+								else {
+									customIdStepId = null;
+									set('custom_id_suffix', v);
+								}
+							}}
+							options={[
+								{ value: '', label: 'Any button I sent' },
+								...flowButtons,
+								{ value: '__custom__', label: 'A specific custom id…' }
+							]}
 						/>
+						{#if useCustom}
+							<div class="mt-1.5">
+								<input
+									class="input font-mono text-[12px]"
+									placeholder="my_button_id"
+									value={suffix}
+									oninput={(e) => set('custom_id_suffix', (e.currentTarget as HTMLInputElement).value)}
+								/>
+								<p class="hint mt-1">The id you set on the button yourself. Dia handles the rest automatically, and templated ids work too.</p>
+							</div>
+						{/if}
 					</Field>
 				{:else if wt === 'modal'}
 					<Field label="Form name" hint="A short label so the form's answers come back here. The default is fine.">
