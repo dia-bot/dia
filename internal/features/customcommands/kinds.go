@@ -592,7 +592,7 @@ type SpecFail struct {
 // SpecRunCommand invokes another command in the same run.
 type SpecRunCommand struct {
 	Command      string          `json:"command"`
-	Args         json.RawMessage `json:"args,omitempty"` // object: {name: Expr}
+	Args         json.RawMessage `json:"args,omitempty"` // object {name: value}; string values are templated
 	InheritScope bool            `json:"inherit_scope,omitempty"`
 }
 
