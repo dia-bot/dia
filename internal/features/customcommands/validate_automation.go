@@ -95,6 +95,17 @@ func checkAutomationSteps(steps []Step, basePath string, interaction bool, r *Va
 			r.fail(path+".kind", "needs_interaction", msg)
 		}
 
+		// Editing "the command's reply" needs the slash interaction, which an
+		// event lacks — only valid inside a wait_for continuation. (Editing a
+		// specific message is always fine.)
+		if s.Kind == KindMessageEdit && !interaction && len(s.Spec) > 0 {
+			var me SpecMessageEdit
+			if json.Unmarshal(s.Spec, &me) == nil && me.Target == "reply" {
+				r.fail(path+".spec.target", "needs_interaction",
+					"Editing the reply needs an interaction; it's only valid after a button/select/modal Wait-for. Target a specific message instead.")
+			}
+		}
+
 		// Recurse into the step's children with the interaction state as it
 		// stands AT this step (a branch doesn't itself create an interaction).
 		checkAutomationSteps(s.Then, path+".then", interaction, r)
@@ -121,9 +132,15 @@ func checkAutomationSteps(steps []Step, basePath string, interaction bool, r *Va
 				warnWaitWindow(ws.Timeout, path+".spec.timeout", r)
 				// The timeout path runs because the event did NOT arrive — no interaction.
 				checkAutomationSteps(ws.OnTimeout, path+".on_timeout", false, r)
-				// A component/modal wait yields an interaction for the continuation.
-				if ws.Trigger == "component" || ws.Trigger == "modal" {
+				// A component (button/select) wait yields an interaction for the
+				// continuation — the click IS the interaction. A modal submission
+				// can only follow Open a form, which itself needs a prior
+				// interaction, so a modal wait is only valid when one already exists.
+				if ws.Trigger == "component" {
 					interaction = true
+				} else if ws.Trigger == "modal" && !interaction {
+					r.fail(path+".spec.trigger", "modal_wait_needs_interaction",
+						"Waiting for a form submission only works after Open a form, which needs a button/select Wait-for first.")
 				}
 			}
 		}
