@@ -91,7 +91,7 @@
 	const fullWidth = $derived(fullWidthPages.includes(currentSeg));
 	// And a few want to paint edge-to-edge — no outer px/py wrapper at all.
 	// Used by the dashboard surfaces that draw their own slab topbar / rows.
-	const flushPages = ['commands', 'automations'];
+	const flushPages = ['welcome', 'commands', 'automations'];
 	const flush = $derived(flushPages.includes(currentSeg));
 
 	let paletteOpen = $state(false);
