@@ -1,34 +1,32 @@
 <script lang="ts">
-	import { onMount, onDestroy, getContext } from 'svelte';
+	import { onMount, onDestroy, getContext, setContext } from 'svelte';
 	import { fly } from 'svelte/transition';
 	import { cubicOut } from 'svelte/easing';
 	import { GuildStore, GUILD_CTX } from '$lib/guild.svelte';
 	import { api, layoutPreview } from '$lib/api';
 	import type { Layout } from '$lib/layout/schema';
 	import { templateLayout } from '$lib/layout/templates';
+	import type { Step } from '$lib/commands/types';
+	import { AUTOMATION_CTX, EXPR_SCOPE_CTX } from '$lib/commands/expr-meta';
+	import type { ExprScope } from '$lib/commands/expr-meta';
 	import Toggle from '$lib/components/Toggle.svelte';
 	import ChannelSelect from '$lib/components/ChannelSelect.svelte';
 	import PageTopbar from '$lib/components/page/PageTopbar.svelte';
-	import DiscordMessagePreview from '$lib/components/dashboard/DiscordMessagePreview.svelte';
-	import EmbedEditor from '$lib/components/dashboard/EmbedEditor.svelte';
+	import MessageEditor from '$lib/components/commands/MessageEditor.svelte';
 	import CardStudioModal from '$lib/components/editor/CardStudioModal.svelte';
-	import TemplateField from '$lib/components/TemplateField.svelte';
 	import {
-		Plus,
 		Send,
 		Wand2,
 		MessageSquare,
 		Mail,
 		Image as ImageIcon,
 		Frame,
-		Layers,
 		UserPlus,
 		UserMinus,
 		Zap,
 		ExternalLink,
-		X,
-		Check,
 		Loader2,
+		Check,
 		CircleAlert
 	} from 'lucide-svelte';
 
@@ -36,6 +34,26 @@
 	const FEATURE = 'welcome';
 	const base = $derived(`/servers/${store.id}`);
 
+	// MessageEditor (the slash-command composer) reads two contexts. We provide
+	// both so its variable picker offers the welcome scope and it renders in its
+	// non-automation form. The scope is a hint catalogue only — never a runtime
+	// contract — so listing the tokens welcome injects is safe.
+	setContext(AUTOMATION_CTX, false);
+	const exprScope: ExprScope = {
+		options: [],
+		variables: [],
+		steps: [],
+		extraVars: [
+			{ path: '.User.GlobalName', label: 'User.GlobalName', type: 'string', short: "Member's display name" },
+			{ path: '.User.Avatar', label: 'User.Avatar', type: 'string', short: 'Avatar image URL' },
+			{ path: '.Count', label: 'Count', type: 'int', short: 'Member count after they joined' },
+			{ path: '.CountOrdinal', label: 'CountOrdinal', type: 'string', short: 'Member count, like 1,024th' },
+			{ path: '.Guild.MemberCount', label: 'Guild.MemberCount', type: 'int', short: 'Live member count' }
+		]
+	};
+	setContext(EXPR_SCOPE_CTX, exprScope);
+
+	// ── Persisted (saved) shape — mirrors internal/features/welcome/config.go ──
 	type Field = { name: string; value: string; inline: boolean };
 	type Embed = {
 		enabled: boolean;
@@ -53,7 +71,7 @@
 		timestamp: boolean;
 	};
 	type Card = { enabled: boolean; layout?: Layout };
-	type Msg = {
+	type SavedMsg = {
 		enabled: boolean;
 		channel_id: string;
 		content: string;
@@ -62,31 +80,25 @@
 		card: Card;
 		dm: { enabled: boolean; content: string };
 	};
-	type Cfg = { welcome: Msg; goodbye: Msg };
+	type SavedCfg = { welcome: SavedMsg; goodbye: SavedMsg };
 
-	function emptyEmbed(color: string): Embed {
-		return {
-			enabled: true,
-			color,
-			author_name: '',
-			author_icon: '',
-			title: '',
-			url: '',
-			description: '',
-			fields: [],
-			thumbnail: '',
-			image_url: '',
-			footer_text: '',
-			footer_icon: '',
-			timestamp: false
-		};
-	}
-	function defaults(): Cfg {
+	// ── In-memory editor shape — the message + dm are real `send_message` /
+	// `send_dm` Steps so the slash-command MessageEditor can edit them in place.
+	type MsgState = {
+		enabled: boolean;
+		channel_id: string;
+		step: Step;
+		card: Card;
+		dm: { enabled: boolean; step: Step };
+	};
+	type CfgState = { welcome: MsgState; goodbye: MsgState };
+
+	function savedDefaults(): SavedCfg {
 		return {
 			welcome: {
 				enabled: true,
 				channel_id: '',
-				content: 'Hey {user.mention}, welcome to **{server}**! 🎉',
+				content: 'Hey {{ .User.Mention }}, welcome to **{{ .Guild.Name }}**! 🎉',
 				ping_user: true,
 				embeds: [],
 				card: { enabled: true, layout: templateLayout('aurora') },
@@ -95,7 +107,7 @@
 			goodbye: {
 				enabled: false,
 				channel_id: '',
-				content: '**{user.name}** just left. We are now {count} members.',
+				content: '**{{ .User.GlobalName }}** just left. We are now {{ .Count }} members.',
 				ping_user: false,
 				embeds: [],
 				card: { enabled: false, layout: templateLayout('midnight') },
@@ -104,52 +116,63 @@
 		};
 	}
 
-	let enabled = $state(false);
-	let cfg = $state<Cfg>(defaults());
-	let tab = $state<'welcome' | 'goodbye'>('welcome');
-	let loaded = $state(false);
-	let testing = $state(false);
-	let testMsg = $state('');
-	let baseline = $state('');
-	let variables = $state<{ token: string; desc: string }[]>([]);
-	let previewUrl = $state('');
-	let studioOpen = $state(false);
+	// Strip welcome's per-embed `enabled` flag; MessageEditor's EmbedSpec has the
+	// same field names otherwise, so the rest passes straight through.
+	function toSpecEmbed(e: Embed): Record<string, unknown> {
+		const { enabled: _enabled, ...rest } = e;
+		return rest;
+	}
+	function toSavedEmbed(e: Record<string, unknown>): Embed {
+		const f = (e.fields as Field[]) ?? [];
+		return {
+			enabled: true,
+			color: (e.color as string) ?? '',
+			author_name: (e.author_name as string) ?? '',
+			author_icon: (e.author_icon as string) ?? '',
+			title: (e.title as string) ?? '',
+			url: (e.url as string) ?? '',
+			description: (e.description as string) ?? '',
+			fields: Array.isArray(f)
+				? f.map((x) => ({ name: x.name ?? '', value: x.value ?? '', inline: !!x.inline }))
+				: [],
+			thumbnail: (e.thumbnail as string) ?? '',
+			image_url: (e.image_url as string) ?? '',
+			footer_text: (e.footer_text as string) ?? '',
+			footer_icon: (e.footer_icon as string) ?? '',
+			timestamp: !!e.timestamp
+		};
+	}
 
-	// Which step node is open in the inspector drawer (null = nothing selected).
-	let selected = $state<string | null>(null);
+	function toState(id: string, m: SavedMsg): MsgState {
+		const spec: Record<string, unknown> = { content: m.content ?? '' };
+		if (m.embeds?.length) spec.embeds = m.embeds.map(toSpecEmbed);
+		// undefined allowed_mentions = members ping (the safe default). Only encode
+		// the suppressed case, matching MessageEditor's convention.
+		if (m.ping_user === false) spec.allowed_mentions = { users: false, roles: false, everyone: false };
+		return {
+			enabled: m.enabled,
+			channel_id: m.channel_id ?? '',
+			step: { id: `${id}-msg`, kind: 'send_message', spec },
+			card: { enabled: m.card?.enabled ?? false, layout: m.card?.layout },
+			dm: { enabled: m.dm?.enabled ?? false, step: { id: `${id}-dm`, kind: 'send_dm', spec: { content: m.dm?.content ?? '' } } }
+		};
+	}
+	function fromState(st: MsgState): SavedMsg {
+		const spec = (st.step.spec ?? {}) as Record<string, unknown>;
+		const am = spec.allowed_mentions as { users?: boolean } | undefined;
+		const dmSpec = (st.dm.step.spec ?? {}) as Record<string, unknown>;
+		return {
+			enabled: st.enabled,
+			channel_id: st.channel_id,
+			content: (spec.content as string) ?? '',
+			ping_user: am ? am.users !== false : true,
+			embeds: ((spec.embeds as Record<string, unknown>[]) ?? []).map(toSavedEmbed),
+			card: { enabled: st.card.enabled, layout: st.card.layout },
+			dm: { enabled: st.dm.enabled, content: (dmSpec.content as string) ?? '' }
+		};
+	}
 
-	// Save lifecycle for the release dock.
-	let savePhase = $state<'idle' | 'saving' | 'saved' | 'error'>('idle');
-	let saveErr = $state('');
-
-	const dirty = $derived(loaded && JSON.stringify({ enabled, cfg }) !== baseline);
-
-	const TRIGGERS = {
-		welcome: { label: 'Member joins', key: 'member_join', verb: 'joins', icon: UserPlus, builtin: 'welcome.join' },
-		goodbye: { label: 'Member leaves', key: 'member_leave', verb: 'leaves', icon: UserMinus, builtin: 'welcome.leave' }
-	} as const;
-	const trigger = $derived(TRIGGERS[tab]);
-
-	const steps = $derived([
-		{ key: 'message', icon: MessageSquare, kind: 'send_message', title: 'Post a message', summary: cfg[tab].content?.trim() || 'No message text', on: cfg[tab].enabled },
-		{ key: 'embeds', icon: Layers, kind: 'embed', title: 'Embeds', summary: cfg[tab].embeds.length ? `${cfg[tab].embeds.length} embed${cfg[tab].embeds.length > 1 ? 's' : ''}` : 'No embeds', on: cfg[tab].embeds.length > 0 },
-		{ key: 'card', icon: Frame, kind: 'image.render', title: 'Card image', summary: cfg[tab].card.enabled ? 'Card attached' : 'No card', on: cfg[tab].card.enabled },
-		{ key: 'dm', icon: Mail, kind: 'send_dm', title: 'Direct message', summary: cfg[tab].dm.enabled ? cfg[tab].dm.content?.trim() || 'Empty message' : 'No DM', on: cfg[tab].dm.enabled }
-	]);
-	const sel = $derived(steps.find((s) => s.key === selected));
-
-	const fallbackVars = [
-		{ token: '{user}', desc: "Member's display name" },
-		{ token: '{user.mention}', desc: 'Pings the member' },
-		{ token: '{user.name}', desc: 'Username' },
-		{ token: '{user.id}', desc: 'Member ID' },
-		{ token: '{user.avatar}', desc: 'Avatar image URL' },
-		{ token: '{server}', desc: 'Server name' },
-		{ token: '{count}', desc: 'Member count' },
-		{ token: '{count.ordinal}', desc: 'Member count, like 1,024th' }
-	];
-
-	function mergeMsg(d: Msg, c?: Partial<Msg>): Msg {
+	function mergeMsg(d: SavedMsg, c?: Partial<SavedMsg>): SavedMsg {
 		if (!c) return d;
 		return {
 			...d,
@@ -160,37 +183,64 @@
 		};
 	}
 
+	let enabled = $state(false);
+	let cfg = $state<CfgState>({ welcome: toState('w', savedDefaults().welcome), goodbye: toState('g', savedDefaults().goodbye) });
+	let tab = $state<'welcome' | 'goodbye'>('welcome');
+	let selected = $state<string>('message');
+	let loaded = $state(false);
+	let testing = $state(false);
+	let testMsg = $state('');
+	let baseline = $state('');
+	let previewUrl = $state('');
+	let studioOpen = $state(false);
+
+	let savePhase = $state<'idle' | 'saving' | 'saved' | 'error'>('idle');
+	let saveErr = $state('');
+
+	function serialize() {
+		return JSON.stringify({ enabled, cfg });
+	}
+	const dirty = $derived(loaded && serialize() !== baseline);
+	const dockVisible = $derived(dirty || savePhase !== 'idle');
+
+	// The two triggers this built-in automation listens on (member_join / member_leave).
+	const TRIGGERS = {
+		welcome: { label: 'Member joins', key: 'member_join', verb: 'joins', icon: UserPlus, builtin: 'welcome.join' },
+		goodbye: { label: 'Member leaves', key: 'member_leave', verb: 'leaves', icon: UserMinus, builtin: 'welcome.leave' }
+	} as const;
+	const trigger = $derived(TRIGGERS[tab]);
+
+	function stepContent(st: Step): string {
+		return (((st.spec ?? {}) as Record<string, unknown>).content as string)?.trim() ?? '';
+	}
+
+	// Ordered flow steps, as the left-rail nodes. Summaries are live.
+	const steps = $derived([
+		{ key: 'message', icon: MessageSquare, kind: 'send_message', title: 'Message', summary: stepContent(cfg[tab].step) || 'No message yet', on: cfg[tab].enabled },
+		{ key: 'card', icon: Frame, kind: 'image.render', title: 'Card image', summary: cfg[tab].card.enabled ? 'Attached' : 'Off', on: cfg[tab].card.enabled },
+		{ key: 'dm', icon: Mail, kind: 'send_dm', title: 'Direct message', summary: cfg[tab].dm.enabled ? stepContent(cfg[tab].dm.step) || 'Empty' : 'Off', on: cfg[tab].dm.enabled }
+	]);
+	const sel = $derived(steps.find((s) => s.key === selected));
+
 	onMount(async () => {
-		const [f, v] = await Promise.all([
-			api.feature(store.id, FEATURE),
-			api.welcomeVariables(store.id).catch(() => ({ variables: [] }))
-		]);
-		const d = defaults();
-		const c = (f.config ?? {}) as Partial<Cfg>;
-		cfg = { welcome: mergeMsg(d.welcome, c.welcome), goodbye: mergeMsg(d.goodbye, c.goodbye) };
+		const f = await api.feature(store.id, FEATURE);
+		const d = savedDefaults();
+		const c = (f.config ?? {}) as Partial<SavedCfg>;
+		cfg = {
+			welcome: toState('w', mergeMsg(d.welcome, c.welcome)),
+			goodbye: toState('g', mergeMsg(d.goodbye, c.goodbye))
+		};
 		enabled = f.enabled;
-		variables = v.variables?.length ? v.variables : fallbackVars;
 		loaded = true;
-		baseline = JSON.stringify({ enabled, cfg });
+		baseline = serialize();
 	});
-
-	function selectStep(key: string) {
-		selected = selected === key ? null : key;
-	}
-
-	function addEmbed() {
-		if (cfg[tab].embeds.length >= 10) return;
-		cfg[tab].embeds = [...cfg[tab].embeds, emptyEmbed('#5865F2')];
-	}
-	function removeEmbed(i: number) {
-		cfg[tab].embeds = cfg[tab].embeds.filter((_, idx) => idx !== i);
-	}
 
 	function openStudio() {
 		if (!cfg[tab].card.layout) cfg[tab].card.layout = templateLayout('aurora');
 		studioOpen = true;
 	}
 
+	// live card preview (debounced) — renders the layout through the real engine.
 	let timer: ReturnType<typeof setTimeout>;
 	$effect(() => {
 		const card = cfg[tab].card;
@@ -221,10 +271,11 @@
 		savePhase = 'saving';
 		saveErr = '';
 		try {
-			await api.saveFeature(store.id, FEATURE, enabled, cfg);
+			const saved: SavedCfg = { welcome: fromState(cfg.welcome), goodbye: fromState(cfg.goodbye) };
+			await api.saveFeature(store.id, FEATURE, enabled, saved);
 			if (store.detail)
-				store.detail.features[FEATURE] = { enabled, config: cfg as unknown as Record<string, unknown> };
-			baseline = JSON.stringify({ enabled, cfg });
+				store.detail.features[FEATURE] = { enabled, config: saved as unknown as Record<string, unknown> };
+			baseline = serialize();
 			savePhase = 'saved';
 			setTimeout(() => {
 				if (savePhase === 'saved') savePhase = 'idle';
@@ -257,10 +308,6 @@
 	}
 
 	function onKeydown(e: KeyboardEvent) {
-		if (e.key === 'Escape' && selected && !e.defaultPrevented) {
-			selected = null;
-			return;
-		}
 		if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
 			e.preventDefault();
 			if (dirty) save();
@@ -271,14 +318,13 @@
 		{ k: 'welcome', label: 'Member joins' },
 		{ k: 'goodbye', label: 'Member leaves' }
 	] as const;
-
-	const dockVisible = $derived(dirty || savePhase !== 'idle');
 </script>
 
 <svelte:head><title>Welcome · {store.name} · Dia</title></svelte:head>
 <svelte:window onkeydown={onKeydown} />
 
 <div class="flex h-full flex-col bg-bg text-ink">
+	<!-- ── Slab topbar ──────────────────────────────────────────────────── -->
 	<PageTopbar eyebrow="Welcome" subtitle="A built-in automation that greets members and bids them farewell.">
 		{#snippet leading()}
 			<div class="grid size-6 place-items-center rounded border border-line bg-surface text-accent-ink">
@@ -301,6 +347,7 @@
 		{/snippet}
 	</PageTopbar>
 
+	<!-- ── Trigger switch ───────────────────────────────────────────────── -->
 	<div class="flex min-h-10 shrink-0 flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-line/60 bg-bg px-5 py-1.5 md:flex-nowrap">
 		<span class="hidden font-mono text-[10px] uppercase tracking-[0.14em] text-faint sm:inline">Trigger</span>
 		<div class="flex items-center gap-1 rounded-lg border border-line bg-ink-2 p-0.5">
@@ -308,10 +355,7 @@
 				{@const Icon = TRIGGERS[t.k].icon}
 				<button
 					type="button"
-					onclick={() => {
-						tab = t.k;
-						selected = null;
-					}}
+					onclick={() => (tab = t.k)}
 					class="flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[12.5px] font-medium transition-colors {tab ===
 					t.k
 						? 'bg-surface text-ink shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]'
@@ -339,209 +383,142 @@
 		</div>
 	</div>
 
+	<!-- ── Body: flow rail + full-width editor surface + save dock ──────── -->
 	<div class="relative min-h-0 flex-1 overflow-hidden bg-bg">
-		<div
-			class="h-full overflow-y-auto"
-			style="background-image: radial-gradient(rgba(255,255,255,0.045) 1px, transparent 1px); background-size: 22px 22px;"
-		>
-			{#if !loaded}
-				<div class="mx-auto flex max-w-5xl flex-col gap-10 px-6 py-12 lg:flex-row lg:justify-center lg:gap-14">
-					<div class="w-full space-y-3 lg:w-[320px]">
-						<div class="skeleton h-14 w-full rounded-xl"></div>
-						<div class="skeleton h-20 w-full rounded-xl"></div>
-						<div class="skeleton h-20 w-full rounded-xl"></div>
-						<div class="skeleton h-20 w-full rounded-xl"></div>
-					</div>
-					<div class="skeleton h-72 w-full rounded-xl lg:max-w-[440px]"></div>
+		{#if !loaded}
+			<div class="flex h-full">
+				<div class="hidden w-[300px] shrink-0 space-y-3 border-r border-line p-4 md:block">
+					<div class="skeleton h-14 w-full rounded-xl"></div>
+					<div class="skeleton h-16 w-full rounded-xl"></div>
+					<div class="skeleton h-16 w-full rounded-xl"></div>
 				</div>
-			{:else}
-				{@const TIcon = trigger.icon}
-				<!-- svelte-ignore a11y_no_static_element_interactions -->
-				<div
-					class="mx-auto flex min-h-full max-w-5xl flex-col gap-10 px-6 py-12 lg:flex-row lg:items-start lg:justify-center lg:gap-14 {selected
-						? 'xl:pr-[24rem]'
-						: ''}"
-				>
-					<div class="mx-auto w-full max-w-sm lg:mx-0 lg:w-[320px] lg:shrink-0">
-						{#if !enabled}
-							<div class="mb-3 flex items-center gap-2 rounded-lg border border-line bg-ink-2 px-3 py-2 text-[12px] text-muted">
-								<span class="size-1.5 shrink-0 rounded-full bg-faint/40"></span>
-								System is off — turn it on, top-right.
-							</div>
-						{/if}
+				<div class="flex-1 p-6"><div class="skeleton mx-auto h-80 w-full max-w-2xl rounded-xl"></div></div>
+			</div>
+		{:else}
+			{@const TIcon = trigger.icon}
+			<div class="flex h-full flex-col md:flex-row">
+				<!-- Flow rail (navigator) -->
+				<aside class="shrink-0 overflow-y-auto border-b border-line p-4 md:w-[300px] md:border-b-0 md:border-r">
+					{#if !enabled}
+						<div class="mb-3 flex items-center gap-2 rounded-lg border border-line bg-ink-2 px-3 py-2 text-[12px] text-muted">
+							<span class="size-1.5 shrink-0 rounded-full bg-faint/40"></span>
+							System is off — turn it on, top-right.
+						</div>
+					{/if}
 
-						<div class="rounded-xl border border-accent/25 bg-accent/[0.06] px-3.5 py-2.5">
-							<div class="flex items-center gap-2.5">
-								<span class="grid size-7 shrink-0 place-items-center rounded-lg border border-accent/30 bg-accent/10 text-accent-ink">
-									<TIcon size={15} />
-								</span>
-								<div class="min-w-0 flex-1">
-									<div class="flex items-center gap-1.5">
-										<span class="font-mono text-[9px] uppercase tracking-[0.16em] text-accent-ink/80">Trigger</span>
-										<span class="font-mono text-[9.5px] text-faint">{trigger.key}</span>
-									</div>
-									<div class="truncate text-[12.5px] font-medium text-ink">When a member {trigger.verb}</div>
+					<!-- Trigger entry node -->
+					<div class="rounded-xl border border-accent/25 bg-accent/[0.06] px-3.5 py-2.5">
+						<div class="flex items-center gap-2.5">
+							<span class="grid size-7 shrink-0 place-items-center rounded-lg border border-accent/30 bg-accent/10 text-accent-ink">
+								<TIcon size={15} />
+							</span>
+							<div class="min-w-0 flex-1">
+								<div class="flex items-center gap-1.5">
+									<span class="font-mono text-[9px] uppercase tracking-[0.16em] text-accent-ink/80">Trigger</span>
+									<span class="font-mono text-[9.5px] text-faint">{trigger.key}</span>
 								</div>
-								<Toggle bind:checked={cfg[tab].enabled} label="Run this flow" />
+								<div class="truncate text-[12.5px] font-medium text-ink">When a member {trigger.verb}</div>
 							</div>
+							<Toggle bind:checked={cfg[tab].enabled} label="Run this flow" />
 						</div>
-
-						<div class="transition-opacity {cfg[tab].enabled ? '' : 'opacity-60'}">
-							{#each steps as s (s.key)}
-								{@const Icon = s.icon}
-								<div class="ml-[26px] h-4 w-px bg-line-strong/70"></div>
-								<button
-									type="button"
-									onclick={() => selectStep(s.key)}
-									class="block w-full rounded-xl border bg-card text-left transition-all duration-200 {selected ===
-									s.key
-										? 'border-foreground/40 shadow-[0_0_0_3px_hsl(var(--foreground)/0.08),0_12px_32px_-12px_rgba(0,0,0,0.5)]'
-										: 'border-border/60 shadow-[0_1px_2px_rgba(0,0,0,0.3)] hover:border-foreground/25 hover:shadow-[0_4px_16px_-4px_rgba(0,0,0,0.45)]'}"
-								>
-									<div class="flex items-center gap-2.5 rounded-t-xl border-b border-border/50 bg-gradient-to-r from-foreground/[0.05] to-transparent px-3 py-2">
-										<span class="grid size-6 shrink-0 place-items-center rounded-md bg-foreground/[0.07] text-foreground/80 ring-1 ring-border/70">
-											<Icon size={13} />
-										</span>
-										<span class="min-w-0 flex-1 truncate text-[12.5px] font-semibold text-foreground">{s.title}</span>
-										<span class="size-1.5 shrink-0 rounded-full {s.on ? 'bg-success' : 'bg-faint/40'}"></span>
-									</div>
-									<div class="px-3 py-2">
-										<div class="font-mono text-[9px] uppercase tracking-[0.12em] text-muted-foreground/60">{s.kind}</div>
-										<div class="mt-0.5 truncate text-[11.5px] text-muted-foreground">{s.summary}</div>
-									</div>
-								</button>
-							{/each}
-						</div>
-
-						<p class="mt-4 text-center font-mono text-[10.5px] text-faint">Click a step to edit it.</p>
 					</div>
 
-					<div class="mx-auto w-full max-w-md lg:mx-0 lg:sticky lg:top-2 lg:max-w-[440px]">
-						<div class="mb-2.5 flex items-center justify-between">
-							<span class="eyebrow">Live preview</span>
-							<span class="font-mono text-[10.5px] text-faint">what members see</span>
-						</div>
-						<div class="overflow-hidden rounded-xl border border-line">
-							<DiscordMessagePreview
-								content={cfg[tab].content}
-								embeds={cfg[tab].embeds}
-								cardEnabled={cfg[tab].card.enabled && !!cfg[tab].card.layout}
-								cardUrl={previewUrl}
-								serverName={store.name}
-								serverId={store.id}
-							/>
-						</div>
-					</div>
-				</div>
-			{/if}
-		</div>
-
-		{#if loaded && selected && sel}
-			{@const SIcon = sel.icon}
-			<div
-				class="absolute inset-y-0 right-0 z-20 flex w-full flex-col border-l border-line bg-bg shadow-[0_0_48px_-12px_rgba(0,0,0,0.7)] {selected ===
-				'embeds'
-					? 'max-w-md md:max-w-xl'
-					: 'max-w-sm md:max-w-md'}"
-				transition:fly={{ x: 24, duration: 200, easing: cubicOut }}
-			>
-				<div class="flex h-12 shrink-0 items-center gap-2.5 border-b border-line px-3">
-					<span class="grid size-6 place-items-center rounded-md bg-foreground/[0.07] text-foreground/80 ring-1 ring-border/70">
-						<SIcon size={13} />
-					</span>
-					<div class="min-w-0 flex-1 truncate text-[13px] font-semibold text-ink">{sel.title}</div>
-					<span class="inline-flex items-center rounded border border-line bg-surface/40 px-1.5 py-0.5 font-mono text-[9.5px] uppercase tracking-[0.1em] text-muted">{sel.kind}</span>
-					<button
-						type="button"
-						onclick={() => (selected = null)}
-						class="grid size-7 place-items-center rounded text-muted transition-colors hover:bg-surface hover:text-ink"
-						aria-label="Close"
-					>
-						<X size={15} />
-					</button>
-				</div>
-
-				<div class="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
-					{#if selected === 'message'}
-						<div>
-							<div class="label">Channel</div>
-							<ChannelSelect bind:value={cfg[tab].channel_id} />
-						</div>
-						<TemplateField label="Message" placeholder="Plain message text…" guildId={store.id} {variables} bind:value={cfg[tab].content} />
-						<label class="flex items-center justify-between gap-4">
-							<div>
-								<div class="text-[13px] font-medium text-ink">Mention the member</div>
-								<p class="text-[12px] text-muted">Pings them so it shows as a notification.</p>
-							</div>
-							<Toggle bind:checked={cfg[tab].ping_user} />
-						</label>
-					{:else if selected === 'embeds'}
-						<div class="flex items-center justify-between gap-3">
-							<p class="text-[12px] text-muted">Rich blocks beneath the message — {cfg[tab].embeds.length}/10.</p>
+					<!-- Step nodes -->
+					<div class="transition-opacity {cfg[tab].enabled ? '' : 'opacity-60'}">
+						{#each steps as s (s.key)}
+							{@const Icon = s.icon}
+							<div class="ml-[26px] h-4 w-px bg-line-strong/70"></div>
 							<button
 								type="button"
-								onclick={addEmbed}
-								disabled={cfg[tab].embeds.length >= 10}
-								class="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-line-strong px-2.5 text-[12px] font-medium text-ink transition-colors hover:bg-ink-2 disabled:opacity-40"
+								onclick={() => (selected = s.key)}
+								class="block w-full rounded-xl border bg-card text-left transition-all duration-200 {selected ===
+								s.key
+									? 'border-foreground/40 shadow-[0_0_0_3px_hsl(var(--foreground)/0.08),0_12px_32px_-12px_rgba(0,0,0,0.5)]'
+									: 'border-border/60 shadow-[0_1px_2px_rgba(0,0,0,0.3)] hover:border-foreground/25 hover:shadow-[0_4px_16px_-4px_rgba(0,0,0,0.45)]'}"
 							>
-								<Plus size={13} /> Add embed
+								<div class="flex items-center gap-2.5 rounded-t-xl border-b border-border/50 bg-gradient-to-r from-foreground/[0.05] to-transparent px-3 py-2">
+									<span class="grid size-6 shrink-0 place-items-center rounded-md bg-foreground/[0.07] text-foreground/80 ring-1 ring-border/70">
+										<Icon size={13} />
+									</span>
+									<span class="min-w-0 flex-1 truncate text-[12.5px] font-semibold text-foreground">{s.title}</span>
+									<span class="size-1.5 shrink-0 rounded-full {s.on ? 'bg-success' : 'bg-faint/40'}"></span>
+								</div>
+								<div class="px-3 py-2">
+									<div class="font-mono text-[9px] uppercase tracking-[0.12em] text-muted-foreground/60">{s.kind}</div>
+									<div class="mt-0.5 truncate text-[11.5px] text-muted-foreground">{s.summary}</div>
+								</div>
 							</button>
-						</div>
-						{#if cfg[tab].embeds.length}
-							<div class="space-y-3">
-								{#each cfg[tab].embeds as _e, i (i)}
-									<EmbedEditor embed={cfg[tab].embeds[i]} index={i} onRemove={() => removeEmbed(i)} />
-								{/each}
-							</div>
-						{:else}
-							<div class="rounded-lg border border-dashed border-line px-4 py-8 text-center text-[12px] text-faint">
-								No embeds yet. Add one to attach a rich block.
-							</div>
-						{/if}
-					{:else if selected === 'card'}
-						<label class="flex items-center justify-between gap-4">
-							<div>
-								<div class="text-[13px] font-medium text-ink">Attach a card image</div>
-								<p class="text-[12px] text-muted">A rendered welcome card, designed in Card Studio.</p>
-							</div>
-							<Toggle bind:checked={cfg[tab].card.enabled} />
-						</label>
-						{#if cfg[tab].card.enabled}
-							<div class="overflow-hidden rounded-xl border border-line bg-ink-2">
-								{#if previewUrl}
-									<img src={previewUrl} alt="Welcome card preview" class="block w-full" />
+						{/each}
+					</div>
+				</aside>
+
+				<!-- Editor surface -->
+				<div class="min-w-0 flex-1 overflow-y-auto px-6 py-6">
+					{#key tab + selected}
+						<div class="mx-auto w-full max-w-2xl" in:fly={{ y: 8, duration: 160, easing: cubicOut }}>
+							{#if selected === 'message'}
+								<header class="mb-4">
+									<h2 class="text-[15px] font-semibold text-ink">Message</h2>
+									<p class="mt-0.5 text-[12.5px] text-muted">Posted in a channel when a member {trigger.verb}. Edit it right in the preview.</p>
+								</header>
+								<div class="mb-4 max-w-sm">
+									<div class="label">Channel</div>
+									<ChannelSelect bind:value={cfg[tab].channel_id} />
+								</div>
+								<MessageEditor step={cfg[tab].step} embeds />
+							{:else if selected === 'card'}
+								<header class="mb-4 flex items-start justify-between gap-4">
+									<div>
+										<h2 class="text-[15px] font-semibold text-ink">Card image</h2>
+										<p class="mt-0.5 text-[12.5px] text-muted">A rendered welcome card, attached beneath the message.</p>
+									</div>
+									<Toggle bind:checked={cfg[tab].card.enabled} />
+								</header>
+								{#if cfg[tab].card.enabled}
+									<div class="overflow-hidden rounded-xl border border-line bg-ink-2">
+										{#if previewUrl}
+											<img src={previewUrl} alt="Welcome card preview" class="block w-full" />
+										{:else}
+											<div class="grid aspect-[1024/450] place-items-center text-faint"><Loader2 size={20} class="animate-spin" /></div>
+										{/if}
+									</div>
+									<button
+										type="button"
+										onclick={openStudio}
+										class="mt-4 flex w-full items-center justify-center gap-2 rounded-lg border border-line-strong bg-ink-2 py-2.5 text-[13px] font-medium text-ink transition-colors hover:bg-surface"
+									>
+										<Wand2 size={15} class="text-accent-ink" /> Edit image
+									</button>
 								{:else}
-									<div class="grid aspect-[1024/450] place-items-center text-faint">
-										<Loader2 size={18} class="animate-spin" />
+									<div class="rounded-xl border border-dashed border-line px-4 py-10 text-center text-[12.5px] text-faint">
+										No card image. Turn it on to attach a rendered card.
 									</div>
 								{/if}
-							</div>
-							<button
-								type="button"
-								onclick={openStudio}
-								class="flex w-full items-center justify-center gap-2 rounded-lg border border-line-strong bg-ink-2 py-2.5 text-[13px] font-medium text-ink transition-colors hover:bg-surface"
-							>
-								<Wand2 size={15} class="text-accent-ink" /> Edit image
-							</button>
-						{/if}
-					{:else if selected === 'dm'}
-						<label class="flex items-center justify-between gap-4">
-							<div>
-								<div class="text-[13px] font-medium text-ink">Send a direct message</div>
-								<p class="text-[12px] text-muted">Also send the member a private DM.</p>
-							</div>
-							<Toggle bind:checked={cfg[tab].dm.enabled} />
-						</label>
-						{#if cfg[tab].dm.enabled}
-							<TemplateField label="DM text" placeholder="DM text…" guildId={store.id} {variables} rows={3} bind:value={cfg[tab].dm.content} />
-						{/if}
-					{/if}
+							{:else if selected === 'dm'}
+								<header class="mb-4 flex items-start justify-between gap-4">
+									<div>
+										<h2 class="text-[15px] font-semibold text-ink">Direct message</h2>
+										<p class="mt-0.5 text-[12.5px] text-muted">Also send the member a private DM when they {trigger.verb}.</p>
+									</div>
+									<Toggle bind:checked={cfg[tab].dm.enabled} />
+								</header>
+								{#if cfg[tab].dm.enabled}
+									<MessageEditor step={cfg[tab].dm.step} embeds={false} />
+								{:else}
+									<div class="rounded-xl border border-dashed border-line px-4 py-10 text-center text-[12.5px] text-faint">
+										No DM. Turn it on to greet the member privately.
+									</div>
+								{/if}
+							{/if}
+						</div>
+					{/key}
 				</div>
 			</div>
 		{/if}
 
+		<!-- Release dock — the saving experience -->
 		{#if loaded && dockVisible}
-			<div class="pointer-events-none absolute inset-x-4 bottom-4 z-40 flex justify-center {selected ? 'md:pr-[24rem] xl:pr-[28rem]' : ''}" transition:fly={{ y: 14, duration: 180, easing: cubicOut }}>
+			<div class="pointer-events-none absolute inset-x-4 bottom-4 z-40 flex justify-center" transition:fly={{ y: 14, duration: 180, easing: cubicOut }}>
 				<div
 					class="pointer-events-auto relative flex h-11 items-center gap-2.5 overflow-hidden rounded-[14px] border bg-surface/95 px-3.5 shadow-[0_16px_40px_-12px_rgba(0,0,0,0.7)] backdrop-blur-md {savePhase ===
 					'error'
