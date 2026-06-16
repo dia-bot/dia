@@ -47,7 +47,7 @@ func hReply(ctx context.Context, h *Halt) error {
 	if h.Run.InteractionToken == "" {
 		return errors.New("reply without an active interaction (use send_message)")
 	}
-	send := buildMessageSend(ctx, h, spec.Content, spec.Embeds, spec.Components, spec.Attachments)
+	send := buildMessageSend(ctx, h, spec.Content, spec.Embeds, spec.Components, spec.Attachments, spec.AllowedMentions)
 	files := send.Files
 
 	// Discord allows exactly ONE initial response per interaction. The first
@@ -71,9 +71,10 @@ func hReply(ctx context.Context, h *Halt) error {
 	// If we've already deferred, an Edit is required.
 	if h.Scope.Deferred() {
 		edit := &discordgo.WebhookEdit{
-			Content: ptrString(send.Content),
-			Embeds:  &send.Embeds,
-			Files:   files,
+			Content:         ptrString(send.Content),
+			Embeds:          &send.Embeds,
+			Files:           files,
+			AllowedMentions: send.AllowedMentions,
 		}
 		if len(send.Components) > 0 {
 			edit.Components = &send.Components
@@ -85,10 +86,11 @@ func hReply(ctx context.Context, h *Halt) error {
 		return nil
 	}
 	data := &discordgo.InteractionResponseData{
-		Content:    send.Content,
-		Embeds:     send.Embeds,
-		Components: send.Components,
-		Files:      files,
+		Content:         send.Content,
+		Embeds:          send.Embeds,
+		Components:      send.Components,
+		Files:           files,
+		AllowedMentions: send.AllowedMentions,
 	}
 	if spec.Ephemeral {
 		data.Flags = discordgo.MessageFlagsEphemeral
@@ -111,11 +113,12 @@ func hEditReply(ctx context.Context, h *Halt) error {
 	if h.Run.InteractionToken == "" {
 		return errors.New("edit_reply without an active interaction")
 	}
-	send := buildMessageSend(ctx, h, spec.Content, spec.Embeds, spec.Components, spec.Attachments)
+	send := buildMessageSend(ctx, h, spec.Content, spec.Embeds, spec.Components, spec.Attachments, spec.AllowedMentions)
 	edit := &discordgo.WebhookEdit{
-		Content: ptrString(send.Content),
-		Embeds:  &send.Embeds,
-		Files:   send.Files,
+		Content:         ptrString(send.Content),
+		Embeds:          &send.Embeds,
+		Files:           send.Files,
+		AllowedMentions: send.AllowedMentions,
 	}
 	if len(send.Components) > 0 {
 		edit.Components = &send.Components
@@ -136,7 +139,7 @@ func hSendMessage(ctx context.Context, h *Halt) error {
 	if err != nil || channelID == "" {
 		return errors.New("send_message: invalid channel")
 	}
-	send := buildMessageSend(ctx, h, spec.Content, spec.Embeds, spec.Components, spec.Attachments)
+	send := buildMessageSend(ctx, h, spec.Content, spec.Embeds, spec.Components, spec.Attachments, spec.AllowedMentions)
 	if replyID, _ := cc.EvalSnowflake(ctx, spec.ReplyTo, h.Scope); replyID != "" {
 		send.Reference = &discordgo.MessageReference{MessageID: replyID, ChannelID: channelID}
 	}
@@ -163,7 +166,7 @@ func hSendDM(ctx context.Context, h *Halt) error {
 	if err != nil || userID == "" {
 		return errors.New("send_dm: invalid user")
 	}
-	send := buildMessageSend(ctx, h, spec.Content, spec.Embeds, spec.Components, spec.Attachments)
+	send := buildMessageSend(ctx, h, spec.Content, spec.Embeds, spec.Components, spec.Attachments, spec.AllowedMentions)
 	_, err = h.Deps.Discord.SendDM(userID, send)
 	return err
 }
@@ -179,7 +182,7 @@ func hEmbedSend(ctx context.Context, h *Halt) error {
 	}
 	// Through buildMessageSend so queued attachments drain here (not onto the
 	// NEXT message) and the AllowedMentions default applies like every sender.
-	send := buildMessageSend(ctx, h, "", []cc.EmbedSpec{spec.Embed}, nil, nil)
+	send := buildMessageSend(ctx, h, "", []cc.EmbedSpec{spec.Embed}, nil, nil, spec.AllowedMentions)
 	msg, err := h.Deps.Discord.SendMessage(channelID, send)
 	if err != nil {
 		return err
@@ -337,7 +340,29 @@ func pinOp(ctx context.Context, h *Halt, pin bool) error {
 // /components/attachments. Templates render here once so a send/edit reads
 // the same final values regardless of which surface it ends up on. ──────────
 
-func buildMessageSend(ctx context.Context, h *Halt, content string, embeds []cc.EmbedSpec, components []cc.ComponentRow, atts []cc.AttachmentRef) *discordgo.MessageSend {
+// allowedMentions translates the spec's opt-in flags into Discord's parse list.
+// nil keeps the safe default (only user mentions ping); all-false suppresses
+// every mention.
+func allowedMentions(m *cc.MsgMentions) *discordgo.MessageAllowedMentions {
+	if m == nil {
+		return &discordgo.MessageAllowedMentions{Parse: []discordgo.AllowedMentionType{
+			discordgo.AllowedMentionTypeUsers,
+		}}
+	}
+	parse := []discordgo.AllowedMentionType{}
+	if m.Users {
+		parse = append(parse, discordgo.AllowedMentionTypeUsers)
+	}
+	if m.Roles {
+		parse = append(parse, discordgo.AllowedMentionTypeRoles)
+	}
+	if m.Everyone {
+		parse = append(parse, discordgo.AllowedMentionTypeEveryone)
+	}
+	return &discordgo.MessageAllowedMentions{Parse: parse}
+}
+
+func buildMessageSend(ctx context.Context, h *Halt, content string, embeds []cc.EmbedSpec, components []cc.ComponentRow, atts []cc.AttachmentRef, mentions *cc.MsgMentions) *discordgo.MessageSend {
 	send := &discordgo.MessageSend{}
 	if rendered, _ := cc.EvalTemplated(ctx, content, h.Scope); rendered != "" {
 		send.Content = rendered
@@ -364,10 +389,9 @@ func buildMessageSend(ctx context.Context, h *Halt, content string, embeds []cc.
 			send.Files = append(send.Files, f)
 		}
 	}
-	// Default: do not ping anyone unless explicitly configured (mirrors welcome).
-	send.AllowedMentions = &discordgo.MessageAllowedMentions{Parse: []discordgo.AllowedMentionType{
-		discordgo.AllowedMentionTypeUsers,
-	}}
+	// Mentions: nil keeps the safe default (only user pings); a spec can opt
+	// roles / @everyone in, or suppress everything.
+	send.AllowedMentions = allowedMentions(mentions)
 	return send
 }
 
