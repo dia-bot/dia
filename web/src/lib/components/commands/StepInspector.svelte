@@ -91,6 +91,24 @@
 		return out;
 	}
 
+	// run_command args, edited as "name = value" lines. String values are
+	// templated at runtime, so an arg can pull from the caller's scope.
+	function argsToText(a?: Record<string, unknown>): string {
+		return Object.entries(a ?? {})
+			.map(([k, v]) => `${k} = ${typeof v === 'string' ? v : JSON.stringify(v)}`)
+			.join('\n');
+	}
+	function textToArgs(s: string): Record<string, string> {
+		const out: Record<string, string> = {};
+		for (const line of s.split('\n')) {
+			const i = line.indexOf('=');
+			if (i < 0) continue;
+			const k = line.slice(0, i).trim();
+			if (k) out[k] = line.slice(i + 1).trim();
+		}
+		return out;
+	}
+
 	function set<K extends string>(field: K, value: unknown) {
 		if (!step) return;
 		const s = getSpec();
@@ -864,6 +882,14 @@
 					<input class="input" value={spec.command ?? ''} oninput={(e) => set('command', (e.currentTarget as HTMLInputElement).value)} />
 				</Field>
 				<p class="hint">The called command runs with this flow's variables and inputs.</p>
+				<Field label="Arguments" hint="One per line, like  amount = 5. Values can use templates.">
+					<textarea
+						class="input font-mono text-[12px]"
+						rows="2"
+						value={argsToText(spec.args)}
+						oninput={(e) => set('args', textToArgs((e.currentTarget as HTMLTextAreaElement).value))}
+					></textarea>
+				</Field>
 			{:else if step.kind === 'audit_note'}
 				<Field label="Action">
 					<input class="input" value={spec.action ?? ''} oninput={(e) => set('action', (e.currentTarget as HTMLInputElement).value)} />
