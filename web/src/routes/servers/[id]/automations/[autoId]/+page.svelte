@@ -10,6 +10,7 @@
 	import FieldSelect from '$lib/components/commands/FieldSelect.svelte';
 	import NumberField from '$lib/components/commands/NumberField.svelte';
 	import ChannelPicker from '$lib/components/ChannelPicker.svelte';
+	import RolePicker from '$lib/components/RolePicker.svelte';
 	import ReleaseDock, { type DockState } from '$lib/components/commands/ReleaseDock.svelte';
 	import PreflightIssues from '$lib/components/commands/PreflightIssues.svelte';
 	import type { Definition, Step, ValidationResult, ValidationIssue, StepKindMeta } from '$lib/commands/types';
@@ -1095,11 +1096,11 @@
 					{#if supports('roles')}
 						<section>
 							<div class="mb-1 font-mono text-[10px] font-medium uppercase tracking-[0.14em] text-faint">Member roles</div>
-							<input
-								class="h-7 w-full rounded-md border border-line bg-bg px-2 font-mono text-[11.5px] focus:border-line-strong focus:outline-none"
-								placeholder="must have one of these role ids (blank = any)"
-								value={listStr(tcfg().roles)}
-								oninput={(e) => setCfg('roles', parseList((e.currentTarget as HTMLInputElement).value))}
+							<RolePicker
+								multiple
+								value={tcfg().roles ?? []}
+								onChange={(v) => setCfg('roles', v as string[])}
+								placeholder="Any member"
 							/>
 						</section>
 					{/if}
@@ -1107,11 +1108,10 @@
 					{#if supports('role')}
 						<section>
 							<div class="mb-1 font-mono text-[10px] font-medium uppercase tracking-[0.14em] text-faint">Watched role</div>
-							<input
-								class="h-7 w-full rounded-md border border-line bg-bg px-2 font-mono text-[11.5px] focus:border-line-strong focus:outline-none"
-								placeholder="role id (blank = any role change)"
+							<RolePicker
 								value={tcfg().role ?? ''}
-								oninput={(e) => setCfg('role', parseList((e.currentTarget as HTMLInputElement).value)[0] ?? '')}
+								onChange={(v) => setCfg('role', v as string)}
+								placeholder="Any role change"
 							/>
 							<p class="mt-1 font-mono text-[10px] text-faint">Tip: use the Server Booster role to catch boosts.</p>
 						</section>
