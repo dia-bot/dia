@@ -1,12 +1,13 @@
 <script lang="ts">
 	import { onMount, onDestroy, getContext } from 'svelte';
+	import { fly } from 'svelte/transition';
+	import { cubicOut } from 'svelte/easing';
 	import { GuildStore, GUILD_CTX } from '$lib/guild.svelte';
 	import { api, layoutPreview } from '$lib/api';
 	import type { Layout } from '$lib/layout/schema';
-	import { cardTemplates, templateLayout } from '$lib/layout/templates';
+	import { templateLayout } from '$lib/layout/templates';
 	import Toggle from '$lib/components/Toggle.svelte';
 	import ChannelSelect from '$lib/components/ChannelSelect.svelte';
-	import SaveBar from '$lib/components/SaveBar.svelte';
 	import PageTopbar from '$lib/components/page/PageTopbar.svelte';
 	import DiscordMessagePreview from '$lib/components/dashboard/DiscordMessagePreview.svelte';
 	import EmbedEditor from '$lib/components/dashboard/EmbedEditor.svelte';
@@ -24,7 +25,11 @@
 		UserPlus,
 		UserMinus,
 		Zap,
-		ExternalLink
+		ExternalLink,
+		X,
+		Check,
+		Loader2,
+		CircleAlert
 	} from 'lucide-svelte';
 
 	const store = getContext<GuildStore>(GUILD_CTX);
@@ -103,7 +108,6 @@
 	let cfg = $state<Cfg>(defaults());
 	let tab = $state<'welcome' | 'goodbye'>('welcome');
 	let loaded = $state(false);
-	let saving = $state(false);
 	let testing = $state(false);
 	let testMsg = $state('');
 	let baseline = $state('');
@@ -111,20 +115,28 @@
 	let previewUrl = $state('');
 	let studioOpen = $state(false);
 
+	// Which step node is open in the inspector drawer (null = nothing selected).
+	let selected = $state<string | null>(null);
+
+	// Save lifecycle for the release dock.
+	let savePhase = $state<'idle' | 'saving' | 'saved' | 'error'>('idle');
+	let saveErr = $state('');
+
 	const dirty = $derived(loaded && JSON.stringify({ enabled, cfg }) !== baseline);
 
-	// The two triggers this built-in automation listens on — mirrored from the
-	// automations catalogue (member_join / member_leave) so the page reads as the
-	// configure surface for the welcome.join / welcome.leave built-ins.
 	const TRIGGERS = {
 		welcome: { label: 'Member joins', key: 'member_join', verb: 'joins', icon: UserPlus, builtin: 'welcome.join' },
 		goodbye: { label: 'Member leaves', key: 'member_leave', verb: 'leaves', icon: UserMinus, builtin: 'welcome.leave' }
 	} as const;
 	const trigger = $derived(TRIGGERS[tab]);
 
-	// Shared mono "kind" chip — the automations technical motif.
-	const chip =
-		'inline-flex w-fit items-center gap-1 rounded border border-line bg-bg px-1.5 py-0.5 font-mono text-[9.5px] uppercase tracking-[0.1em] text-muted';
+	const steps = $derived([
+		{ key: 'message', icon: MessageSquare, kind: 'send_message', title: 'Post a message', summary: cfg[tab].content?.trim() || 'No message text', on: cfg[tab].enabled },
+		{ key: 'embeds', icon: Layers, kind: 'embed', title: 'Embeds', summary: cfg[tab].embeds.length ? `${cfg[tab].embeds.length} embed${cfg[tab].embeds.length > 1 ? 's' : ''}` : 'No embeds', on: cfg[tab].embeds.length > 0 },
+		{ key: 'card', icon: Frame, kind: 'image.render', title: 'Card image', summary: cfg[tab].card.enabled ? 'Card attached' : 'No card', on: cfg[tab].card.enabled },
+		{ key: 'dm', icon: Mail, kind: 'send_dm', title: 'Direct message', summary: cfg[tab].dm.enabled ? cfg[tab].dm.content?.trim() || 'Empty message' : 'No DM', on: cfg[tab].dm.enabled }
+	]);
+	const sel = $derived(steps.find((s) => s.key === selected));
 
 	const fallbackVars = [
 		{ token: '{user}', desc: "Member's display name" },
@@ -135,14 +147,6 @@
 		{ token: '{server}', desc: 'Server name' },
 		{ token: '{count}', desc: 'Member count' },
 		{ token: '{count.ordinal}', desc: 'Member count, like 1,024th' }
-	];
-
-	// Example {{ }} template snippets (logic + functions), click to insert.
-	const templateSnippets = [
-		'{{upper .User.Username}}',
-		'{{if gt .Guild.MemberCount 100}}🎉{{end}}',
-		'{{randInt 1 6}}',
-		'{{.Guild.Name}}'
 	];
 
 	function mergeMsg(d: Msg, c?: Partial<Msg>): Msg {
@@ -170,22 +174,8 @@
 		baseline = JSON.stringify({ enabled, cfg });
 	});
 
-	// variable insertion at the cursor of the last focused text field
-	let lastField: HTMLInputElement | HTMLTextAreaElement | null = null;
-	function trackFocus(e: FocusEvent) {
-		const t = e.target;
-		if (t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement) lastField = t;
-	}
-	function insertVar(token: string) {
-		const el = lastField;
-		if (!el) return;
-		const s = el.selectionStart ?? el.value.length;
-		const e = el.selectionEnd ?? el.value.length;
-		el.value = el.value.slice(0, s) + token + el.value.slice(e);
-		el.dispatchEvent(new Event('input', { bubbles: true }));
-		el.focus();
-		const pos = s + token.length;
-		el.setSelectionRange(pos, pos);
+	function selectStep(key: string) {
+		selected = selected === key ? null : key;
 	}
 
 	function addEmbed() {
@@ -196,16 +186,11 @@
 		cfg[tab].embeds = cfg[tab].embeds.filter((_, idx) => idx !== i);
 	}
 
-	// Card design — studio-first.
-	function applyTemplate(id: string) {
-		cfg[tab].card.layout = templateLayout(id);
-	}
 	function openStudio() {
 		if (!cfg[tab].card.layout) cfg[tab].card.layout = templateLayout('aurora');
 		studioOpen = true;
 	}
 
-	// live card preview (debounced) — renders the layout through the real engine.
 	let timer: ReturnType<typeof setTimeout>;
 	$effect(() => {
 		const card = cfg[tab].card;
@@ -232,20 +217,29 @@
 	});
 
 	async function save() {
-		saving = true;
+		if (savePhase === 'saving' || !dirty) return;
+		savePhase = 'saving';
+		saveErr = '';
 		try {
 			await api.saveFeature(store.id, FEATURE, enabled, cfg);
 			if (store.detail)
 				store.detail.features[FEATURE] = { enabled, config: cfg as unknown as Record<string, unknown> };
 			baseline = JSON.stringify({ enabled, cfg });
-		} finally {
-			saving = false;
+			savePhase = 'saved';
+			setTimeout(() => {
+				if (savePhase === 'saved') savePhase = 'idle';
+			}, 1800);
+		} catch (e) {
+			saveErr = e instanceof Error ? e.message : 'Something went wrong';
+			savePhase = 'error';
 		}
 	}
 	function reset() {
 		const b = JSON.parse(baseline);
 		enabled = b.enabled;
 		cfg = b.cfg;
+		savePhase = 'idle';
+		saveErr = '';
 	}
 	async function sendTest() {
 		if (testing) return;
@@ -262,19 +256,30 @@
 		}
 	}
 
+	function onKeydown(e: KeyboardEvent) {
+		if (e.key === 'Escape' && selected && !e.defaultPrevented) {
+			selected = null;
+			return;
+		}
+		if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
+			e.preventDefault();
+			if (dirty) save();
+		}
+	}
+
 	const tabs = [
 		{ k: 'welcome', label: 'Member joins' },
 		{ k: 'goodbye', label: 'Member leaves' }
 	] as const;
+
+	const dockVisible = $derived(dirty || savePhase !== 'idle');
 </script>
 
 <svelte:head><title>Welcome · {store.name} · Dia</title></svelte:head>
+<svelte:window onkeydown={onKeydown} />
 
 <div class="flex h-full flex-col bg-bg text-ink">
-	<PageTopbar
-		eyebrow="Welcome"
-		subtitle="A built-in automation that greets members and bids them farewell."
-	>
+	<PageTopbar eyebrow="Welcome" subtitle="A built-in automation that greets members and bids them farewell.">
 		{#snippet leading()}
 			<div class="grid size-6 place-items-center rounded border border-line bg-surface text-accent-ink">
 				<ImageIcon size={13} />
@@ -296,16 +301,17 @@
 		{/snippet}
 	</PageTopbar>
 
-	<div
-		class="flex min-h-10 shrink-0 flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-line/60 bg-bg px-5 py-1.5 md:flex-nowrap"
-	>
+	<div class="flex min-h-10 shrink-0 flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-line/60 bg-bg px-5 py-1.5 md:flex-nowrap">
 		<span class="hidden font-mono text-[10px] uppercase tracking-[0.14em] text-faint sm:inline">Trigger</span>
 		<div class="flex items-center gap-1 rounded-lg border border-line bg-ink-2 p-0.5">
 			{#each tabs as t (t.k)}
 				{@const Icon = TRIGGERS[t.k].icon}
 				<button
 					type="button"
-					onclick={() => (tab = t.k)}
+					onclick={() => {
+						tab = t.k;
+						selected = null;
+					}}
 					class="flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[12.5px] font-medium transition-colors {tab ===
 					t.k
 						? 'bg-surface text-ink shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]'
@@ -333,188 +339,86 @@
 		</div>
 	</div>
 
-	<div class="min-h-0 flex-1 overflow-y-auto">
-		<div class="mx-auto max-w-[1180px] px-5 py-6">
+	<div class="relative min-h-0 flex-1 overflow-hidden bg-bg">
+		<div
+			class="h-full overflow-y-auto"
+			style="background-image: radial-gradient(rgba(255,255,255,0.045) 1px, transparent 1px); background-size: 22px 22px;"
+		>
 			{#if !loaded}
-				<div class="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(340px,400px)]">
-					<div class="space-y-3">
-						<div class="skeleton h-16 w-full rounded-xl"></div>
-						<div class="skeleton h-44 w-full rounded-xl"></div>
-						<div class="skeleton h-28 w-full rounded-xl"></div>
-						<div class="skeleton h-28 w-full rounded-xl"></div>
+				<div class="mx-auto flex max-w-5xl flex-col gap-10 px-6 py-12 lg:flex-row lg:justify-center lg:gap-14">
+					<div class="w-full space-y-3 lg:w-[320px]">
+						<div class="skeleton h-14 w-full rounded-xl"></div>
+						<div class="skeleton h-20 w-full rounded-xl"></div>
+						<div class="skeleton h-20 w-full rounded-xl"></div>
+						<div class="skeleton h-20 w-full rounded-xl"></div>
 					</div>
-					<div class="skeleton h-72 w-full rounded-xl"></div>
+					<div class="skeleton h-72 w-full rounded-xl lg:max-w-[440px]"></div>
 				</div>
 			{:else}
 				{@const TIcon = trigger.icon}
 				<!-- svelte-ignore a11y_no_static_element_interactions -->
 				<div
-					class="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(340px,400px)]"
-					onfocusin={trackFocus}
+					class="mx-auto flex min-h-full max-w-5xl flex-col gap-10 px-6 py-12 lg:flex-row lg:items-start lg:justify-center lg:gap-14 {selected
+						? 'xl:pr-[24rem]'
+						: ''}"
 				>
-					<div>
+					<div class="mx-auto w-full max-w-sm lg:mx-0 lg:w-[320px] lg:shrink-0">
 						{#if !enabled}
-							<div
-								class="mb-3 flex items-center gap-2 rounded-lg border border-line bg-ink-2 px-3.5 py-2 text-[12.5px] text-muted"
-							>
+							<div class="mb-3 flex items-center gap-2 rounded-lg border border-line bg-ink-2 px-3 py-2 text-[12px] text-muted">
 								<span class="size-1.5 shrink-0 rounded-full bg-faint/40"></span>
-								The welcome system is off. Turn it on, top-right, for these flows to run.
+								System is off — turn it on, top-right.
 							</div>
 						{/if}
 
-						<div
-							class="flex items-center gap-3 rounded-xl border border-accent/25 bg-accent/[0.06] px-4 py-3"
-						>
-							<div
-								class="grid size-8 shrink-0 place-items-center rounded-lg border border-accent/30 bg-accent/10 text-accent-ink"
-							>
-								<TIcon size={16} />
-							</div>
-							<div class="min-w-0 flex-1">
-								<div class="flex flex-wrap items-center gap-x-2 gap-y-1">
-									<span class="font-mono text-[9.5px] uppercase tracking-[0.16em] text-accent-ink/80">Trigger</span>
-									<span class={chip}><Zap size={9} /> {trigger.key}</span>
+						<div class="rounded-xl border border-accent/25 bg-accent/[0.06] px-3.5 py-2.5">
+							<div class="flex items-center gap-2.5">
+								<span class="grid size-7 shrink-0 place-items-center rounded-lg border border-accent/30 bg-accent/10 text-accent-ink">
+									<TIcon size={15} />
+								</span>
+								<div class="min-w-0 flex-1">
+									<div class="flex items-center gap-1.5">
+										<span class="font-mono text-[9px] uppercase tracking-[0.16em] text-accent-ink/80">Trigger</span>
+										<span class="font-mono text-[9.5px] text-faint">{trigger.key}</span>
+									</div>
+									<div class="truncate text-[12.5px] font-medium text-ink">When a member {trigger.verb}</div>
 								</div>
-								<div class="mt-0.5 truncate text-[13.5px] font-medium text-ink">
-									When a member {trigger.verb} <span class="text-muted">{store.name}</span>
-								</div>
-							</div>
-							<label class="flex shrink-0 items-center gap-2 text-[12px]">
-								<span class="hidden text-muted sm:inline">{cfg[tab].enabled ? 'Active' : 'Off'}</span>
 								<Toggle bind:checked={cfg[tab].enabled} label="Run this flow" />
-							</label>
-						</div>
-
-						<div class="ml-[31px] h-4 w-px bg-line-strong"></div>
-						<div class="rounded-xl border border-line bg-surface/40">
-							<div class="flex items-center gap-3 px-4 py-3">
-								<div class="grid size-8 shrink-0 place-items-center rounded-lg border border-line bg-bg text-accent-ink">
-									<MessageSquare size={16} />
-								</div>
-								<div class="min-w-0 flex-1">
-									<div class="flex items-center gap-2">
-										<h2 class="text-[13.5px] font-semibold text-ink">Post a message</h2>
-										<span class={chip}>send_message</span>
-									</div>
-									<p class="mt-0.5 truncate text-[12px] text-muted">Sent to a channel when the trigger fires.</p>
-								</div>
-							</div>
-							<div class="space-y-4 border-t border-line/60 px-4 py-4">
-								<div>
-									<div class="label">Channel</div>
-									<ChannelSelect bind:value={cfg[tab].channel_id} />
-								</div>
-								<TemplateField label="Message" placeholder="Plain message text…" guildId={store.id} {variables} bind:value={cfg[tab].content} />
-								<div class="flex items-center justify-between gap-4">
-									<div>
-										<div class="text-[13px] font-medium text-ink">Mention the member</div>
-										<p class="text-[12px] text-muted">Pings them so it shows as a notification.</p>
-									</div>
-									<Toggle bind:checked={cfg[tab].ping_user} />
-								</div>
 							</div>
 						</div>
 
-						<div class="ml-[31px] h-4 w-px bg-line-strong"></div>
-						<div class="rounded-xl border border-line bg-surface/40">
-							<div class="flex items-center gap-3 px-4 py-3">
-								<div class="grid size-8 shrink-0 place-items-center rounded-lg border border-line bg-bg text-accent-ink">
-									<Layers size={16} />
-								</div>
-								<div class="min-w-0 flex-1">
-									<div class="flex items-center gap-2">
-										<h2 class="text-[13.5px] font-semibold text-ink">Embeds</h2>
-										<span class={chip}>embed · {cfg[tab].embeds.length}/10</span>
-									</div>
-									<p class="mt-0.5 truncate text-[12px] text-muted">Rich blocks attached beneath the message.</p>
-								</div>
+						<div class="transition-opacity {cfg[tab].enabled ? '' : 'opacity-60'}">
+							{#each steps as s (s.key)}
+								{@const Icon = s.icon}
+								<div class="ml-[26px] h-4 w-px bg-line-strong/70"></div>
 								<button
 									type="button"
-									onclick={addEmbed}
-									disabled={cfg[tab].embeds.length >= 10}
-									class="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-line-strong px-2.5 text-[12px] font-medium text-ink transition-colors hover:bg-ink-2 disabled:opacity-40"
+									onclick={() => selectStep(s.key)}
+									class="block w-full rounded-xl border bg-card text-left transition-all duration-200 {selected ===
+									s.key
+										? 'border-foreground/40 shadow-[0_0_0_3px_hsl(var(--foreground)/0.08),0_12px_32px_-12px_rgba(0,0,0,0.5)]'
+										: 'border-border/60 shadow-[0_1px_2px_rgba(0,0,0,0.3)] hover:border-foreground/25 hover:shadow-[0_4px_16px_-4px_rgba(0,0,0,0.45)]'}"
 								>
-									<Plus size={13} /> Add embed
+									<div class="flex items-center gap-2.5 rounded-t-xl border-b border-border/50 bg-gradient-to-r from-foreground/[0.05] to-transparent px-3 py-2">
+										<span class="grid size-6 shrink-0 place-items-center rounded-md bg-foreground/[0.07] text-foreground/80 ring-1 ring-border/70">
+											<Icon size={13} />
+										</span>
+										<span class="min-w-0 flex-1 truncate text-[12.5px] font-semibold text-foreground">{s.title}</span>
+										<span class="size-1.5 shrink-0 rounded-full {s.on ? 'bg-success' : 'bg-faint/40'}"></span>
+									</div>
+									<div class="px-3 py-2">
+										<div class="font-mono text-[9px] uppercase tracking-[0.12em] text-muted-foreground/60">{s.kind}</div>
+										<div class="mt-0.5 truncate text-[11.5px] text-muted-foreground">{s.summary}</div>
+									</div>
 								</button>
-							</div>
-							{#if cfg[tab].embeds.length}
-								<div class="space-y-3 border-t border-line/60 px-4 py-4">
-									{#each cfg[tab].embeds as _e, i (i)}
-										<EmbedEditor embed={cfg[tab].embeds[i]} index={i} onRemove={() => removeEmbed(i)} />
-									{/each}
-								</div>
-							{/if}
+							{/each}
 						</div>
 
-						<div class="ml-[31px] h-4 w-px bg-line-strong"></div>
-						<div class="rounded-xl border border-line bg-surface/40">
-							<div class="flex items-center gap-3 px-4 py-3">
-								<div class="grid size-8 shrink-0 place-items-center rounded-lg border border-line bg-bg text-accent-ink">
-									<Frame size={16} />
-								</div>
-								<div class="min-w-0 flex-1">
-									<div class="flex items-center gap-2">
-										<h2 class="text-[13.5px] font-semibold text-ink">Attach a card image</h2>
-										<span class={chip}>image.render</span>
-									</div>
-									<p class="mt-0.5 truncate text-[12px] text-muted">A rendered welcome card, designed in Card Studio.</p>
-								</div>
-								<Toggle bind:checked={cfg[tab].card.enabled} />
-							</div>
-							{#if cfg[tab].card.enabled}
-								<div class="space-y-4 border-t border-line/60 px-4 py-4">
-									<div>
-										<div class="label">Starter</div>
-										<div class="flex flex-wrap gap-2">
-											{#each cardTemplates as t (t.id)}
-												<button
-													type="button"
-													onclick={() => applyTemplate(t.id)}
-													class="rounded-lg border border-line px-3 py-1.5 text-[13px] text-muted transition-colors hover:border-line-strong hover:text-ink"
-												>
-													{t.name}
-												</button>
-											{/each}
-										</div>
-									</div>
-									<button
-										type="button"
-										onclick={openStudio}
-										class="flex w-full items-center justify-center gap-2 rounded-lg border border-line-strong bg-ink-2 py-2.5 text-[13px] font-medium text-ink transition-colors hover:bg-surface"
-									>
-										<Wand2 size={15} class="text-accent-ink" /> Customize in Card Studio
-									</button>
-									<p class="text-[11.5px] text-faint">The render appears live in the preview, right.</p>
-								</div>
-							{/if}
-						</div>
-
-						<div class="ml-[31px] h-4 w-px bg-line-strong"></div>
-						<div class="rounded-xl border border-line bg-surface/40">
-							<div class="flex items-center gap-3 px-4 py-3">
-								<div class="grid size-8 shrink-0 place-items-center rounded-lg border border-line bg-bg text-accent-ink">
-									<Mail size={16} />
-								</div>
-								<div class="min-w-0 flex-1">
-									<div class="flex items-center gap-2">
-										<h2 class="text-[13.5px] font-semibold text-ink">Send a direct message</h2>
-										<span class={chip}>send_dm</span>
-									</div>
-									<p class="mt-0.5 truncate text-[12px] text-muted">Also send the member a private DM.</p>
-								</div>
-								<Toggle bind:checked={cfg[tab].dm.enabled} />
-							</div>
-							{#if cfg[tab].dm.enabled}
-								<div class="border-t border-line/60 px-4 py-4">
-									<TemplateField placeholder="DM text…" guildId={store.id} {variables} rows={2} bind:value={cfg[tab].dm.content} />
-								</div>
-							{/if}
-						</div>
+						<p class="mt-4 text-center font-mono text-[10.5px] text-faint">Click a step to edit it.</p>
 					</div>
 
-					<div class="space-y-4 lg:sticky lg:top-4">
-						<div class="flex items-center justify-between">
-							<span class="eyebrow">Preview</span>
+					<div class="mx-auto w-full max-w-md lg:mx-0 lg:sticky lg:top-2 lg:max-w-[440px]">
+						<div class="mb-2.5 flex items-center justify-between">
+							<span class="eyebrow">Live preview</span>
 							<span class="font-mono text-[10.5px] text-faint">what members see</span>
 						</div>
 						<div class="overflow-hidden rounded-xl border border-line">
@@ -527,50 +431,147 @@
 								serverId={store.id}
 							/>
 						</div>
-
-						<div class="rounded-xl border border-line bg-surface p-3">
-							<div class="mb-2 font-mono text-[10px] uppercase tracking-[0.14em] text-faint">Tokens — click to insert</div>
-							<div class="flex flex-wrap gap-1.5">
-								{#each variables as v (v.token)}
-									<button
-										type="button"
-										title={v.desc}
-										onclick={() => insertVar(v.token)}
-										class="rounded-md border border-line bg-ink-2 px-1.5 py-1 font-mono text-[11px] text-muted transition-colors hover:border-line-strong hover:text-ink"
-									>
-										{v.token}
-									</button>
-								{/each}
-							</div>
-						</div>
-
-						<div class="rounded-xl border border-line bg-surface p-3">
-							<div class="mb-1 flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.14em] text-faint">
-								Logic &amp; functions <span class="normal-case text-faint">{'{{ }}'}</span>
-							</div>
-							<p class="mb-2 text-[11px] leading-relaxed text-faint">
-								Messages run a sandboxed template engine — conditionals, loops and functions
-								(<span class="font-mono">if</span>, <span class="font-mono">range</span>,
-								<span class="font-mono">upper</span>, <span class="font-mono">randInt</span>). Click to insert:
-							</p>
-							<div class="flex flex-wrap gap-1.5">
-								{#each templateSnippets as t (t)}
-									<button
-										type="button"
-										onclick={() => insertVar(t)}
-										class="rounded-md border border-line bg-ink-2 px-1.5 py-1 font-mono text-[11px] text-muted transition-colors hover:border-line-strong hover:text-ink"
-									>
-										{t}
-									</button>
-								{/each}
-							</div>
-						</div>
 					</div>
 				</div>
-
-				<SaveBar {dirty} {saving} onsave={save} onreset={reset} />
 			{/if}
 		</div>
+
+		{#if loaded && selected && sel}
+			{@const SIcon = sel.icon}
+			<div
+				class="absolute inset-y-0 right-0 z-20 flex w-full flex-col border-l border-line bg-bg shadow-[0_0_48px_-12px_rgba(0,0,0,0.7)] {selected ===
+				'embeds'
+					? 'max-w-md md:max-w-xl'
+					: 'max-w-sm md:max-w-md'}"
+				transition:fly={{ x: 24, duration: 200, easing: cubicOut }}
+			>
+				<div class="flex h-12 shrink-0 items-center gap-2.5 border-b border-line px-3">
+					<span class="grid size-6 place-items-center rounded-md bg-foreground/[0.07] text-foreground/80 ring-1 ring-border/70">
+						<SIcon size={13} />
+					</span>
+					<div class="min-w-0 flex-1 truncate text-[13px] font-semibold text-ink">{sel.title}</div>
+					<span class="inline-flex items-center rounded border border-line bg-surface/40 px-1.5 py-0.5 font-mono text-[9.5px] uppercase tracking-[0.1em] text-muted">{sel.kind}</span>
+					<button
+						type="button"
+						onclick={() => (selected = null)}
+						class="grid size-7 place-items-center rounded text-muted transition-colors hover:bg-surface hover:text-ink"
+						aria-label="Close"
+					>
+						<X size={15} />
+					</button>
+				</div>
+
+				<div class="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
+					{#if selected === 'message'}
+						<div>
+							<div class="label">Channel</div>
+							<ChannelSelect bind:value={cfg[tab].channel_id} />
+						</div>
+						<TemplateField label="Message" placeholder="Plain message text…" guildId={store.id} {variables} bind:value={cfg[tab].content} />
+						<label class="flex items-center justify-between gap-4">
+							<div>
+								<div class="text-[13px] font-medium text-ink">Mention the member</div>
+								<p class="text-[12px] text-muted">Pings them so it shows as a notification.</p>
+							</div>
+							<Toggle bind:checked={cfg[tab].ping_user} />
+						</label>
+					{:else if selected === 'embeds'}
+						<div class="flex items-center justify-between gap-3">
+							<p class="text-[12px] text-muted">Rich blocks beneath the message — {cfg[tab].embeds.length}/10.</p>
+							<button
+								type="button"
+								onclick={addEmbed}
+								disabled={cfg[tab].embeds.length >= 10}
+								class="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-line-strong px-2.5 text-[12px] font-medium text-ink transition-colors hover:bg-ink-2 disabled:opacity-40"
+							>
+								<Plus size={13} /> Add embed
+							</button>
+						</div>
+						{#if cfg[tab].embeds.length}
+							<div class="space-y-3">
+								{#each cfg[tab].embeds as _e, i (i)}
+									<EmbedEditor embed={cfg[tab].embeds[i]} index={i} onRemove={() => removeEmbed(i)} />
+								{/each}
+							</div>
+						{:else}
+							<div class="rounded-lg border border-dashed border-line px-4 py-8 text-center text-[12px] text-faint">
+								No embeds yet. Add one to attach a rich block.
+							</div>
+						{/if}
+					{:else if selected === 'card'}
+						<label class="flex items-center justify-between gap-4">
+							<div>
+								<div class="text-[13px] font-medium text-ink">Attach a card image</div>
+								<p class="text-[12px] text-muted">A rendered welcome card, designed in Card Studio.</p>
+							</div>
+							<Toggle bind:checked={cfg[tab].card.enabled} />
+						</label>
+						{#if cfg[tab].card.enabled}
+							<div class="overflow-hidden rounded-xl border border-line bg-ink-2">
+								{#if previewUrl}
+									<img src={previewUrl} alt="Welcome card preview" class="block w-full" />
+								{:else}
+									<div class="grid aspect-[1024/450] place-items-center text-faint">
+										<Loader2 size={18} class="animate-spin" />
+									</div>
+								{/if}
+							</div>
+							<button
+								type="button"
+								onclick={openStudio}
+								class="flex w-full items-center justify-center gap-2 rounded-lg border border-line-strong bg-ink-2 py-2.5 text-[13px] font-medium text-ink transition-colors hover:bg-surface"
+							>
+								<Wand2 size={15} class="text-accent-ink" /> Edit image
+							</button>
+						{/if}
+					{:else if selected === 'dm'}
+						<label class="flex items-center justify-between gap-4">
+							<div>
+								<div class="text-[13px] font-medium text-ink">Send a direct message</div>
+								<p class="text-[12px] text-muted">Also send the member a private DM.</p>
+							</div>
+							<Toggle bind:checked={cfg[tab].dm.enabled} />
+						</label>
+						{#if cfg[tab].dm.enabled}
+							<TemplateField label="DM text" placeholder="DM text…" guildId={store.id} {variables} rows={3} bind:value={cfg[tab].dm.content} />
+						{/if}
+					{/if}
+				</div>
+			</div>
+		{/if}
+
+		{#if loaded && dockVisible}
+			<div class="pointer-events-none absolute inset-x-4 bottom-4 z-40 flex justify-center {selected ? 'md:pr-[24rem] xl:pr-[28rem]' : ''}" transition:fly={{ y: 14, duration: 180, easing: cubicOut }}>
+				<div
+					class="pointer-events-auto relative flex h-11 items-center gap-2.5 overflow-hidden rounded-[14px] border bg-surface/95 px-3.5 shadow-[0_16px_40px_-12px_rgba(0,0,0,0.7)] backdrop-blur-md {savePhase ===
+					'error'
+						? 'dock-shake border-danger/40'
+						: 'border-line'}"
+				>
+					{#if savePhase === 'saving'}
+						<span class="dock-beam-sweep pointer-events-none absolute inset-y-0 left-0 w-1/3 bg-gradient-to-r from-transparent via-accent/30 to-transparent"></span>
+						<Loader2 size={15} class="animate-spin text-muted" />
+						<span class="text-[12.5px] text-muted">Saving…</span>
+					{:else if savePhase === 'saved'}
+						<span class="grid size-4 place-items-center rounded-full bg-success/15 text-success"><Check size={11} /></span>
+						<span class="text-[12.5px] text-ink">Saved</span>
+					{:else if savePhase === 'error'}
+						<CircleAlert size={15} class="text-danger" />
+						<span class="max-w-[16rem] truncate text-[12.5px] text-ink" title={saveErr}>{saveErr || "Couldn't save"}</span>
+						<button type="button" onclick={save} class="ml-1 inline-flex h-7 items-center rounded-md bg-ink px-2.5 text-[12px] font-medium text-bg transition-opacity hover:opacity-90">Retry</button>
+					{:else}
+						<span class="size-1.5 animate-pulse rounded-full bg-accent"></span>
+						<span class="text-[12.5px] text-muted">Unsaved changes</span>
+						<div class="ml-1 flex items-center gap-1.5">
+							<button type="button" onclick={reset} class="inline-flex h-7 items-center rounded-md border border-line-strong px-2.5 text-[12px] font-medium text-muted transition-colors hover:text-ink">Discard</button>
+							<button type="button" onclick={save} class="inline-flex h-7 items-center gap-1.5 rounded-md bg-ink px-3 text-[12px] font-medium text-bg transition-opacity hover:opacity-90">
+								Save <kbd class="hidden font-mono text-[10px] text-bg/60 sm:inline">⌘S</kbd>
+							</button>
+						</div>
+					{/if}
+				</div>
+			</div>
+		{/if}
 	</div>
 
 	{#if studioOpen}
