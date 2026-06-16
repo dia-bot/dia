@@ -9,8 +9,8 @@
 	import NumberField from '$lib/components/ui/NumberField.svelte';
 	import Toggle from '$lib/components/Toggle.svelte';
 	import Select from '$lib/components/Select.svelte';
-	import MultiSelect from '$lib/components/MultiSelect.svelte';
 	import ChannelPicker from '$lib/components/ChannelPicker.svelte';
+	import RolePicker from '$lib/components/RolePicker.svelte';
 	import ColorField from '$lib/components/ColorField.svelte';
 	import SaveBar from '$lib/components/SaveBar.svelte';
 	import CardStudioModal from '$lib/components/editor/CardStudioModal.svelte';
@@ -112,7 +112,6 @@
 	let boardLoading = $state(false);
 
 	const channelOpts = $derived(store.textChannelOptions());
-	const roleOpts = $derived(store.roleOptions());
 	const announceOpts = $derived([
 		{ value: '', label: 'Same channel' },
 		{ value: 'dm', label: 'Direct message' },
@@ -329,7 +328,12 @@
 				/>
 			</Field>
 			<Field label="No-XP roles" hint="Members with these roles earn no XP.">
-				<MultiSelect bind:value={cfg.no_xp_roles} options={roleOpts} placeholder="Add a role…" />
+				<RolePicker
+					multiple
+					value={cfg.no_xp_roles}
+					onChange={(v) => (cfg.no_xp_roles = v as string[])}
+					placeholder="Add a role…"
+				/>
 			</Field>
 		</section>
 
@@ -459,7 +463,7 @@
 					</div>
 					<div>
 						<span class="label">Role</span>
-						<Select bind:value={newRole} options={roleOpts} placeholder="Select a role…" />
+						<RolePicker value={newRole} onChange={(v) => (newRole = v as string)} placeholder="Select a role…" />
 					</div>
 					<button
 						type="button"

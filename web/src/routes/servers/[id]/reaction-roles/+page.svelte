@@ -5,6 +5,7 @@
 	import Field from '$lib/components/Field.svelte';
 	import Toggle from '$lib/components/Toggle.svelte';
 	import Select from '$lib/components/Select.svelte';
+	import RolePicker from '$lib/components/RolePicker.svelte';
 	import SaveBar from '$lib/components/SaveBar.svelte';
 	import { Plus, Trash2, Pencil, X } from 'lucide-svelte';
 
@@ -36,7 +37,6 @@
 	let editing = $state<Menu | null>(null);
 	let savingMenu = $state(false);
 
-	const roleOpts = $derived(store.roleOptions());
 	const dirty = $derived(loaded && JSON.stringify({ enabled }) !== baseline);
 
 	function emptyMenu(): Menu {
@@ -243,7 +243,7 @@
 									</button>
 								</div>
 								<div class="grid gap-2 sm:grid-cols-2">
-									<Select bind:value={opt.role_id} options={roleOpts} placeholder="Select a role…" />
+									<RolePicker value={opt.role_id} onChange={(v) => (opt.role_id = v as string)} placeholder="Select a role…" />
 									<input class="input" placeholder="Label (optional)" bind:value={opt.label} />
 									<input class="input" placeholder="Emoji (optional, e.g. 🎮)" bind:value={opt.emoji} />
 									<input class="input" placeholder="Description (optional)" bind:value={opt.description} />

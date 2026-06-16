@@ -7,8 +7,8 @@
 	import NumberField from '$lib/components/ui/NumberField.svelte';
 	import Toggle from '$lib/components/Toggle.svelte';
 	import Select from '$lib/components/Select.svelte';
-	import MultiSelect from '$lib/components/MultiSelect.svelte';
 	import ChannelPicker from '$lib/components/ChannelPicker.svelte';
+	import RolePicker from '$lib/components/RolePicker.svelte';
 	import SaveBar from '$lib/components/SaveBar.svelte';
 	import { X } from 'lucide-svelte';
 
@@ -53,7 +53,6 @@
 	let baseline = $state('');
 	let wordInput = $state('');
 
-	const roleOpts = $derived(store.roleOptions());
 	const dirty = $derived(loaded && JSON.stringify({ enabled, cfg }) !== baseline);
 
 	onMount(async () => {
@@ -184,7 +183,12 @@
 				/>
 			</Field>
 			<Field label="Ignored roles" hint="Members with these roles are never moderated.">
-				<MultiSelect bind:value={cfg.ignored_roles} options={roleOpts} placeholder="Add a role…" />
+				<RolePicker
+					multiple
+					value={cfg.ignored_roles}
+					onChange={(v) => (cfg.ignored_roles = v as string[])}
+					placeholder="Add a role…"
+				/>
 			</Field>
 		</section>
 	</div>
