@@ -98,7 +98,7 @@
 			welcome: {
 				enabled: true,
 				channel_id: '',
-				content: 'Hey {{ .User.Mention }}, welcome to **{{ .Guild.Name }}**! 🎉',
+				content: 'Hey {user.mention}, welcome to **{server}**! 🎉',
 				ping_user: true,
 				embeds: [],
 				card: { enabled: true, layout: templateLayout('aurora') },
@@ -107,7 +107,7 @@
 			goodbye: {
 				enabled: false,
 				channel_id: '',
-				content: '**{{ .User.GlobalName }}** just left. We are now {{ .Count }} members.',
+				content: '**{user.name}** just left. We are now {count} members.',
 				ping_user: false,
 				embeds: [],
 				card: { enabled: false, layout: templateLayout('midnight') },
