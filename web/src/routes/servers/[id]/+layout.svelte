@@ -16,6 +16,7 @@
 		ShieldCheck,
 		ShieldAlert,
 		Wand2,
+		Zap,
 		Frame,
 		CreditCard,
 		ChevronRight,
@@ -64,6 +65,7 @@
 			section: 'Advanced',
 			items: [
 				{ label: 'Custom Commands', path: 'commands', icon: Wand2 },
+				{ label: 'Automations', path: 'automations', icon: Zap },
 				{ label: 'Card Studio', path: 'editor', icon: Frame }
 			]
 		},
@@ -85,11 +87,11 @@
 	const pageTitle = $derived(flatPages.find((p) => p.path === currentSeg)?.label ?? 'Overview');
 
 	// A few builder pages want the whole content width (no centered column).
-	const fullWidthPages = ['welcome', 'editor', 'commands'];
+	const fullWidthPages = ['welcome', 'editor', 'commands', 'automations'];
 	const fullWidth = $derived(fullWidthPages.includes(currentSeg));
 	// And a few want to paint edge-to-edge — no outer px/py wrapper at all.
 	// Used by the dashboard surfaces that draw their own slab topbar / rows.
-	const flushPages = ['commands'];
+	const flushPages = ['commands', 'automations'];
 	const flush = $derived(flushPages.includes(currentSeg));
 
 	let paletteOpen = $state(false);

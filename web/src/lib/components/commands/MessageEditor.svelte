@@ -5,8 +5,10 @@
 	// (click one to edit it in a popover), attachments support real picture
 	// upload. Mirrors SpecReply / SpecSendMessage on the Go side; every string
 	// is a Go template rendered at runtime.
+	import { getContext } from 'svelte';
 	import { page } from '$app/stores';
 	import { uploadImage } from '$lib/api';
+	import { AUTOMATION_CTX } from '$lib/commands/expr-meta';
 	import type { Step } from '$lib/commands/types';
 	import EmbedBuilder from './EmbedBuilder.svelte';
 	import ImagePicker from './ImagePicker.svelte';
@@ -30,6 +32,8 @@
 	import List from 'lucide-svelte/icons/list';
 	import Variable from 'lucide-svelte/icons/variable';
 	import EyeOff from 'lucide-svelte/icons/eye-off';
+	import AtSign from 'lucide-svelte/icons/at-sign';
+	import Check from 'lucide-svelte/icons/check';
 	import MousePointerClick from 'lucide-svelte/icons/mouse-pointer-click';
 
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -50,6 +54,10 @@
 		attachments?: boolean;
 	} = $props();
 
+	// In automations, raw custom-id editing is hidden — buttons are wired by the
+	// canvas (drag a button's dot) or picked by label in a Wait-for.
+	const isAutomation = getContext(AUTOMATION_CTX) === true;
+
 	function spec(): AnySpec {
 		if (!step.spec) step.spec = {};
 		return step.spec as AnySpec;
@@ -68,6 +76,21 @@
 	}
 
 	const s = $derived(spec());
+
+	// Allowed mentions: an absent spec is the safe default (only member mentions
+	// ping; @everyone/@here and roles render but don't notify).
+	const am = $derived(
+		s.allowed_mentions as { users?: boolean; roles?: boolean; everyone?: boolean } | undefined
+	);
+	const pingUsers = $derived(am ? !!am.users : true);
+	const pingRoles = $derived(am ? !!am.roles : false);
+	const pingEveryone = $derived(am ? !!am.everyone : false);
+	const pingsActive = $derived(pingRoles || pingEveryone || !pingUsers);
+	function setPings(next: { users: boolean; roles: boolean; everyone: boolean }) {
+		// Drop the key when it matches the default (members only) to keep specs clean.
+		if (next.users && !next.roles && !next.everyone) set('allowed_mentions', undefined);
+		else set('allowed_mentions', next);
+	}
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
 	const embedList = $derived((s.embeds ?? []) as any[]);
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -337,6 +360,42 @@
 					ephemeral
 				</button>
 			{/if}
+			<Popover.Root>
+				<Popover.Trigger
+					class="inline-flex h-6 items-center gap-1 rounded border px-1.5 font-mono text-[10px] font-medium transition-colors {pingsActive
+						? 'border-line-strong bg-surface text-ink'
+						: 'border-line text-faint hover:text-muted'}"
+					title="Choose which mentions actually ping"
+				>
+					<AtSign size={10} />
+					pings
+				</Popover.Trigger>
+				<Popover.Content class="w-56 p-2" align="end">
+					<div
+						class="mb-1 px-1 font-mono text-[9.5px] font-medium uppercase tracking-[0.14em] text-muted-foreground"
+					>
+						Who this message pings
+					</div>
+					{#each [{ key: 'users', label: 'Members', on: pingUsers }, { key: 'roles', label: 'Roles', on: pingRoles }, { key: 'everyone', label: '@everyone / @here', on: pingEveryone }] as opt (opt.key)}
+						<button
+							type="button"
+							class="flex w-full items-center justify-between rounded-sm px-2 py-1.5 text-left text-[12px] transition-colors hover:bg-secondary"
+							onclick={() =>
+								setPings({
+									users: opt.key === 'users' ? !pingUsers : pingUsers,
+									roles: opt.key === 'roles' ? !pingRoles : pingRoles,
+									everyone: opt.key === 'everyone' ? !pingEveryone : pingEveryone
+								})}
+						>
+							<span>{opt.label}</span>
+							{#if opt.on}<Check size={13} class="text-accent-ink" />{/if}
+						</button>
+					{/each}
+					<p class="mt-1 px-2 text-[10px] leading-snug text-muted-foreground">
+						Mentions still show; this controls which actually notify. Default: members only.
+					</p>
+				</Popover.Content>
+			</Popover.Root>
 			<EmojiPicker
 				value=""
 				returnFocusOnPick={false}
@@ -601,17 +660,21 @@
 														<MousePointerClick size={10} class="mt-px shrink-0" />
 														<span>
 															Drag this button's dot on the canvas to choose what
-															happens when it's clicked.
+															happens when it's clicked{isAutomation
+																? ', or wait for it in a Wait-for step.'
+																: '.'}
 														</span>
 													</p>
-													<button
-														type="button"
-														class="mt-1 text-[10px] font-medium text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
-														title="Advanced — set your own id for routing / future automations"
-														onclick={() => patchComponent(ri, ci, { custom_id_manual: true })}
-													>
-														Configure custom id
-													</button>
+													{#if !isAutomation}
+														<button
+															type="button"
+															class="mt-1 text-[10px] font-medium text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+															title="Advanced — set your own id for routing / future automations"
+															onclick={() => patchComponent(ri, ci, { custom_id_manual: true })}
+														>
+															Configure custom id
+														</button>
+													{/if}
 													{/if}
 												{/if}
 											</Popover.Content>
@@ -673,6 +736,39 @@
 														})}
 												/>
 												{#if c.type === 'select_string'}
+													<div class="mt-2 flex items-center gap-1.5">
+														<span class="text-[10.5px] text-muted-foreground">Members can pick</span>
+														<input
+															class="h-6 w-12 rounded border border-input bg-background px-1.5 text-[11px] text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+															type="number"
+															min="0"
+															placeholder="min"
+															value={c.min_values ?? ''}
+															oninput={(e) =>
+																patchComponent(ri, ci, {
+																	min_values:
+																		(e.currentTarget as HTMLInputElement).value === ''
+																			? undefined
+																			: Number((e.currentTarget as HTMLInputElement).value)
+																})}
+														/>
+														<span class="text-[10.5px] text-muted-foreground">to</span>
+														<input
+															class="h-6 w-12 rounded border border-input bg-background px-1.5 text-[11px] text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+															type="number"
+															min="1"
+															placeholder="max"
+															value={c.max_values ?? ''}
+															oninput={(e) =>
+																patchComponent(ri, ci, {
+																	max_values:
+																		(e.currentTarget as HTMLInputElement).value === ''
+																			? undefined
+																			: Number((e.currentTarget as HTMLInputElement).value)
+																})}
+														/>
+														<span class="text-[10.5px] text-muted-foreground">options</span>
+													</div>
 													<div class="mt-2 space-y-1">
 														{#each c.options ?? [] as o, oi (oi)}
 															<div class="flex items-center gap-1.5">

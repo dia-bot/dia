@@ -130,21 +130,32 @@ func IsControl(kind string) bool {
 // Each step's Spec JSONB is decoded into one of these by the step handler.
 // Templated strings render at runtime against the current Scope.
 
+// MsgMentions controls which mentions in a message actually ping. Nil means the
+// safe default: only user mentions ping, while @everyone/@here and role mentions
+// render but stay inert. Set fields to opt specific kinds back in.
+type MsgMentions struct {
+	Users    bool `json:"users,omitempty"`
+	Roles    bool `json:"roles,omitempty"`
+	Everyone bool `json:"everyone,omitempty"`
+}
+
 // SpecReply is the spec for a `reply` step.
 type SpecReply struct {
-	Content     string          `json:"content,omitempty"`
-	Ephemeral   bool            `json:"ephemeral,omitempty"`
-	Embeds      []EmbedSpec     `json:"embeds,omitempty"`
-	Components  []ComponentRow  `json:"components,omitempty"`
-	Attachments []AttachmentRef `json:"attachments,omitempty"`
+	Content         string          `json:"content,omitempty"`
+	Ephemeral       bool            `json:"ephemeral,omitempty"`
+	Embeds          []EmbedSpec     `json:"embeds,omitempty"`
+	Components      []ComponentRow  `json:"components,omitempty"`
+	Attachments     []AttachmentRef `json:"attachments,omitempty"`
+	AllowedMentions *MsgMentions    `json:"allowed_mentions,omitempty"`
 }
 
 // SpecEditReply is the spec for an `edit_reply` step.
 type SpecEditReply struct {
-	Content     string          `json:"content,omitempty"`
-	Embeds      []EmbedSpec     `json:"embeds,omitempty"`
-	Components  []ComponentRow  `json:"components,omitempty"`
-	Attachments []AttachmentRef `json:"attachments,omitempty"`
+	Content         string          `json:"content,omitempty"`
+	Embeds          []EmbedSpec     `json:"embeds,omitempty"`
+	Components      []ComponentRow  `json:"components,omitempty"`
+	Attachments     []AttachmentRef `json:"attachments,omitempty"`
+	AllowedMentions *MsgMentions    `json:"allowed_mentions,omitempty"`
 }
 
 // SpecDeferReply is the spec for a `defer_reply` step.
@@ -154,31 +165,34 @@ type SpecDeferReply struct {
 
 // SpecSendMessage is the spec for a `send_message` step.
 type SpecSendMessage struct {
-	Channel     Expr            `json:"channel"`
-	Content     string          `json:"content,omitempty"`
-	Embeds      []EmbedSpec     `json:"embeds,omitempty"`
-	Components  []ComponentRow  `json:"components,omitempty"`
-	Attachments []AttachmentRef `json:"attachments,omitempty"`
-	Into        string          `json:"into,omitempty"`
-	ReplyTo     Expr            `json:"reply_to,omitempty"` // message id to reply to
+	Channel         Expr            `json:"channel"`
+	Content         string          `json:"content,omitempty"`
+	Embeds          []EmbedSpec     `json:"embeds,omitempty"`
+	Components      []ComponentRow  `json:"components,omitempty"`
+	Attachments     []AttachmentRef `json:"attachments,omitempty"`
+	Into            string          `json:"into,omitempty"`
+	ReplyTo         Expr            `json:"reply_to,omitempty"` // message id to reply to
+	AllowedMentions *MsgMentions    `json:"allowed_mentions,omitempty"`
 }
 
 // SpecSendDM is the spec for a `send_dm` step. DMs carry the full message
 // surface — embeds, component rows (buttons / selects route back via the
 // same ccmd custom_id scheme) and attachments.
 type SpecSendDM struct {
-	User        Expr            `json:"user"`
-	Content     string          `json:"content,omitempty"`
-	Embeds      []EmbedSpec     `json:"embeds,omitempty"`
-	Components  []ComponentRow  `json:"components,omitempty"`
-	Attachments []AttachmentRef `json:"attachments,omitempty"`
+	User            Expr            `json:"user"`
+	Content         string          `json:"content,omitempty"`
+	Embeds          []EmbedSpec     `json:"embeds,omitempty"`
+	Components      []ComponentRow  `json:"components,omitempty"`
+	Attachments     []AttachmentRef `json:"attachments,omitempty"`
+	AllowedMentions *MsgMentions    `json:"allowed_mentions,omitempty"`
 }
 
 // SpecEmbedSend is sugar over send_message for a single-embed message.
 type SpecEmbedSend struct {
-	Channel Expr      `json:"channel"`
-	Embed   EmbedSpec `json:"embed"`
-	Into    string    `json:"into,omitempty"`
+	Channel         Expr         `json:"channel"`
+	Embed           EmbedSpec    `json:"embed"`
+	Into            string       `json:"into,omitempty"`
+	AllowedMentions *MsgMentions `json:"allowed_mentions,omitempty"`
 }
 
 // EmbedSpec is one Discord embed with templated fields.
@@ -273,12 +287,13 @@ type SpecReactClear struct {
 // edits the command's own interaction reply (subsumes the old edit_reply);
 // otherwise Channel+Message locate the message.
 type SpecMessageEdit struct {
-	Target     string         `json:"target,omitempty"` // "" (specific message) | "reply"
-	Channel    Expr           `json:"channel,omitempty"`
-	Message    Expr           `json:"message,omitempty"`
-	Content    string         `json:"content,omitempty"`
-	Embeds     []EmbedSpec    `json:"embeds,omitempty"`
-	Components []ComponentRow `json:"components,omitempty"`
+	Target          string         `json:"target,omitempty"` // "" (specific message) | "reply"
+	Channel         Expr           `json:"channel,omitempty"`
+	Message         Expr           `json:"message,omitempty"`
+	Content         string         `json:"content,omitempty"`
+	Embeds          []EmbedSpec    `json:"embeds,omitempty"`
+	Components      []ComponentRow `json:"components,omitempty"`
+	AllowedMentions *MsgMentions   `json:"allowed_mentions,omitempty"`
 }
 
 // SpecMessageFetch reads an existing message into scope so conditions can
@@ -534,10 +549,17 @@ type SpecWaitFor struct {
 	Trigger        string `json:"trigger"` // component | modal | message | reaction
 	CustomIDSuffix string `json:"custom_id_suffix,omitempty"`
 	FromUser       Expr   `json:"from_user,omitempty"` // restrict who can satisfy this wait
-	Channel        Expr   `json:"channel,omitempty"`   // for message/reaction filters
-	Timeout        string `json:"timeout"`             // parsed by time.ParseDuration
-	Into           string `json:"into,omitempty"`
-	OnTimeout      []Step `json:"on_timeout,omitempty"`
+	Channel        Expr   `json:"channel,omitempty"`   // legacy single-channel filter
+	// ChannelMode + Channels scope which channels satisfy a message/reaction
+	// wait: "any" (default) | "current" (the run's channel) | "only" (in
+	// Channels) | "except" (anywhere but Channels). Channels are concrete ids.
+	ChannelMode string   `json:"channel_mode,omitempty"`
+	Channels    []string `json:"channels,omitempty"`
+	// Emoji optionally restricts a reaction wait to one emoji (glyph, name or id).
+	Emoji     string `json:"emoji,omitempty"`
+	Timeout   string `json:"timeout"` // parsed by time.ParseDuration
+	Into      string `json:"into,omitempty"`
+	OnTimeout []Step `json:"on_timeout,omitempty"`
 
 	// Response is the click-response mode for this listener; Responses
 	// overrides it per clicked button suffix (the click-router shares one
@@ -570,7 +592,7 @@ type SpecFail struct {
 // SpecRunCommand invokes another command in the same run.
 type SpecRunCommand struct {
 	Command      string          `json:"command"`
-	Args         json.RawMessage `json:"args,omitempty"` // object: {name: Expr}
+	Args         json.RawMessage `json:"args,omitempty"` // object {name: value}; string values are templated
 	InheritScope bool            `json:"inherit_scope,omitempty"`
 }
 

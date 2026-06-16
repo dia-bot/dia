@@ -25,11 +25,12 @@ func hMessageEdit(ctx context.Context, h *Halt) error {
 		if h.Run.InteractionToken == "" {
 			return errors.New("message_edit: no reply to edit (no active interaction)")
 		}
-		send := buildMessageSend(ctx, h, spec.Content, spec.Embeds, spec.Components, nil)
+		send := buildMessageSend(ctx, h, spec.Content, spec.Embeds, spec.Components, nil, spec.AllowedMentions)
 		edit := &discordgo.WebhookEdit{
-			Content: ptrString(send.Content),
-			Embeds:  &send.Embeds,
-			Files:   send.Files,
+			Content:         ptrString(send.Content),
+			Embeds:          &send.Embeds,
+			Files:           send.Files,
+			AllowedMentions: send.AllowedMentions,
 		}
 		if len(send.Components) > 0 {
 			edit.Components = &send.Components
@@ -64,6 +65,7 @@ func hMessageEdit(ctx context.Context, h *Halt) error {
 		comps := renderComponents(ctx, h, spec.Components)
 		edit.Components = &comps
 	}
+	edit.AllowedMentions = allowedMentions(spec.AllowedMentions)
 	_, err = h.Deps.Discord.EditMessage(channelID, messageID, edit)
 	return err
 }

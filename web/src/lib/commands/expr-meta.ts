@@ -203,6 +203,7 @@ export const ERROR_GROUPS: { id: ErrorKind['group']; label: string }[] = [
 // in-scope variables (slash args + declared vars) without prop drilling.
 
 import type { CommandOption, Step, VarDecl } from './types';
+import { STEP_KIND_BY_KIND } from './types';
 
 export interface ExprScope {
 	options: CommandOption[];
@@ -210,6 +211,274 @@ export interface ExprScope {
 	// The live step tree — lets fields offer "reference a previous step"
 	// pickers (e.g. the message sent by an earlier Send-message step).
 	steps?: Step[];
+	// extraVars are scope variables a host injects beyond options/variables —
+	// server-event automations use this to surface the trigger's `.Event.*`
+	// fields in the variable picker. Empty for slash commands.
+	extraVars?: TmplVar[];
 }
 
 export const EXPR_SCOPE_CTX = Symbol('dia.expr-scope');
+
+// AUTOMATION_CTX is set (to `true`) by the automations editor so shared step
+// editors can adapt their copy/limits to event semantics — e.g. the wait_for
+// editor shows the 1-minute cap and frames replies as "respond to the click".
+export const AUTOMATION_CTX = Symbol('dia.automation');
+
+// ── Produced step variables ────────────────────────────────────────────────
+// What each step writes into run scope, so the editor can TELL the admin the
+// exact variable name + fields they can reuse in later steps (no more guessing
+// at custom-id or field names). This MIRRORS the Go runtime: the scope.Set
+// calls in internal/features/customcommands/exec/* and the wait/modal resume
+// payloads built by the customcommands & automations runtimes. The field `key`
+// strings MUST equal the Go map keys verbatim — they are literally what a
+// template reads ({{ .Vars.<name>.<key> }}). Keep this in lockstep when either
+// side changes.
+
+export interface StepOutputField {
+	key: string; // sub-field key, e.g. "content"; may be a "<placeholder>" hint
+	type: string; // plain-language type label shown in the picker
+	short: string; // plain-language description of the field
+}
+
+export interface ProducedVar {
+	kind: string; // the producing step kind
+	name: string; // the resolved variable name (from into / name / as); '' if unset
+	named: boolean; // whether a name is actually set
+	nameField: 'into' | 'name' | 'as'; // which editor field holds the name
+	nameLabel: string; // human label of that field, for the "name it above" nudge
+	shape: 'object' | 'list' | 'value' | 'number' | 'image';
+	summary: string; // plain phrase: "the message you posted"
+	fields: StepOutputField[]; // sub-fields; [] => the variable IS a single value
+	indexVar?: string; // a loop's index_as, when set
+}
+
+const MSG_REF_FIELDS: StepOutputField[] = [
+	{ key: 'id', type: 'id', short: 'the message id' },
+	{ key: 'channel_id', type: 'id', short: 'the channel it was posted in' }
+];
+
+const IMG_FIELDS: StepOutputField[] = [
+	{ key: 'filename', type: 'text', short: 'the file name' },
+	{ key: 'content_type', type: 'text', short: 'the image type' }
+];
+
+function waitSummary(trigger: string): string {
+	switch (trigger) {
+		case 'message':
+			return 'the message they send';
+		case 'reaction':
+			return 'the reaction they add';
+		case 'modal':
+			return 'the form they submit';
+		default:
+			return 'the button they click';
+	}
+}
+
+function waitFields(trigger: string): StepOutputField[] {
+	switch (trigger) {
+		case 'message':
+			return [
+				{ key: 'content', type: 'text', short: 'what they typed' },
+				{ key: 'user_id', type: 'id', short: 'who sent it' },
+				{ key: 'id', type: 'id', short: 'the message id' },
+				{ key: 'channel_id', type: 'id', short: 'where they sent it' }
+			];
+		case 'reaction':
+			return [
+				{ key: 'emoji', type: 'text', short: 'the emoji they used' },
+				{ key: 'user_id', type: 'id', short: 'who reacted' },
+				{ key: 'message_id', type: 'id', short: 'the message they reacted to' },
+				{ key: 'channel_id', type: 'id', short: 'where it happened' }
+			];
+		case 'modal':
+			return [
+				{ key: 'fields.<field id>', type: 'text', short: 'each answer, by field id' },
+				{ key: 'user_id', type: 'id', short: 'who submitted it' }
+			];
+		default: // component (button / select menu)
+			return [
+				{ key: 'user_id', type: 'id', short: 'who clicked' },
+				{ key: 'id', type: 'text', short: 'which button (its id)' },
+				{ key: 'values', type: 'list', short: 'the selected options (for menus)' }
+			];
+	}
+}
+
+function modalFields(sp: Record<string, unknown>): StepOutputField[] {
+	const out: StepOutputField[] = [];
+	for (const f of (sp.fields ?? []) as Array<Record<string, unknown>>) {
+		const id = String(f?.custom_id ?? '').trim();
+		if (id) {
+			const label = String(f?.label ?? '').trim();
+			out.push({ key: `fields.${id}`, type: 'text', short: label ? `answer: ${label}` : 'a submitted answer' });
+		}
+	}
+	if (out.length === 0) out.push({ key: 'fields.<field id>', type: 'text', short: 'each answer, by field id' });
+	out.push({ key: 'user_id', type: 'id', short: 'who submitted it' });
+	return out;
+}
+
+// stepProducedVar returns the variable a step makes available to later steps,
+// resolved against the step's live spec (so the name and field set track what
+// the admin actually configured). Returns null for steps that produce nothing.
+export function stepProducedVar(step: Step | null | undefined): ProducedVar | null {
+	if (!step) return null;
+	const sp = (step.spec ?? {}) as Record<string, any>;
+	const at = (
+		nameField: ProducedVar['nameField'],
+		nameLabel: string,
+		shape: ProducedVar['shape'],
+		summary: string,
+		fields: StepOutputField[]
+	): ProducedVar => {
+		const name = String(sp[nameField] ?? '').trim();
+		return { kind: step.kind, name, named: !!name, nameField, nameLabel, shape, summary, fields };
+	};
+
+	switch (step.kind) {
+		case 'send_message':
+			return at('into', 'Save to variable', 'object', 'the message you posted', MSG_REF_FIELDS);
+		case 'embed_send':
+			return at('into', 'Save to variable', 'object', 'the message you sent', MSG_REF_FIELDS);
+		case 'message_fetch':
+			return at('into', 'Save to variable', 'object', 'the message you read', [
+				{ key: 'content', type: 'text', short: 'the message text' },
+				{ key: 'author_id', type: 'id', short: 'who wrote it' },
+				{ key: 'author_username', type: 'text', short: "the author's username" },
+				{ key: 'author_mention', type: 'text', short: 'a @mention of the author' },
+				{ key: 'author_bot', type: 'yes/no', short: 'whether a bot wrote it' },
+				{ key: 'id', type: 'id', short: 'the message id' },
+				{ key: 'channel_id', type: 'id', short: 'the channel it is in' },
+				{ key: 'pinned', type: 'yes/no', short: 'whether it is pinned' },
+				{ key: 'embed_count', type: 'number', short: 'how many embeds it has' },
+				{ key: 'reaction_count', type: 'number', short: 'total reactions' },
+				{ key: 'created_at', type: 'time', short: 'when it was posted' }
+			]);
+		case 'member_fetch':
+			return at('into', 'Save to variable', 'object', 'the member you looked up', [
+				{ key: 'mention', type: 'text', short: 'a @mention of them' },
+				{ key: 'username', type: 'text', short: 'their username' },
+				{ key: 'global_name', type: 'text', short: 'their display name' },
+				{ key: 'nick', type: 'text', short: 'their server nickname' },
+				{ key: 'roles', type: 'list', short: 'their role ids' },
+				{ key: 'joined_at', type: 'time', short: 'when they joined' },
+				{ key: 'avatar_url', type: 'text', short: 'their avatar image url' },
+				{ key: 'bot', type: 'yes/no', short: 'whether they are a bot' },
+				{ key: 'pending', type: 'yes/no', short: 'still in membership screening' },
+				{ key: 'timed_out_until', type: 'time', short: 'when their timeout ends' },
+				{ key: 'id', type: 'id', short: 'their user id' }
+			]);
+		case 'invite_create':
+			return at('into', 'Save to variable', 'object', 'the invite you created', [
+				{ key: 'url', type: 'text', short: 'the invite link' },
+				{ key: 'code', type: 'text', short: 'the invite code' }
+			]);
+		case 'channel_create':
+			return at('into', 'Save to variable', 'object', 'the channel you created', [
+				{ key: 'id', type: 'id', short: 'the channel id' },
+				{ key: 'name', type: 'text', short: 'the channel name' },
+				{ key: 'type', type: 'number', short: 'the channel type code' }
+			]);
+		case 'thread_create':
+			return at('into', 'Save to variable', 'object', 'the thread you created', [
+				{ key: 'id', type: 'id', short: 'the thread id' },
+				{ key: 'name', type: 'text', short: 'the thread name' }
+			]);
+		case 'http_request': {
+			const fields: StepOutputField[] = [
+				{ key: 'status', type: 'number', short: 'the HTTP status code' },
+				{ key: 'body', type: 'text', short: 'the raw response text' }
+			];
+			if (sp.parse_json)
+				fields.push({ key: 'json', type: 'object', short: 'the parsed JSON (read .json.<field>)' });
+			fields.push({ key: 'headers', type: 'object', short: 'the response headers' });
+			return at('into', 'Save to', 'object', 'the response', fields);
+		}
+		case 'image_render':
+			return at('into', 'Save bytes to', 'image', 'the image you rendered', IMG_FIELDS);
+		case 'image_load':
+			return at('into', 'Save to', 'image', 'the image you downloaded', IMG_FIELDS);
+		case 'message_purge':
+			return at('into', 'Save deleted count to', 'number', 'how many messages were deleted', []);
+		case 'pick_random': {
+			const many = Number(sp.count ?? 1) > 1;
+			return at(
+				'into',
+				'Save to variable',
+				many ? 'list' : 'value',
+				many ? 'the items you picked' : 'the item you picked',
+				[]
+			);
+		}
+		case 'json_parse':
+			return at('into', 'Save to variable', 'object', 'the parsed value', []);
+		case 'kv_get':
+			return at('into', 'Save to', 'value', 'the saved value you loaded', []);
+		case 'set_var':
+			return at('name', 'Variable name', 'value', 'your saved value', []);
+		case 'incr_var':
+			return at('name', 'Variable name', 'number', 'the running total', []);
+		case 'loop': {
+			const v = at('as', 'Item variable name', 'value', 'the current item in the loop', []);
+			const idx = String(sp.index_as ?? '').trim();
+			if (idx) v.indexVar = idx;
+			return v;
+		}
+		case 'modal_open':
+			return at('into', 'Save answers to', 'object', 'the form they submitted', modalFields(sp));
+		case 'wait_for': {
+			const trigger = String(sp.trigger ?? 'component');
+			return at('into', 'Remember it as', 'object', waitSummary(trigger), waitFields(trigger));
+		}
+		default:
+			return null;
+	}
+}
+
+// dedupeVars keeps the first entry per template path (so a declared variable
+// wins over a same-named step output) and prevents duplicate keys in pickers.
+export function dedupeVars(vars: TmplVar[]): TmplVar[] {
+	const seen = new Set<string>();
+	const out: TmplVar[] = [];
+	for (const v of vars) {
+		if (seen.has(v.path)) continue;
+		seen.add(v.path);
+		out.push(v);
+	}
+	return out;
+}
+
+// collectProducedVars walks a step tree and returns picker entries for every
+// NAMED variable an upstream step makes available, plus its sub-fields, so a
+// later step's variable picker can offer them. Mirrors stepProducedVar.
+export function collectProducedVars(steps: Step[] | undefined): TmplVar[] {
+	const out: TmplVar[] = [];
+	const push = (path: string, type: string, short: string) => {
+		out.push({ path, label: path.replace(/^\./, ''), type, short });
+	};
+	const walk = (list: Step[] | undefined) => {
+		for (const s of list ?? []) {
+			const pv = stepProducedVar(s);
+			if (pv && pv.named) {
+				const label = STEP_KIND_BY_KIND.get(s.kind)?.label ?? s.kind;
+				const root = `.Vars.${pv.name}`;
+				push(root, pv.shape, `From ${label} — ${pv.summary}`);
+				for (const f of pv.fields) {
+					if (f.key.includes('<')) continue; // skip placeholder hints (no fixed key)
+					push(`${root}.${f.key}`, f.type, f.short);
+				}
+				if (pv.indexVar) push(`.Vars.${pv.indexVar}`, 'number', `From ${label} — the loop position`);
+			}
+			walk(s.then);
+			walk(s.else);
+			for (const c of s.cases ?? []) walk(c.do);
+			walk(s.default);
+			walk(s.on_error);
+			for (const ec of s.on_error_cases ?? []) walk(ec.do);
+			for (const br of ((s.spec ?? {}) as any).branches ?? []) walk(br as Step[]);
+		}
+	};
+	walk(steps);
+	return dedupeVars(out);
+}

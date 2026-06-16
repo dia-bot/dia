@@ -1,13 +1,17 @@
 <script lang="ts">
+	import { getContext } from 'svelte';
 	import type { Step } from '$lib/commands/types';
 	import { STEP_KIND_BY_KIND } from '$lib/commands/types';
+	import { AUTOMATION_CTX, EXPR_SCOPE_CTX, stepProducedVar, type ExprScope } from '$lib/commands/expr-meta';
 	import ExprField from './ExprField.svelte';
+	import StepOutputHint from './StepOutputHint.svelte';
 	import MessageEditor from './MessageEditor.svelte';
 	import EmbedBuilder from './EmbedBuilder.svelte';
 	import EmojiPicker from './EmojiPicker.svelte';
 	import NumberField from './NumberField.svelte';
 	import MessageRefField from './MessageRefField.svelte';
 	import ChannelExprField from './ChannelExprField.svelte';
+	import ChannelPicker from '$lib/components/ChannelPicker.svelte';
 	import FieldSelect from './FieldSelect.svelte';
 	import Field from '$lib/components/Field.svelte';
 	import Toggle from '$lib/components/Toggle.svelte';
@@ -22,10 +26,87 @@
 		embedded?: boolean;
 	} = $props();
 
+	// In an automation, waits cap at 1 minute and there's no slash interaction,
+	// so a few step editors reword themselves.
+	const isAutomation = getContext(AUTOMATION_CTX) === true;
+	const scope = getContext<ExprScope | undefined>(EXPR_SCOPE_CTX);
+
+	// Buttons defined earlier in the flow, so a Wait-for can let the admin pick
+	// one by its label instead of typing a raw custom id.
+	function collectButtons(steps: unknown, out: { value: string; label: string }[]) {
+		for (const s of (steps as any[]) ?? []) {
+			const sp = (s.spec ?? {}) as any;
+			for (const row of sp.components ?? []) {
+				for (const c of row.components ?? []) {
+					if (c.type === 'button' && c.style !== 'link' && c.on_click !== 'none' && c.custom_id_suffix) {
+						out.push({ value: c.custom_id_suffix, label: c.label || c.custom_id_suffix });
+					}
+				}
+			}
+			for (const br of [s.then, s.else, s.default, s.on_error]) if (br) collectButtons(br, out);
+			for (const cse of s.cases ?? []) collectButtons(cse.do, out);
+			for (const ec of s.on_error_cases ?? []) collectButtons(ec.do, out);
+			for (const b of sp.branches ?? []) collectButtons(b, out);
+		}
+	}
+	const flowButtons = $derived.by(() => {
+		const out: { value: string; label: string }[] = [];
+		collectButtons(scope?.steps, out);
+		return out;
+	});
+
+	// Power-user escape hatch for "Which button?": which step has been switched
+	// to typing a raw custom id (vs picking a button by label). Keyed by step id
+	// so re-selecting a different step doesn't carry the mode over.
+	let customIdStepId = $state<string | null>(null);
+
+	// "Remember it as" hint, in plain words per wait kind.
+	function rememberHint(wt: string): string {
+		if (wt === 'message') return 'Give it a short name so later steps can use their text or reply to it.';
+		if (wt === 'reaction') return 'A short name so later steps can use the emoji or who reacted.';
+		return 'A short name so later steps know which button was clicked.';
+	}
+
 	function getSpec(): any {
 		if (!step) return {};
 		if (!step.spec) step.spec = {};
 		return step.spec as any;
+	}
+
+	// HTTP headers are stored as an object; edit them as "Key: Value" lines so
+	// values stay templatable (e.g. Authorization: Bearer {{ .Vars.token }}).
+	function headersToText(h?: Record<string, string>): string {
+		return Object.entries(h ?? {})
+			.map(([k, v]) => `${k}: ${v}`)
+			.join('\n');
+	}
+	function textToHeaders(s: string): Record<string, string> {
+		const out: Record<string, string> = {};
+		for (const line of s.split('\n')) {
+			const i = line.indexOf(':');
+			if (i < 0) continue;
+			const k = line.slice(0, i).trim();
+			if (k) out[k] = line.slice(i + 1).trim();
+		}
+		return out;
+	}
+
+	// run_command args, edited as "name = value" lines. String values are
+	// templated at runtime, so an arg can pull from the caller's scope.
+	function argsToText(a?: Record<string, unknown>): string {
+		return Object.entries(a ?? {})
+			.map(([k, v]) => `${k} = ${typeof v === 'string' ? v : JSON.stringify(v)}`)
+			.join('\n');
+	}
+	function textToArgs(s: string): Record<string, string> {
+		const out: Record<string, string> = {};
+		for (const line of s.split('\n')) {
+			const i = line.indexOf('=');
+			if (i < 0) continue;
+			const k = line.slice(0, i).trim();
+			if (k) out[k] = line.slice(i + 1).trim();
+		}
+		return out;
 	}
 
 	function set<K extends string>(field: K, value: unknown) {
@@ -44,6 +125,10 @@
 
 	const kindMeta = $derived(step ? STEP_KIND_BY_KIND.get(step.kind) : null);
 	const spec = $derived(getSpec());
+
+	// The variable (and its fields) this step makes available to later steps,
+	// resolved live from the spec — drives the "use this later" teaching panel.
+	const produced = $derived(stepProducedVar(step));
 </script>
 
 {#if !step}
@@ -64,6 +149,14 @@
 				</div>
 				<p class="mt-1.5 text-xs text-muted">{kindMeta?.short ?? ''}</p>
 			</div>
+		{/if}
+
+		{#if embedded && kindMeta?.short}
+			<!-- Plain "what this does" line so non-technical admins always know
+			     what the step they're editing actually does. -->
+			<p class="border-b border-line bg-surface/30 px-4 py-2.5 text-[11.5px] leading-snug text-muted">
+				{kindMeta.short}
+			</p>
 		{/if}
 
 		<div class="flex-1 space-y-4 p-4">
@@ -104,17 +197,20 @@
 					<input class="input" value={spec.into ?? ''} oninput={(e) => set('into', (e.currentTarget as HTMLInputElement).value)} />
 				</Field>
 			{:else if step.kind === 'message_edit'}
-				<Field label="What to edit">
-					<FieldSelect
-						value={spec.target ?? ''}
-						onChange={(v) => set('target', v)}
-						options={[
-							{ value: 'reply', label: "The command's reply" },
-							{ value: '', label: 'A specific message' }
-						]}
-					/>
-				</Field>
-				{#if spec.target !== 'reply'}
+				{#if !isAutomation}
+					<Field label="What to edit">
+						<FieldSelect
+							value={spec.target ?? ''}
+							onChange={(v) => set('target', v)}
+							options={[
+								{ value: 'reply', label: "The command's reply" },
+								{ value: '', label: 'A specific message' }
+							]}
+						/>
+					</Field>
+				{/if}
+				{#if isAutomation || spec.target !== 'reply'}
+					<!-- Automations have no slash reply to edit, so they always target a real message. -->
 					<Field label="Message" hint="Pick it from a previous step with the link button, or template an id.">
 						<MessageRefField {step} {...exprBind('message')} onChannel={(v) => set('channel', v)} />
 					</Field>
@@ -126,7 +222,7 @@
 					<MessageRefField {step} {...exprBind('message')} onChannel={(v) => set('channel', v)} />
 				</Field>
 				<Field label="Channel"><ChannelExprField {...exprBind('channel')} /></Field>
-				<Field label="Save to variable" hint={"Read it as {{ .Vars.msg.content }}, .author_id, .pinned, .reaction_count…"}>
+				<Field label="Save to variable" hint="Name it, then use its text, author and more in later steps (shown below).">
 					<input class="input" value={spec.into ?? ''} oninput={(e) => set('into', (e.currentTarget as HTMLInputElement).value)} />
 				</Field>
 			{:else if step.kind === 'message_delete' || step.kind === 'pin_add' || step.kind === 'pin_remove'}
@@ -149,7 +245,7 @@
 					<span class="text-sm">Bots only</span>
 					<Toggle checked={!!spec.bots_only} onchange={(v) => set('bots_only', v)} />
 				</label>
-				<Field label="Containing text" hint="Optional substring filter (templated)">
+				<Field label="Containing text" hint="Optional — only delete messages that contain this text.">
 					<input class="input" value={spec.contains ?? ''} oninput={(e) => set('contains', (e.currentTarget as HTMLInputElement).value)} />
 				</Field>
 				<Field label="Reason (audit log)">
@@ -220,8 +316,8 @@
 					<input class="input" value={spec.reason ?? ''} oninput={(e) => set('reason', (e.currentTarget as HTMLInputElement).value)} />
 				</Field>
 			{:else if step.kind === 'member_fetch'}
-				<Field label="User"><ExprField {...exprBind('user')} placeholder={'{{ .Input.target }}'} /></Field>
-				<Field label="Save to variable" hint={"Read it as {{ .Vars.member.nick }}, .roles, .joined_at, .timed_out_until…"}>
+				<Field label="User"><ExprField {...exprBind('user')} placeholder={isAutomation ? '{{ .User.ID }}' : '{{ .Input.target }}'} /></Field>
+				<Field label="Save to variable" hint="Name it, then use their roles, nickname, join date and more in later steps (shown below).">
 					<input class="input" value={spec.into ?? ''} oninput={(e) => set('into', (e.currentTarget as HTMLInputElement).value)} />
 				</Field>
 			{:else if step.kind === 'voice_set'}
@@ -252,7 +348,7 @@
 				</Field>
 			{:else if step.kind === 'invite_create'}
 				<Field label="Channel"><ChannelExprField {...exprBind('channel')} /></Field>
-				<Field label="Expires after" hint="Go duration (24h, 7d as 168h); empty = never">
+				<Field label="Expires after" hint="Like 24h or 7d. Blank = never expires.">
 					<input class="input" placeholder="24h" value={spec.max_age ?? ''} oninput={(e) => set('max_age', (e.currentTarget as HTMLInputElement).value)} />
 				</Field>
 				<Field label="Max uses" hint="0 = unlimited">
@@ -262,7 +358,14 @@
 					<span class="text-sm">Temporary membership</span>
 					<Toggle checked={!!spec.temporary} onchange={(v) => set('temporary', v)} />
 				</label>
-				<Field label="Save to variable" hint={"The link is {{ .Vars.invite.url }}"}>
+				<label class="flex items-center justify-between gap-3">
+					<span class="text-sm">Always a fresh invite</span>
+					<Toggle checked={!!spec.unique} onchange={(v) => set('unique', v)} />
+				</label>
+				<Field label="Reason (audit log)">
+					<input class="input" value={spec.reason ?? ''} oninput={(e) => set('reason', (e.currentTarget as HTMLInputElement).value)} />
+				</Field>
+				<Field label="Save to variable" hint="Name it, then use the invite link in later steps (shown below).">
 					<input class="input" value={spec.into ?? ''} oninput={(e) => set('into', (e.currentTarget as HTMLInputElement).value)} />
 				</Field>
 			{:else if step.kind === 'member_ban'}
@@ -281,7 +384,7 @@
 				</Field>
 			{:else if step.kind === 'member_timeout'}
 				<Field label="User"><ExprField {...exprBind('user')} placeholder={'{{ .User.ID }}'} /></Field>
-				<Field label="Duration" hint="Go duration string: 30s, 5m, 1h, max 28 days (672h)">
+				<Field label="Duration" hint="Like 10m, 1h or 7d. Up to 28 days.">
 					<input class="input" placeholder="10m" value={spec.duration ?? ''} oninput={(e) => set('duration', (e.currentTarget as HTMLInputElement).value)} />
 				</Field>
 				<Field label="Reason">
@@ -309,16 +412,72 @@
 				<Field label="Topic">
 					<input class="input" value={spec.topic ?? ''} oninput={(e) => set('topic', (e.currentTarget as HTMLInputElement).value)} />
 				</Field>
+				<label class="flex items-center justify-between gap-3">
+					<span class="text-sm">Age-restricted (NSFW)</span>
+					<Toggle checked={!!spec.nsfw} onchange={(v) => set('nsfw', v)} />
+				</label>
+				<Field label="Slowmode (seconds)" hint="0 = off.">
+					<NumberField min={0} max={21600} suffix="s" value={spec.rate_limit_per_user ?? 0} onChange={(n) => set('rate_limit_per_user', n ?? 0)} />
+				</Field>
+				<Field label="Reason (audit log)">
+					<input class="input" value={spec.reason ?? ''} oninput={(e) => set('reason', (e.currentTarget as HTMLInputElement).value)} />
+				</Field>
 				<Field label="Save to variable">
 					<input class="input" value={spec.into ?? ''} oninput={(e) => set('into', (e.currentTarget as HTMLInputElement).value)} />
 				</Field>
 			{:else if step.kind === 'channel_edit'}
 				<Field label="Channel"><ChannelExprField {...exprBind('channel')} /></Field>
-				<Field label="Name">
+				<Field label="Name" hint="Leave blank to keep the current name.">
 					<input class="input" value={spec.name ?? ''} oninput={(e) => set('name', (e.currentTarget as HTMLInputElement).value)} />
 				</Field>
-				<Field label="Topic">
+				<Field label="Topic" hint="Leave blank to keep the current topic.">
 					<input class="input" value={spec.topic ?? ''} oninput={(e) => set('topic', (e.currentTarget as HTMLInputElement).value)} />
+				</Field>
+				<Field label="Move to category" hint="Optional — a category id, or leave blank.">
+					<ExprField {...exprBind('parent')} placeholder="(unchanged)" />
+				</Field>
+				<Field label="Slowmode">
+					<FieldSelect
+						value={spec.rate_limit_per_user == null ? '' : String(spec.rate_limit_per_user)}
+						onChange={(v) => set('rate_limit_per_user', v === '' ? undefined : Number(v))}
+						options={[
+							{ value: '', label: 'Leave unchanged' },
+							{ value: '0', label: 'Off' },
+							{ value: '5', label: '5 seconds' },
+							{ value: '10', label: '10 seconds' },
+							{ value: '30', label: '30 seconds' },
+							{ value: '60', label: '1 minute' },
+							{ value: '300', label: '5 minutes' },
+							{ value: '900', label: '15 minutes' },
+							{ value: '3600', label: '1 hour' },
+							{ value: '21600', label: '6 hours' }
+						]}
+					/>
+				</Field>
+				<Field label="Age-restricted (NSFW)">
+					<FieldSelect
+						value={spec.nsfw == null ? '' : spec.nsfw ? 'on' : 'off'}
+						onChange={(v) => set('nsfw', v === '' ? undefined : v === 'on')}
+						options={[
+							{ value: '', label: 'Leave unchanged' },
+							{ value: 'on', label: 'On' },
+							{ value: 'off', label: 'Off' }
+						]}
+					/>
+				</Field>
+				<Field label="Lock channel" hint="Locks (or unlocks) who can post.">
+					<FieldSelect
+						value={spec.locked == null ? '' : spec.locked ? 'on' : 'off'}
+						onChange={(v) => set('locked', v === '' ? undefined : v === 'on')}
+						options={[
+							{ value: '', label: 'Leave unchanged' },
+							{ value: 'on', label: 'Locked' },
+							{ value: 'off', label: 'Unlocked' }
+						]}
+					/>
+				</Field>
+				<Field label="Reason (audit log)">
+					<input class="input" value={spec.reason ?? ''} oninput={(e) => set('reason', (e.currentTarget as HTMLInputElement).value)} />
 				</Field>
 			{:else if step.kind === 'channel_delete'}
 				<Field label="Channel"><ChannelExprField {...exprBind('channel')} /></Field>
@@ -331,18 +490,28 @@
 				<Field label="Name">
 					<input class="input" value={spec.name ?? ''} oninput={(e) => set('name', (e.currentTarget as HTMLInputElement).value)} />
 				</Field>
-				<Field label="Auto-archive minutes">
-					<NumberField
-						min={0}
-						suffix="min"
-						value={spec.auto_archive_minutes ?? 60}
-						onChange={(n) => set('auto_archive_minutes', n)}
+				<Field label="Auto-archive after" hint="The thread hides itself after this much inactivity.">
+					<FieldSelect
+						value={String(spec.auto_archive_minutes ?? 1440)}
+						onChange={(v) => set('auto_archive_minutes', Number(v))}
+						options={[
+							{ value: '60', label: '1 hour' },
+							{ value: '1440', label: '1 day' },
+							{ value: '4320', label: '3 days' },
+							{ value: '10080', label: '1 week' }
+						]}
 					/>
 				</Field>
 				<label class="flex items-center justify-between gap-3">
 					<span class="text-sm">Private</span>
 					<Toggle checked={!!spec.private} onchange={(v) => set('private', v)} />
 				</label>
+				{#if spec.private}
+					<label class="flex items-center justify-between gap-3">
+						<span class="text-sm">Members can invite others</span>
+						<Toggle checked={!!spec.invitable} onchange={(v) => set('invitable', v)} />
+					</label>
+				{/if}
 				<Field label="Save to variable">
 					<input class="input" value={spec.into ?? ''} oninput={(e) => set('into', (e.currentTarget as HTMLInputElement).value)} />
 				</Field>
@@ -421,14 +590,14 @@
 					<input class="input" value={spec.into ?? ''} oninput={(e) => set('into', (e.currentTarget as HTMLInputElement).value)} />
 				</Field>
 			{:else if step.kind === 'json_parse'}
-				<Field label="JSON string" hint="From a KV value, a modal answer, or any template.">
+				<Field label="JSON text" hint="From a saved value, a form answer, or any value.">
 					<ExprField {...exprBind('value')} placeholder={'{{ .Vars.raw }}'} />
 				</Field>
-				<Field label="Save to variable" hint={"Then read fields: {{ .Vars.parsed.some_field }}"}>
+				<Field label="Save to variable" hint="Name it, then read its fields in later steps (shown below).">
 					<input class="input" value={spec.into ?? ''} oninput={(e) => set('into', (e.currentTarget as HTMLInputElement).value)} />
 				</Field>
 			{:else if step.kind === 'kv_get' || step.kind === 'kv_set' || step.kind === 'kv_delete'}
-				<Field label="Key (templated)">
+				<Field label="Key" hint="A name to store this value under.">
 					<input class="input" value={spec.key ?? ''} oninput={(e) => set('key', (e.currentTarget as HTMLInputElement).value)} />
 				</Field>
 				<Field label="Scope">
@@ -446,7 +615,7 @@
 				{/if}
 				{#if step.kind === 'kv_set'}
 					<Field label="Value"><ExprField {...exprBind('value')} /></Field>
-					<Field label="TTL" hint="Optional, Go duration (1h, 7d)">
+					<Field label="Expires after" hint="Optional — like 1h or 7d. Blank = never expires.">
 						<input class="input" value={spec.ttl ?? ''} oninput={(e) => set('ttl', (e.currentTarget as HTMLInputElement).value)} />
 					</Field>
 				{:else if step.kind === 'kv_get'}
@@ -465,9 +634,22 @@
 						}))}
 					/>
 				</Field>
-				<Field label="URL (templated)">
+				<Field label="URL">
 					<input class="input font-mono text-[12px]" value={spec.url ?? ''} oninput={(e) => set('url', (e.currentTarget as HTMLInputElement).value)} />
 				</Field>
+				<Field label="Headers" hint="One per line, like  Authorization: Bearer 123. Values can use templates.">
+					<textarea
+						class="input font-mono text-[12px]"
+						rows="2"
+						value={headersToText(spec.headers)}
+						oninput={(e) => set('headers', textToHeaders((e.currentTarget as HTMLTextAreaElement).value))}
+					></textarea>
+				</Field>
+				{#if (spec.method ?? 'GET') !== 'GET'}
+					<Field label="Body" hint="Sent as the request body. JSON or a template.">
+						<ExprField {...exprBind('body')} placeholder={'{"key": "value"}'} />
+					</Field>
+				{/if}
 				<Field label="Timeout (ms)">
 					<NumberField
 						min={0}
@@ -485,7 +667,7 @@
 					<input class="input" value={spec.into ?? ''} oninput={(e) => set('into', (e.currentTarget as HTMLInputElement).value)} />
 				</Field>
 			{:else if step.kind === 'if'}
-				<Field label="Condition" hint={"Truthy: 'true' / non-zero / non-empty string"}><ExprField {...exprBind('cond')} placeholder={'{{ eq .User.Username "admin" }}'} /></Field>
+				<Field label="Condition" hint="The 'then' steps run only when this is true."><ExprField {...exprBind('cond')} placeholder={'{{ eq .User.Username "admin" }}'} /></Field>
 			{:else if step.kind === 'switch'}
 				<Field label="On"><ExprField {...exprBind('on')} /></Field>
 				<p class="hint">Add cases via the canvas — each can edit its own `when` value.</p>
@@ -512,30 +694,181 @@
 					/>
 				</Field>
 			{:else if step.kind === 'wait'}
-				<Field label="Duration" hint="Go duration: 30s, 5m, 1h, 24h">
+				<Field label="Duration" hint={isAutomation ? 'Like 10s or 30s. Up to 1 minute.' : 'Like 30s, 5m or 1h.'}>
 					<input class="input" value={spec.duration ?? '30s'} oninput={(e) => set('duration', (e.currentTarget as HTMLInputElement).value)} />
 				</Field>
 			{:else if step.kind === 'wait_for'}
-				<Field label="Trigger">
+				{@const wt = spec.trigger ?? 'component'}
+				<p class="-mt-1 mb-1 text-[11.5px] leading-snug text-muted">
+					Pause here until something happens, then keep going. If nothing happens in time, the
+					<span class="text-ink">on&nbsp;timeout</span> path runs instead.
+				</p>
+
+				<Field label="What should it wait for?">
 					<FieldSelect
-						value={spec.trigger ?? 'component'}
-						onChange={(v) => set('trigger', v)}
-						options={[
-							{ value: 'component', label: 'Button / select click' },
-							{ value: 'modal', label: 'Modal submission' }
-						]}
+						value={wt}
+						onChange={(v) => {
+							set('trigger', v);
+							if (!spec.into) set('into', v === 'message' ? 'reply' : v === 'reaction' ? 'reaction' : 'click');
+						}}
+						options={isAutomation
+							? [
+									{ value: 'component', label: 'A button is clicked', description: 'On a message this flow sent' },
+									{ value: 'message', label: 'A message is sent', description: 'Wait for someone to write something' },
+									{ value: 'reaction', label: 'A reaction is added', description: 'Wait for an emoji reaction' }
+								]
+							: [
+									{ value: 'component', label: 'A button / select click' },
+									{ value: 'modal', label: 'A form submission' }
+								]}
 					/>
 				</Field>
-				<Field label="Custom id suffix" hint='The button must have custom_id_suffix="<suffix>" for the router to match it back.'>
-					<input class="input" value={spec.custom_id_suffix ?? ''} oninput={(e) => set('custom_id_suffix', (e.currentTarget as HTMLInputElement).value)} />
+
+				{#if wt === 'component'}
+					{@const suffix = spec.custom_id_suffix ?? ''}
+					{@const known = flowButtons.some((b) => b.value === suffix)}
+					{@const useCustom = customIdStepId === step.id || (suffix !== '' && !known)}
+					<Field
+						label="Which button?"
+						hint={flowButtons.length === 0
+							? 'Buttons you add to a Send message step show up here, or enter a custom id for one you set yourself.'
+							: 'Pick a button you sent earlier, or enter a custom id.'}
+					>
+						<FieldSelect
+							value={useCustom ? '__custom__' : suffix}
+							onChange={(v) => {
+								if (v === '__custom__') customIdStepId = step.id;
+								else {
+									customIdStepId = null;
+									set('custom_id_suffix', v);
+								}
+							}}
+							options={[
+								{ value: '', label: 'Any button I sent' },
+								...flowButtons,
+								{ value: '__custom__', label: 'A specific custom id…' }
+							]}
+						/>
+						{#if useCustom}
+							<div class="mt-1.5">
+								<input
+									class="input font-mono text-[12px]"
+									placeholder="my_button_id"
+									value={suffix}
+									oninput={(e) => set('custom_id_suffix', (e.currentTarget as HTMLInputElement).value)}
+								/>
+								<p class="hint mt-1">The id you set on the button yourself. Dia handles the rest automatically, and templated ids work too.</p>
+							</div>
+						{/if}
+					</Field>
+				{:else if wt === 'modal'}
+					<Field label="Form name" hint="A short label so the form's answers come back here. The default is fine.">
+						<input class="input" placeholder="form" value={spec.custom_id_suffix ?? ''} oninput={(e) => set('custom_id_suffix', (e.currentTarget as HTMLInputElement).value)} />
+					</Field>
+				{/if}
+
+				<Field label="Who can do it?">
+					{#if isAutomation}
+						{@const who = spec.from_user?.src === '{{ .User.ID }}' ? 'member' : spec.from_user?.src ? 'custom' : 'anyone'}
+						<FieldSelect
+							value={who}
+							onChange={(v) => {
+								if (v === 'anyone') set('from_user', { lang: 'tmpl', src: '' });
+								else if (v === 'member') set('from_user', { lang: 'tmpl', src: '{{ .User.ID }}' });
+								else
+									set('from_user', {
+										lang: 'tmpl',
+										src: spec.from_user?.src === '{{ .User.ID }}' ? '' : spec.from_user?.src || ''
+									});
+							}}
+							options={[
+								{ value: 'anyone', label: 'Anyone' },
+								{ value: 'member', label: 'The member this is about', description: 'Whoever triggered the automation' },
+								{ value: 'custom', label: 'A specific person…', description: 'Enter a user id or @mention' }
+							]}
+						/>
+						{#if who === 'custom'}
+							<div class="mt-1.5"><ExprField {...exprBind('from_user')} placeholder="a user id" /></div>
+						{/if}
+					{:else}
+						<ExprField {...exprBind('from_user')} placeholder="(anyone)" />
+					{/if}
 				</Field>
-				<Field label="Restrict to user id"><ExprField {...exprBind('from_user')} placeholder="(any)" /></Field>
-				<Field label="Timeout">
-					<input class="input" value={spec.timeout ?? '10m'} oninput={(e) => set('timeout', (e.currentTarget as HTMLInputElement).value)} />
+
+				{#if wt === 'message' || wt === 'reaction'}
+					{@const cm = spec.channel_mode ?? 'any'}
+					<Field label="Where?">
+						<FieldSelect
+							value={cm}
+							onChange={(v) => set('channel_mode', v)}
+							options={[
+								{ value: 'any', label: 'Anywhere in the server' },
+								{ value: 'current', label: 'The same channel', description: 'Where this automation is acting' },
+								{ value: 'only', label: 'Only certain channels' },
+								{ value: 'except', label: 'Everywhere except some' }
+							]}
+						/>
+					</Field>
+					{#if cm === 'only' || cm === 'except'}
+						<Field
+							label="Which channels?"
+							hint={cm === 'except'
+								? 'Watch everywhere except these.'
+								: 'Only watch these channels.'}
+						>
+							<ChannelPicker
+								multiple
+								value={spec.channels ?? []}
+								onChange={(v) => set('channels', v)}
+								placeholder={cm === 'except' ? 'Channels to skip' : 'Channels to watch'}
+							/>
+						</Field>
+					{/if}
+				{/if}
+
+				{#if wt === 'reaction'}
+					<Field label="Which emoji?" hint="Leave blank to accept any emoji.">
+						<input class="input" placeholder="👍" value={spec.emoji ?? ''} oninput={(e) => set('emoji', (e.currentTarget as HTMLInputElement).value)} />
+					</Field>
+				{/if}
+
+				{#if isAutomation}
+					<Field label="How long to wait?">
+						<FieldSelect
+							value={spec.timeout ?? '30s'}
+							onChange={(v) => set('timeout', v)}
+							options={[
+								{ value: '10s', label: '10 seconds' },
+								{ value: '30s', label: '30 seconds' },
+								{ value: '60s', label: '1 minute', description: 'The maximum' }
+							]}
+						/>
+					</Field>
+				{:else}
+					<Field label="Timeout" hint="Go duration, e.g. 30s, 5m.">
+						<input class="input" value={spec.timeout ?? '10m'} oninput={(e) => set('timeout', (e.currentTarget as HTMLInputElement).value)} />
+					</Field>
+				{/if}
+
+				<Field label="Remember it as" hint={rememberHint(wt)}>
+					<input
+						class="input"
+						placeholder={wt === 'message' ? 'reply' : wt === 'reaction' ? 'reaction' : 'click'}
+						value={spec.into ?? ''}
+						oninput={(e) => set('into', (e.currentTarget as HTMLInputElement).value)}
+					/>
 				</Field>
-				<Field label="Save click to" hint={"Branch on it: {{ eq .Vars.click.user_id .User.ID }} = clicker is the invoker"}>
-					<input class="input" value={spec.into ?? ''} oninput={(e) => set('into', (e.currentTarget as HTMLInputElement).value)} />
-				</Field>
+
+				{#if isAutomation}
+					<p class="px-0.5 text-[10.5px] leading-snug text-faint">
+						{#if wt === 'component' || wt === 'modal'}
+							The steps after this run when it arrives, and you can reply right there.
+						{:else}
+							The steps after this run when it arrives (use Send message there).
+						{/if}
+						Drag the node's right dot to build the <span class="text-muted">on&nbsp;timeout</span> path.
+					</p>
+				{/if}
 			{:else if step.kind === 'exit'}
 				<Field label="Reason (logged)">
 					<input class="input" value={spec.reason ?? ''} oninput={(e) => set('reason', (e.currentTarget as HTMLInputElement).value)} />
@@ -548,10 +881,15 @@
 				<Field label="Command name">
 					<input class="input" value={spec.command ?? ''} oninput={(e) => set('command', (e.currentTarget as HTMLInputElement).value)} />
 				</Field>
-				<label class="flex items-center justify-between gap-3">
-					<span class="text-sm">Inherit scope</span>
-					<Toggle checked={spec.inherit_scope ?? true} onchange={(v) => set('inherit_scope', v)} />
-				</label>
+				<p class="hint">The called command runs with this flow's variables and inputs.</p>
+				<Field label="Arguments" hint="One per line, like  amount = 5. Values can use templates.">
+					<textarea
+						class="input font-mono text-[12px]"
+						rows="2"
+						value={argsToText(spec.args)}
+						oninput={(e) => set('args', textToArgs((e.currentTarget as HTMLTextAreaElement).value))}
+					></textarea>
+				</Field>
 			{:else if step.kind === 'audit_note'}
 				<Field label="Action">
 					<input class="input" value={spec.action ?? ''} oninput={(e) => set('action', (e.currentTarget as HTMLInputElement).value)} />
@@ -561,8 +899,8 @@
 				<Field label="Title">
 					<input class="input" maxlength="45" value={spec.title ?? ''} oninput={(e) => set('title', (e.currentTarget as HTMLInputElement).value)} />
 				</Field>
-				<Field label="Form id" hint="Routes the submission back to this run.">
-					<input class="input font-mono text-[12px]" value={spec.custom_id_suffix ?? ''} oninput={(e) => set('custom_id_suffix', (e.currentTarget as HTMLInputElement).value)} />
+				<Field label="Form name" hint="A short label so the answers come back here. The default is fine.">
+					<input class="input font-mono text-[12px]" placeholder="form" value={spec.custom_id_suffix ?? ''} oninput={(e) => set('custom_id_suffix', (e.currentTarget as HTMLInputElement).value)} />
 				</Field>
 				<div>
 					<div class="mb-1 flex items-center justify-between">
@@ -613,7 +951,7 @@
 								<div class="mt-1.5 flex items-center gap-1.5">
 									<input
 										class="input h-6 min-w-0 flex-1 font-mono text-[11px]"
-										placeholder={"answer_id — read it as {{ .Vars.form.answer_id }}"}
+										placeholder="answer_id (a short name for this answer)"
 										value={f.custom_id ?? ''}
 										oninput={(e) => {
 											const fields = [...(spec.fields ?? [])];
@@ -644,6 +982,46 @@
 										set('fields', fields);
 									}}
 								/>
+								<div class="mt-1.5 flex items-center gap-1.5">
+									<input
+										class="input h-6 w-16 text-[11px]"
+										type="number"
+										min="0"
+										max="4000"
+										placeholder="min"
+										value={f.min_length ?? ''}
+										oninput={(e) => {
+											const fields = [...(spec.fields ?? [])];
+											const n = (e.currentTarget as HTMLInputElement).value;
+											fields[fi] = { ...fields[fi], min_length: n === '' ? undefined : Number(n) };
+											set('fields', fields);
+										}}
+									/>
+									<input
+										class="input h-6 w-16 text-[11px]"
+										type="number"
+										min="0"
+										max="4000"
+										placeholder="max"
+										value={f.max_length ?? ''}
+										oninput={(e) => {
+											const fields = [...(spec.fields ?? [])];
+											const n = (e.currentTarget as HTMLInputElement).value;
+											fields[fi] = { ...fields[fi], max_length: n === '' ? undefined : Number(n) };
+											set('fields', fields);
+										}}
+									/>
+									<input
+										class="input h-6 min-w-0 flex-1 text-[11px]"
+										placeholder="Prefilled value (optional)"
+										value={f.value ?? ''}
+										oninput={(e) => {
+											const fields = [...(spec.fields ?? [])];
+											fields[fi] = { ...fields[fi], value: (e.currentTarget as HTMLInputElement).value };
+											set('fields', fields);
+										}}
+									/>
+								</div>
 							</div>
 						{/each}
 					</div>
@@ -663,6 +1041,10 @@
 				<Field label="Save answers to" hint="Submission lands in this variable.">
 					<input class="input" value={spec.into ?? ''} oninput={(e) => set('into', (e.currentTarget as HTMLInputElement).value)} />
 				</Field>
+			{/if}
+
+			{#if produced}
+				<StepOutputHint {produced} />
 			{/if}
 
 			<details class="rounded-md border border-line bg-ink-2/40">

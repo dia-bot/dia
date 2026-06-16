@@ -30,7 +30,9 @@ token = System.fetch_env!("DISCORD_TOKEN")
 gateway_intents =
   System.get_env(
     "GATEWAY_INTENTS",
-    "guilds,guild_members,guild_messages,message_content"
+    # guild_message_reactions / guild_voice_states / guild_moderation power the
+    # reaction, voice and ban automation triggers (all non-privileged).
+    "guilds,guild_members,guild_messages,message_content,guild_message_reactions,guild_voice_states,guild_moderation"
   )
   |> String.split([",", " "], trim: true)
   |> Enum.map(&String.to_atom/1)

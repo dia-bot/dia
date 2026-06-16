@@ -52,9 +52,10 @@ func hWaitFor(ctx context.Context, h *Halt) error {
 		}
 	}
 	// Hard cap: the interaction token itself dies after ~15 minutes, so a
-	// longer park can never be answered anyway.
-	if timeout > 10*time.Minute {
-		timeout = 10 * time.Minute
+	// longer park can never be answered anyway. Automations clamp tighter (the
+	// engine's MaxWaitFor), since an event run has no interaction keeping alive.
+	if max := h.Engine.maxWaitFor; max > 0 && timeout > max {
+		timeout = max
 	}
 	resume := time.Now().Add(timeout)
 
@@ -64,7 +65,7 @@ func hWaitFor(ctx context.Context, h *Halt) error {
 		// the router can match the suffix the admin set. The suffix is a
 		// template (e.g. vote_{{ .Vars.idx }}) so per-item buttons inside a
 		// loop each get their own wait; the run id already isolates users.
-		customID = "ccmd:" + h.Run.ID
+		customID = h.Engine.routePrefix + h.Run.ID
 		if spec.CustomIDSuffix != "" {
 			customID += ":" + templated(ctx, h, spec.CustomIDSuffix)
 		}

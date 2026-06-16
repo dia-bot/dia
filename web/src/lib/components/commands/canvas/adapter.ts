@@ -63,7 +63,8 @@ export type Slot =
 	| { kind: 'case'; index: number }
 	| { kind: 'branch'; index: number }
 	| { kind: 'on_error' }
-	| { kind: 'on_error_case'; index: number };
+	| { kind: 'on_error_case'; index: number }
+	| { kind: 'on_timeout' };
 
 /**
  * slotsForStep returns the legal insertion slots on a target step. Used by the
@@ -83,6 +84,8 @@ export function slotsForStep(step: Step): Slot[] {
 		// eslint-disable-next-line @typescript-eslint/no-explicit-any
 		const branches = ((step.spec ?? {}) as any).branches ?? [];
 		branches.forEach((_: unknown, i: number) => slots.push({ kind: 'branch', index: i }));
+	} else if (step.kind === 'wait_for') {
+		slots.push({ kind: 'on_timeout' });
 	}
 	slots.push({ kind: 'on_error' });
 	(step.on_error_cases ?? []).forEach((_, i) =>
@@ -118,6 +121,7 @@ export type BranchKind =
 	| 'body'
 	| 'parallel'
 	| 'on_error'
+	| 'on_timeout'
 	| 'click'
 	| 'after';
 
@@ -475,6 +479,20 @@ export function treeToGraph(
 						caseIndex: bi
 					});
 				});
+			} else if (step.kind === 'wait_for') {
+				// The on-timeout path: what runs if the wait window elapses
+				// without the click/submit/message. Renders as a labeled arm off
+				// the wait node's right "on timeout" dot.
+				// eslint-disable-next-line @typescript-eslint/no-explicit-any
+				const onTimeout = (((step.spec ?? {}) as any).on_timeout ?? []) as Step[];
+				if (onTimeout.length > 0) {
+					walkBranch(onTimeout, joinPath(stepPath, 'spec', 'on_timeout'), {
+						id: step.id,
+						handle: 'on_timeout',
+						label: 'on timeout',
+						branch: 'on_timeout'
+					});
+				}
 			}
 
 			// Error handling renders as a switch-style ROUTER node hanging off

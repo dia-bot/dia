@@ -63,6 +63,10 @@ type Context struct {
 	Guild   Guild
 	Channel Channel
 	Args    []string
+	// Event carries the trigger payload for server-event automations under
+	// `.Event` (e.g. {{ .Event.Message.Content }}, {{ .Event.Emoji }}). It's
+	// nil for slash-command runs and any other non-event context.
+	Event map[string]any
 	// Error is populated inside an on_error subtree so the recovery
 	// branch's templates can dispatch on `.Error.Kind`, surface
 	// `.Error.Message`, etc. Outside an error scope it's zero-valued.

@@ -151,6 +151,27 @@ export const api = {
 	deleteCommandTemplate: (id: string, tid: number) =>
 		req('DELETE', `/api/guilds/${id}/command-templates/${tid}`),
 
+	// ── Automations (server-event step flows) ──
+	automations: (id: string) =>
+		req<{ automations: any[]; builtins: any[] }>('GET', `/api/guilds/${id}/automations`),
+	automation: (id: string, aid: string) => req<any>('GET', `/api/guilds/${id}/automations/${aid}`),
+	upsertAutomation: (id: string, auto: unknown) =>
+		req<{ id: string; validation: any }>('PUT', `/api/guilds/${id}/automations`, auto),
+	validateAutomation: (id: string, auto: unknown) =>
+		req<{ validation: any }>('POST', `/api/guilds/${id}/automations/validate`, auto),
+	deleteAutomation: (id: string, aid: string) =>
+		req('DELETE', `/api/guilds/${id}/automations/${aid}`),
+	automationTriggers: (id: string) =>
+		req<{ triggers: any[] }>('GET', `/api/guilds/${id}/automation-triggers`),
+	automationRuns: (id: string, automationId?: string, limit = 25) =>
+		req<{ runs: any[] }>(
+			'GET',
+			`/api/guilds/${id}/automation-runs?limit=${limit}` +
+				(automationId ? `&automation_id=${automationId}` : '')
+		),
+	automationRun: (id: string, runId: string) =>
+		req<{ run: any; logs: any[] }>('GET', `/api/guilds/${id}/automation-runs/${runId}`),
+
 	menus: (id: string) => req<{ menus: any[] }>('GET', `/api/guilds/${id}/reaction-roles`),
 	upsertMenu: (id: string, menu: unknown) =>
 		req<{ id?: number; ok?: boolean }>('PUT', `/api/guilds/${id}/reaction-roles`, menu),

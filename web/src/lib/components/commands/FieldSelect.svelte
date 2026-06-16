@@ -11,7 +11,9 @@
 		class: cls = ''
 	}: {
 		value?: string;
-		options: { value: string; label: string }[];
+		// description (optional) renders as a muted second line in the dropdown
+		// so each choice can explain itself in plain language.
+		options: { value: string; label: string; description?: string }[];
 		onChange?: (v: string) => void;
 		placeholder?: string;
 		class?: string;
@@ -26,7 +28,7 @@
 	</Select.Trigger>
 	<Select.Content>
 		{#each options as o (o.value)}
-			<Select.Item value={o.value} label={o.label} />
+			<Select.Item value={o.value} label={o.label} description={o.description} />
 		{/each}
 	</Select.Content>
 </Select.Root>

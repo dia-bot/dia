@@ -38,6 +38,7 @@ import (
 	"github.com/dia-bot/dia/internal/logging"
 	"github.com/dia-bot/dia/internal/store"
 
+	"github.com/dia-bot/dia/internal/features/automations"
 	"github.com/dia-bot/dia/internal/features/customcommands"
 	"github.com/dia-bot/dia/internal/features/leveling"
 	"github.com/dia-bot/dia/internal/features/moderation"
@@ -125,7 +126,7 @@ func run(ctx context.Context, st *store.Store) error {
 	fmt.Println("seed complete")
 	fmt.Printf("  primary guild : %d (Dia Dev Server)\n", primary)
 	fmt.Printf("  extra guilds  : %d, %d\n", auroraGuild, nebulaGuild)
-	fmt.Println("  features      : welcome, leveling, autorole, moderation, automod, customcommands (enabled)")
+	fmt.Println("  features      : welcome, leveling, autorole, moderation, automod, customcommands, automations (enabled)")
 	fmt.Printf("  leaderboard   : %d members; rewards at level 5 and 10\n", len(levelFixtures))
 	fmt.Println("  moderation    : warn + timeout + ban cases")
 	fmt.Println("  extras        : 1 reaction-role menu, 2 custom commands, audit entries")
@@ -153,6 +154,9 @@ func seedPrimary(ctx context.Context, st *store.Store, guildID int64) error {
 		return err
 	}
 	if err := seedCustomCommands(ctx, st, guildID); err != nil {
+		return err
+	}
+	if err := seedAutomations(ctx, st, guildID); err != nil {
 		return err
 	}
 	return seedAuditLog(ctx, st, guildID)
@@ -184,6 +188,8 @@ func seedFeatures(ctx context.Context, st *store.Store, guildID int64) error {
 
 	cc := customcommands.Default()
 
+	auto := automations.Default()
+
 	configs := []struct {
 		key string
 		val any
@@ -194,6 +200,7 @@ func seedFeatures(ctx context.Context, st *store.Store, guildID int64) error {
 		{moderation.FeatureKey, mod},
 		{moderation.AutomodKey, automod},
 		{customcommands.FeatureKey, cc},
+		{automations.FeatureKey, auto},
 	}
 	for _, c := range configs {
 		raw, err := json.Marshal(c.val)
@@ -409,6 +416,90 @@ func seedCustomCommands(ctx context.Context, st *store.Store, guildID int64) err
 			Definition:  raw,
 		}); err != nil {
 			return fmt.Errorf("upsert command %s: %w", c.name, err)
+		}
+	}
+	return nil
+}
+
+// seedAutomations seeds a couple of sample server-event automations. Names are
+// the idempotency key (the table has no unique(name) constraint), so a re-run
+// skips ones that already exist instead of duplicating them.
+func seedAutomations(ctx context.Context, st *store.Store, guildID int64) error {
+	existing, err := st.Automations.List(ctx, guildID)
+	if err != nil {
+		return err
+	}
+	have := map[string]bool{}
+	for _, a := range existing {
+		have[a.Name] = true
+	}
+
+	fixtures := []struct {
+		name, desc, trigger string
+		cfg                 automations.TriggerConfig
+		def                 customcommands.Definition
+	}{
+		{
+			name:    "Thank boosters",
+			desc:    "Post a thank-you when a member gains the booster role",
+			trigger: "role_added",
+			cfg:     automations.TriggerConfig{Role: sid(roleMember)},
+			def: customcommands.Definition{Steps: []customcommands.Step{{
+				ID:   "thank",
+				Kind: customcommands.KindSendMessage,
+				Spec: mustJSON(customcommands.SpecSendMessage{
+					Channel: customcommands.Expr{Src: sid(welcomeChannel)},
+					Content: "💖 Thank you {{ .User.Mention }} for boosting **{{ .Guild.Name }}**!",
+				}),
+			}}},
+		},
+		{
+			name:    "Auto-thread questions",
+			desc:    "Open a thread on messages that ask a question",
+			trigger: "message_create",
+			cfg: automations.TriggerConfig{
+				Channels:   []string{sid(welcomeChannel)},
+				Keywords:   []string{"?"},
+				IgnoreBots: true,
+			},
+			def: customcommands.Definition{Steps: []customcommands.Step{{
+				ID:   "thread",
+				Kind: customcommands.KindThreadCreate,
+				Spec: mustJSON(customcommands.SpecThreadCreate{
+					Channel:        customcommands.Expr{Src: "{{ .Channel.ID }}"},
+					Message:        customcommands.Expr{Src: "{{ .Event.message.id }}"},
+					Name:           "Discussion",
+					AutoArchiveMin: 1440,
+				}),
+			}}},
+		},
+	}
+	for _, f := range fixtures {
+		if have[f.name] {
+			continue
+		}
+		def, err := json.Marshal(f.def)
+		if err != nil {
+			return fmt.Errorf("marshal automation %s: %w", f.name, err)
+		}
+		cfg, err := json.Marshal(f.cfg)
+		if err != nil {
+			return fmt.Errorf("marshal automation cfg %s: %w", f.name, err)
+		}
+		evType, _ := automations.EventForTrigger(f.trigger)
+		if _, err := st.Automations.Upsert(ctx, store.Automation{
+			GuildID:       guildID,
+			Name:          f.name,
+			Description:   f.desc,
+			Enabled:       true,
+			Status:        string(automations.StatusPublished),
+			Version:       1,
+			TriggerType:   f.trigger,
+			EventType:     string(evType),
+			TriggerConfig: cfg,
+			Definition:    def,
+		}); err != nil {
+			return fmt.Errorf("upsert automation %s: %w", f.name, err)
 		}
 	}
 	return nil

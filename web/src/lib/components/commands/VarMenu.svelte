@@ -4,7 +4,12 @@
 	// values in scope: the command's properties ({{ .Input.<name> }}), declared
 	// variables ({{ .Vars.<name> }}), and the user / server / channel context.
 	import { getContext } from 'svelte';
-	import { EXPR_SCOPE_CTX, TMPL_STATIC_VARS, type ExprScope } from '$lib/commands/expr-meta';
+	import {
+		EXPR_SCOPE_CTX,
+		TMPL_STATIC_VARS,
+		collectProducedVars,
+		type ExprScope
+	} from '$lib/commands/expr-meta';
 	import { Popover } from '$lib/components/ui';
 
 	import Braces from 'lucide-svelte/icons/braces';
@@ -30,6 +35,13 @@
 					.map((o) => ({ token: `{{ .Input.${o.name} }}`, short: o.description || o.kind }))
 			});
 		}
+		const extra = scope?.extraVars ?? [];
+		if (extra.length > 0) {
+			out.push({
+				label: 'Trigger',
+				items: extra.map((v) => ({ token: `{{ ${v.path} }}`, short: v.short }))
+			});
+		}
 		const vars = scope?.variables ?? [];
 		if (vars.length > 0) {
 			out.push({
@@ -37,6 +49,15 @@
 				items: vars
 					.filter((v) => v.name)
 					.map((v) => ({ token: `{{ .Vars.${v.name} }}`, short: v.type }))
+			});
+		}
+		// Values earlier steps save (a sent message, a fetched member, a form
+		// answer, …) and their fields, so they can be dropped straight in here.
+		const stepVars = collectProducedVars(scope?.steps);
+		if (stepVars.length > 0) {
+			out.push({
+				label: 'From earlier steps',
+				items: stepVars.map((v) => ({ token: `{{ ${v.path} }}`, short: v.short }))
 			});
 		}
 		out.push({

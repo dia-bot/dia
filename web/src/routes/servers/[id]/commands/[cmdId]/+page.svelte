@@ -631,6 +631,11 @@
 			if (!spec.branches[bi]) spec.branches[bi] = [];
 			spec.branches[bi].push(ns);
 			src.spec = spec;
+		} else if (h === 'on_timeout') {
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any
+			const spec = (src.spec ?? {}) as any;
+			spec.on_timeout = [...(spec.on_timeout ?? []), ns];
+			src.spec = spec;
 		} else if (h.startsWith('component-')) {
 			// Dragging out of a button's dot. ONE hidden listener per message
 			// (waits for any of its buttons) + a hidden switch routing by the
@@ -813,6 +818,11 @@
 			spec.branches = spec.branches ?? [];
 			if (!spec.branches[bi]) spec.branches[bi] = [];
 			spec.branches[bi].push(...chain);
+			src.spec = spec;
+		} else if (h === 'on_timeout') {
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any
+			const spec = (src.spec ?? {}) as any;
+			spec.on_timeout = [...(spec.on_timeout ?? []), ...chain];
 			src.spec = spec;
 		} else branch.splice(index + 1, 0, ...chain);
 	}

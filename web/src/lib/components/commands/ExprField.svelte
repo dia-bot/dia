@@ -8,6 +8,8 @@
 		TMPL_ERROR_VARS,
 		TMPL_SNIPPETS,
 		EXPR_SCOPE_CTX,
+		collectProducedVars,
+		dedupeVars,
 		type TmplFunc,
 		type TmplVar,
 		type ExprScope
@@ -118,11 +120,23 @@
 		}))
 	]);
 
-	const scopeVars = $derived([
-		...TMPL_STATIC_VARS,
-		...dynamicVars,
-		...(inErrorScope ? TMPL_ERROR_VARS : [])
-	]);
+	// Host-injected extras (e.g. an automation trigger's `.Event.*` fields).
+	const extraVars = $derived(scope?.extraVars ?? []);
+
+	// Variables produced by earlier steps (a sent message, a fetched member, a
+	// wait_for result, …) plus their fields — so later fields can reference them
+	// by name instead of the admin having to memorise what each step saves.
+	const stepVars = $derived(collectProducedVars(scope?.steps));
+
+	const scopeVars = $derived(
+		dedupeVars([
+			...TMPL_STATIC_VARS,
+			...extraVars,
+			...dynamicVars,
+			...stepVars,
+			...(inErrorScope ? TMPL_ERROR_VARS : [])
+		])
+	);
 
 	const filteredFuncs = $derived(
 		TMPL_FUNCTIONS.filter((f) => {

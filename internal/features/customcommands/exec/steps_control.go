@@ -125,11 +125,18 @@ func hRunCommand(ctx context.Context, h *Halt) error {
 	if err := json.Unmarshal(target.Definition, &def); err != nil {
 		return err
 	}
-	// Merge in args as new input keys (overlay).
+	// Merge in args as new input keys (overlay). String values are templated
+	// against the caller's scope so an arg can be {{ .Input.x }} / {{ .Vars.y }};
+	// non-string values pass through verbatim.
 	if len(spec.Args) > 0 {
 		var args map[string]any
 		if err := json.Unmarshal(spec.Args, &args); err == nil {
 			for k, v := range args {
+				if sv, ok := v.(string); ok {
+					if rendered, terr := cc.EvalTemplated(ctx, sv, h.Scope); terr == nil {
+						v = rendered
+					}
+				}
 				h.Scope.Data.Input[k] = v
 			}
 		}

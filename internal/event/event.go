@@ -30,7 +30,16 @@ const (
 	TypeMemberAdd         Type = "GUILD_MEMBER_ADD"
 	TypeMemberRemove      Type = "GUILD_MEMBER_REMOVE"
 	TypeMemberUpdate      Type = "GUILD_MEMBER_UPDATE"
+	TypeBanAdd            Type = "GUILD_BAN_ADD"
+	TypeBanRemove         Type = "GUILD_BAN_REMOVE"
 	TypeMessageCreate     Type = "MESSAGE_CREATE"
+	TypeMessageUpdate     Type = "MESSAGE_UPDATE"
+	TypeMessageDelete     Type = "MESSAGE_DELETE"
+	TypeReactionAdd       Type = "MESSAGE_REACTION_ADD"
+	TypeReactionRemove    Type = "MESSAGE_REACTION_REMOVE"
+	TypeThreadCreate      Type = "THREAD_CREATE"
+	TypeThreadDelete      Type = "THREAD_DELETE"
+	TypeVoiceStateUpdate  Type = "VOICE_STATE_UPDATE"
 	TypeInteractionCreate Type = "INTERACTION_CREATE"
 )
 
@@ -69,12 +78,13 @@ type User struct {
 
 // Member is a guild member (normalized subset).
 type Member struct {
-	User     User     `json:"user"`
-	Nick     string   `json:"nick,omitempty"`
-	Avatar   string   `json:"avatar,omitempty"`
-	Roles    []string `json:"roles"`
-	JoinedAt string   `json:"joined_at,omitempty"`
-	Pending  bool     `json:"pending,omitempty"`
+	User         User     `json:"user"`
+	Nick         string   `json:"nick,omitempty"`
+	Avatar       string   `json:"avatar,omitempty"`
+	Roles        []string `json:"roles"`
+	JoinedAt     string   `json:"joined_at,omitempty"`
+	PremiumSince string   `json:"premium_since,omitempty"` // when the member started boosting; "" = not boosting
+	Pending      bool     `json:"pending,omitempty"`
 }
 
 // Channel is a guild channel (normalized subset).
@@ -148,10 +158,20 @@ type MemberRemove struct {
 	MemberCount int    `json:"member_count,omitempty"`
 }
 
-// MemberUpdate is delivered on GUILD_MEMBER_UPDATE.
+// MemberUpdate is delivered on GUILD_MEMBER_UPDATE. OldRoles carries the
+// member's role set before the change when the gateway can recover it (it may
+// be empty under the thin/NoOp cache), letting consumers diff added/removed
+// roles and detect boosts (premium_since transitions).
 type MemberUpdate struct {
+	GuildID  string   `json:"guild_id"`
+	Member   Member   `json:"member"`
+	OldRoles []string `json:"old_roles,omitempty"`
+}
+
+// BanEvent is delivered on GUILD_BAN_ADD / GUILD_BAN_REMOVE.
+type BanEvent struct {
 	GuildID string `json:"guild_id"`
-	Member  Member `json:"member"`
+	User    User   `json:"user"`
 }
 
 // Message is delivered on MESSAGE_CREATE (subset sufficient for XP + automod).
@@ -166,4 +186,52 @@ type Message struct {
 	MentionRoles    []string `json:"mention_roles,omitempty"`
 	Mentions        []User   `json:"mentions,omitempty"`
 	AttachmentCount int      `json:"attachment_count,omitempty"`
+}
+
+// MessageUpdate is delivered on MESSAGE_UPDATE. Discord sends the full updated
+// message under the thin cache, so it carries the same shape as Message.
+type MessageUpdate struct {
+	Message
+}
+
+// MessageDelete is delivered on MESSAGE_DELETE (only the ids survive).
+type MessageDelete struct {
+	ID        string `json:"id"`
+	ChannelID string `json:"channel_id"`
+	GuildID   string `json:"guild_id,omitempty"`
+}
+
+// Emoji is the reaction emoji (custom emojis carry an id; unicode ones only a name).
+type Emoji struct {
+	ID       string `json:"id,omitempty"`
+	Name     string `json:"name"`
+	Animated bool   `json:"animated,omitempty"`
+}
+
+// Reaction is delivered on MESSAGE_REACTION_ADD / MESSAGE_REACTION_REMOVE.
+type Reaction struct {
+	UserID    string  `json:"user_id"`
+	ChannelID string  `json:"channel_id"`
+	MessageID string  `json:"message_id"`
+	GuildID   string  `json:"guild_id,omitempty"`
+	Emoji     Emoji   `json:"emoji"`
+	Member    *Member `json:"member,omitempty"` // present on REACTION_ADD in guilds
+}
+
+// VoiceState is delivered on VOICE_STATE_UPDATE. ChannelID == "" means the
+// member disconnected. The gateway can't recover the previous channel under the
+// thin cache; consumers that need join/leave/move transitions diff against
+// their own last-known state.
+type VoiceState struct {
+	GuildID   string  `json:"guild_id"`
+	ChannelID string  `json:"channel_id,omitempty"`
+	UserID    string  `json:"user_id"`
+	Member    *Member `json:"member,omitempty"`
+	SessionID string  `json:"session_id,omitempty"`
+	Deaf      bool    `json:"deaf,omitempty"`
+	Mute      bool    `json:"mute,omitempty"`
+	SelfDeaf  bool    `json:"self_deaf,omitempty"`
+	SelfMute  bool    `json:"self_mute,omitempty"`
+	SelfVideo bool    `json:"self_video,omitempty"`
+	Stream    bool    `json:"self_stream,omitempty"`
 }

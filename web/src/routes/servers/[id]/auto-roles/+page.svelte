@@ -5,7 +5,7 @@
 	import { api } from '$lib/api';
 	import Field from '$lib/components/Field.svelte';
 	import Toggle from '$lib/components/Toggle.svelte';
-	import MultiSelect from '$lib/components/MultiSelect.svelte';
+	import RolePicker from '$lib/components/RolePicker.svelte';
 	import SaveBar from '$lib/components/SaveBar.svelte';
 
 	const store = getContext<GuildStore>(GUILD_CTX);
@@ -31,7 +31,6 @@
 	let saving = $state(false);
 	let baseline = $state('');
 
-	const roleOpts = $derived(store.roleOptions());
 	const dirty = $derived(loaded && JSON.stringify({ enabled, cfg }) !== baseline);
 
 	onMount(async () => {
@@ -78,7 +77,12 @@
 		<section class="card p-4 sm:p-6">
 			<h2 class="mb-4 text-base font-semibold">Roles</h2>
 			<Field label="Roles to assign on join" hint="New members receive these roles automatically.">
-				<MultiSelect bind:value={cfg.roles} options={roleOpts} placeholder="Add a role…" />
+				<RolePicker
+					multiple
+					value={cfg.roles}
+					onChange={(v) => (cfg.roles = v as string[])}
+					placeholder="Add a role…"
+				/>
 			</Field>
 		</section>
 
