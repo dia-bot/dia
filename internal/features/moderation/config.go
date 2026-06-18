@@ -15,12 +15,23 @@ type Config struct {
 	LogChannel string `json:"log_channel"`
 	// DMOnAction DMs the affected user a notice when an action is taken.
 	DMOnAction bool `json:"dm_on_action"`
+	// ReasonTemplates are quick-pick canned reasons offered (via autocomplete) on
+	// the moderation commands so moderators stay consistent.
+	ReasonTemplates []string `json:"reason_templates,omitempty"`
 }
 
 // Default returns sensible moderation defaults.
 func Default() Config {
 	return Config{
 		DMOnAction: true,
+		ReasonTemplates: []string{
+			"Spamming",
+			"Advertising",
+			"Harassment / hate speech",
+			"NSFW content",
+			"Breaking server rules",
+			"Ban evasion",
+		},
 	}
 }
 
@@ -58,6 +69,34 @@ type AutomodConfig struct {
 	// AlertChannel optionally receives a dedicated automod alert embed on every
 	// hit, separate from the moderation mod-log ("" = post to the mod-log only).
 	AlertChannel string `json:"alert_channel"`
+	// Raid is the anti-raid join-velocity guard (separate from per-message rules).
+	Raid RaidConfig `json:"raid"`
+}
+
+// RaidConfig is the anti-raid guard. It watches the rate of member joins; when
+// more than Threshold members join inside Window seconds the guild enters "raid
+// mode" and every subsequent joiner (optionally only new/avatarless accounts) is
+// actioned, until Window passes with no new joins (auto-calm) or a moderator
+// clears it. This reuses the same per-guild heat idea as escalation but on joins
+// instead of messages.
+type RaidConfig struct {
+	Enabled bool `json:"enabled"`
+	// Window is the rolling join-rate window in seconds.
+	Window int `json:"window"`
+	// Threshold is the number of joins within Window that trips raid mode.
+	Threshold int `json:"threshold"`
+	// Action is applied to joiners while raid mode is active: "kick" | "ban" |
+	// "timeout" (Action "" => "kick").
+	Action string `json:"action"`
+	// TimeoutSeconds is the duration when Action == "timeout".
+	TimeoutSeconds int `json:"timeout_seconds,omitempty"`
+	// OnlyNewAccounts limits the action to accounts younger than NewAccountHours
+	// (so established members caught in a join spike are left alone).
+	OnlyNewAccounts bool `json:"only_new_accounts"`
+	NewAccountHours int  `json:"new_account_hours,omitempty"`
+	// AlertChannel receives a notice when raid mode toggles on/off ("" => the
+	// automod AlertChannel or mod-log).
+	AlertChannel string `json:"alert_channel,omitempty"`
 }
 
 // AutomodRule is one detection trigger plus the actions taken when it fires.
@@ -250,6 +289,14 @@ func DefaultAutomod() AutomodConfig {
 				{Points: 8, Action: "kick"},
 				{Points: 12, Action: "ban"},
 			},
+		},
+		Raid: RaidConfig{
+			Enabled:         false,
+			Window:          10,
+			Threshold:       8,
+			Action:          "kick",
+			OnlyNewAccounts: true,
+			NewAccountHours: 72,
 		},
 	}
 }

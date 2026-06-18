@@ -64,9 +64,24 @@ export interface Escalation {
 	tiers: EscalationTier[];
 }
 
+// RaidConfig mirrors moderation.RaidConfig (Go). The anti-raid join-velocity
+// guard: when more than `threshold` members join within `window` seconds the
+// guild enters raid mode and joiners are actioned until it auto-calms.
+export interface RaidConfig {
+	enabled: boolean;
+	window: number;
+	threshold: number;
+	action: 'kick' | 'ban' | 'timeout';
+	timeout_seconds?: number;
+	only_new_accounts: boolean;
+	new_account_hours?: number;
+	alert_channel?: string;
+}
+
 export interface AutomodConfig {
 	rules: AutomodRule[];
 	escalation: Escalation;
+	raid: RaidConfig;
 	exempt_roles: string[];
 	exempt_channels: string[];
 	ignore_bots: boolean;
@@ -81,6 +96,7 @@ export type TriggerKey =
 	| 'regex'
 	| 'invites'
 	| 'links'
+	| 'scam_links'
 	| 'spam'
 	| 'duplicates'
 	| 'mentions'
@@ -218,6 +234,25 @@ export const TRIGGERS: TriggerSpec[] = [
 			{ key: 'domains', label: 'Blocked domains', type: 'words', showWhen: { key: 'link_mode', in: ['blocklist'] } }
 		],
 		defaults: { link_mode: 'all' }
+	},
+	{
+		key: 'scam_links',
+		label: 'Scam & phishing links',
+		short: 'Block known malicious domains (live threat feed)',
+		description:
+			'Checks links against a continuously-updated list of known phishing and scam domains (Discord nitro scams, IP loggers, token stealers). The list syncs automatically in the background, so it catches new campaigns without you maintaining it.',
+		category: 'Content',
+		surface: 'message',
+		icon: 'ShieldAlert',
+		fields: [
+			{
+				key: 'allow_list',
+				label: 'Allowed domains',
+				type: 'words',
+				hint: 'Domains to never flag even if they appear on the feed (rare).'
+			}
+		],
+		defaults: {}
 	},
 	{
 		key: 'spam',
@@ -554,6 +589,14 @@ export function defaultConfig(): AutomodConfig {
 				{ points: 12, action: 'ban' }
 			]
 		},
+		raid: {
+			enabled: false,
+			window: 10,
+			threshold: 8,
+			action: 'kick',
+			only_new_accounts: true,
+			new_account_hours: 72
+		},
 		exempt_roles: [],
 		exempt_channels: [],
 		ignore_bots: true,
@@ -571,6 +614,8 @@ export function triggerSummary(t: RuleTrigger): string {
 			return `${t.patterns?.length ?? 0} pattern(s)`;
 		case 'invites':
 			return 'Discord invite links';
+		case 'scam_links':
+			return 'known phishing/scam domains';
 		case 'links':
 			return t.link_mode === 'allowlist'
 				? `Only ${t.allow_list?.length ?? 0} domain(s) allowed`

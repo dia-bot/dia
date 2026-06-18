@@ -47,6 +47,8 @@ func detect(in scanInput, t RuleTrigger) (string, bool) {
 		return detectInvites(t, in.Content)
 	case TriggerLinks:
 		return detectLinks(t, in.Content)
+	case TriggerScamLinks:
+		return detectScamLinks(in, t)
 	case TriggerMentions:
 		return detectMentions(t, in)
 	case TriggerMassMention:
@@ -263,6 +265,22 @@ func detectLinks(t RuleTrigger, content string) (string, bool) {
 	default: // all
 		return "Link not allowed: " + hosts[0], true
 	}
+}
+
+// detectScamLinks flags a message when any host it links to is on the
+// package-level phishing/scam blocklist (threatfeed.go). The trigger's AllowList
+// exempts trusted hosts (useful for false positives in the feed).
+func detectScamLinks(in scanInput, t RuleTrigger) (string, bool) {
+	allow := domainSet(t.AllowList)
+	for _, h := range extractHosts(in.Content) {
+		if hostInSet(h, allow) {
+			continue
+		}
+		if blocklist.has(h) {
+			return "Scam/phishing link: " + h, true
+		}
+	}
+	return "", false
 }
 
 // extractHosts pulls hostnames from explicit http(s) URLs and, failing those,

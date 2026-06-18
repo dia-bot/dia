@@ -141,6 +141,14 @@ func handleAutomodMember(ctx context.Context, d plugin.Deps, env *event.Envelope
 	if cfg.IgnoreBots && member.User.Bot {
 		return nil
 	}
+
+	// Anti-raid runs on join before (and independent of) the per-rule loop and
+	// the exemption gate, so a raid of fresh accounts can't slip through role
+	// exemptions. It is a no-op unless cfg.Raid.Enabled.
+	if env.Type == event.TypeMemberAdd {
+		raidCheck(ctx, d, cfg, gid, gidStr, member, cfg.Raid)
+	}
+
 	if globallyExempt(ctx, d, cfg, gidStr, member.Roles) {
 		return nil
 	}

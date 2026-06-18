@@ -14,6 +14,7 @@ const (
 	TriggerRegex       = "regex"        // custom regular expressions
 	TriggerInvites     = "invites"      // Discord invite links
 	TriggerLinks       = "links"        // URLs (all / allowlist / blocklist)
+	TriggerScamLinks   = "scam_links"   // known phishing/scam domains (threat feed)
 	TriggerSpam        = "spam"         // message flood (rate)
 	TriggerDuplicates  = "duplicates"   // repeated identical messages (rate)
 	TriggerMentions    = "mentions"     // too many user mentions
@@ -45,9 +46,9 @@ const (
 // messageTriggers are screened against message content/metadata.
 var messageTriggers = map[string]bool{
 	TriggerWords: true, TriggerRegex: true, TriggerInvites: true, TriggerLinks: true,
-	TriggerSpam: true, TriggerDuplicates: true, TriggerMentions: true, TriggerMassMention: true,
-	TriggerCaps: true, TriggerEmojis: true, TriggerNewlines: true, TriggerZalgo: true,
-	TriggerSpoilers: true, TriggerAttachments: true,
+	TriggerScamLinks: true, TriggerSpam: true, TriggerDuplicates: true, TriggerMentions: true,
+	TriggerMassMention: true, TriggerCaps: true, TriggerEmojis: true, TriggerNewlines: true,
+	TriggerZalgo: true, TriggerSpoilers: true, TriggerAttachments: true,
 }
 
 // memberTriggers are screened against member identity / join.
@@ -82,6 +83,8 @@ func triggerLabel(t string) string {
 		return "Invite link"
 	case TriggerLinks:
 		return "Link not allowed"
+	case TriggerScamLinks:
+		return "Scam / phishing link"
 	case TriggerSpam:
 		return "Spam"
 	case TriggerDuplicates:
