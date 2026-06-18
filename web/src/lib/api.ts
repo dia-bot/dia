@@ -191,6 +191,13 @@ export const api = {
 			'GET',
 			`/api/guilds/${id}/automod-stats`
 		),
+	// Native Discord AutoMod rules (managed via Discord's own AutoMod API).
+	automodRules: (id: string) =>
+		req<{ rules: any[] }>('GET', `/api/guilds/${id}/automod-rules`),
+	saveAutomodRule: (id: string, rule: unknown) =>
+		req<{ rule: any }>('PUT', `/api/guilds/${id}/automod-rules`, rule),
+	deleteAutomodRule: (id: string, ruleId: string) =>
+		req('DELETE', `/api/guilds/${id}/automod-rules/${ruleId}`),
 	welcomePresets: () => req<{ presets: any[] }>('GET', '/api/welcome/presets'),
 	welcomeVariables: (id: string) =>
 		req<{ variables: { token: string; desc: string }[] }>('GET', `/api/guilds/${id}/welcome/variables`),
