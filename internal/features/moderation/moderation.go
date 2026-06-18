@@ -29,7 +29,7 @@ func (*Plugin) Info() plugin.Info {
 	return plugin.Info{
 		Key:         FeatureKey,
 		Name:        "Moderation",
-		Description: "Ban, kick, timeout and warn members with a case log, plus an automod for invites, links, banned words and mention spam.",
+		Description: "Ban, kick, timeout and warn members with a case log, plus a rule-based automod: ordered detection rules (words, regex, invites, links, spam, mentions, caps, emoji, new accounts, names, and more), per-rule actions, and a cross-rule escalation ladder driven by infraction points.",
 		Category:    plugin.CategoryModeration,
 	}
 }
@@ -107,7 +107,16 @@ func (*Plugin) Init(ctx context.Context, d plugin.Deps, reg *plugin.Registrar) e
 	})
 
 	reg.OnEvent(event.TypeMessageCreate, func(ctx context.Context, env *event.Envelope) error {
-		return handleAutomod(ctx, d, env)
+		return handleAutomodMessage(ctx, d, env, false)
+	})
+	reg.OnEvent(event.TypeMessageUpdate, func(ctx context.Context, env *event.Envelope) error {
+		return handleAutomodMessage(ctx, d, env, true)
+	})
+	reg.OnEvent(event.TypeMemberAdd, func(ctx context.Context, env *event.Envelope) error {
+		return handleAutomodMember(ctx, d, env)
+	})
+	reg.OnEvent(event.TypeMemberUpdate, func(ctx context.Context, env *event.Envelope) error {
+		return handleAutomodMember(ctx, d, env)
 	})
 
 	reg.Worker("mod-expiry", func(ctx context.Context) { runExpiry(ctx, d) })

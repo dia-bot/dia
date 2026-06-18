@@ -59,6 +59,30 @@ type ModCase struct {
 	Active          bool
 }
 
+// AutomodInfraction is one automod rule hit that awarded escalation points.
+type AutomodInfraction struct {
+	ID          int64
+	GuildID     int64
+	UserID      int64
+	RuleID      string
+	RuleName    string
+	TriggerType string
+	Points      int
+	Reason      string
+	ChannelID   *int64
+	CreatedAt   time.Time
+	ExpiresAt   *time.Time
+}
+
+// Offender is an aggregate row for the automod leaderboard: a user with their
+// total active points and hit count over a window.
+type Offender struct {
+	UserID      int64
+	TotalPoints int
+	Hits        int
+	LastAt      time.Time
+}
+
 // ReactionRoleMenu is a self-assign role menu (buttons/select).
 type ReactionRoleMenu struct {
 	ID        int64

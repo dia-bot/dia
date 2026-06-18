@@ -41,6 +41,11 @@ const (
 	TypeThreadDelete      Type = "THREAD_DELETE"
 	TypeVoiceStateUpdate  Type = "VOICE_STATE_UPDATE"
 	TypeInteractionCreate Type = "INTERACTION_CREATE"
+
+	// TypeAutomodAction is NOT a gateway event: the worker publishes it on the
+	// same stream when an automod rule fires, so the automations runtime can
+	// trigger flows off moderation activity. It has no gateway/Elixir mapper.
+	TypeAutomodAction Type = "AUTOMOD_ACTION"
 )
 
 // SubjectPrefix is the JetStream subject root for forwarded gateway events.
@@ -216,6 +221,27 @@ type Reaction struct {
 	GuildID   string  `json:"guild_id,omitempty"`
 	Emoji     Emoji   `json:"emoji"`
 	Member    *Member `json:"member,omitempty"` // present on REACTION_ADD in guilds
+}
+
+// AutomodAction is published by the worker (not the gateway) when an automod
+// rule fires, on subject discord.events.AUTOMOD_ACTION.<guild>. The automations
+// runtime consumes it as the "automod_action" trigger, exposing these fields to
+// flows as .Event.* alongside the offending member as .User / .Member.
+type AutomodAction struct {
+	GuildID     string   `json:"guild_id"`
+	RuleID      string   `json:"rule_id"`
+	RuleName    string   `json:"rule_name"`
+	TriggerType string   `json:"trigger_type"`        // one of the automod Trigger* keys
+	Reason      string   `json:"reason"`              // human description of the hit
+	Actions     []string `json:"actions"`             // action types applied, in order
+	Points      int      `json:"points"`              // points added by this hit
+	TotalPoints int      `json:"total_points"`        // user's active infraction total after
+	Escalated   string   `json:"escalated,omitempty"` // escalation action fired ("" = none)
+	User        User     `json:"user"`                // the offending member
+	Member      *Member  `json:"member,omitempty"`
+	ChannelID   string   `json:"channel_id,omitempty"`
+	MessageID   string   `json:"message_id,omitempty"`
+	Content     string   `json:"content,omitempty"` // offending message content (truncated)
 }
 
 // VoiceState is delivered on VOICE_STATE_UPDATE. ChannelID == "" means the
