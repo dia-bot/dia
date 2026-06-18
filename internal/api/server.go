@@ -184,6 +184,8 @@ func (s *Server) Handler() http.Handler {
 	g.DELETE("/reaction-roles/:mid", s.handleDeleteMenu)
 
 	g.GET("/cases", s.handleListCases)
+	g.GET("/infractions", s.handleListInfractions)
+	g.GET("/automod-stats", s.handleAutomodStats)
 
 	return r
 }

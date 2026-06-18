@@ -179,6 +179,18 @@ export const api = {
 		req('DELETE', `/api/guilds/${id}/reaction-roles/${mid}`),
 
 	cases: (id: string) => req<{ cases: any[] }>('GET', `/api/guilds/${id}/cases`),
+	// Automod infractions (the escalation heat ledger); optional user filter.
+	infractions: (id: string, userId?: string) =>
+		req<{ infractions: any[] }>(
+			'GET',
+			`/api/guilds/${id}/infractions` + (userId ? `?user=${userId}` : '')
+		),
+	// Automod overview stats: hit counts and the top-offender leaderboard.
+	automodStats: (id: string) =>
+		req<{ hits_24h: number; hits_7d: number; rules: number; offenders: any[] }>(
+			'GET',
+			`/api/guilds/${id}/automod-stats`
+		),
 	welcomePresets: () => req<{ presets: any[] }>('GET', '/api/welcome/presets'),
 	welcomeVariables: (id: string) =>
 		req<{ variables: { token: string; desc: string }[] }>('GET', `/api/guilds/${id}/welcome/variables`),
