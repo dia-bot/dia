@@ -22,11 +22,52 @@
 	import Shield from 'lucide-svelte/icons/shield';
 	import Trash2 from 'lucide-svelte/icons/trash-2';
 	import EyeOff from 'lucide-svelte/icons/eye-off';
+	import Flame from 'lucide-svelte/icons/flame';
 
 	let { data }: { data: { user?: { username: string } | null } } = $props();
 	const cta = $derived(data.user ? '/servers' : loginURL);
 
 	const mention = 'rounded bg-[#b244fc]/25 px-1 font-medium text-[#d9b8ff]';
+
+	// Automod detection triggers. Each rule pairs ONE trigger with its own stack of
+	// actions, so the catalogue below is the menu you build rules from.
+	const triggers = [
+		{ title: 'Blocked words', body: 'A word and phrase list, matched as a substring, whole word or wildcard, with per-rule exceptions.' },
+		{ title: 'Regex filters', body: 'Power-user RE2 patterns for structured spam, leetspeak and formats a word list cannot catch.' },
+		{ title: 'Discord invites', body: 'Catch invite links to other servers, including obfuscated discord.gg variants. Allow specific codes.' },
+		{ title: 'Links', body: 'Block every URL, allow only listed domains, or block only listed domains.' },
+		{ title: 'Spam and flood', body: 'Trip when a member sends too many messages within a short window, across any channel.' },
+		{ title: 'Duplicates', body: 'Catch the same message repeated over and over inside a window.' },
+		{ title: 'Mention spam', body: 'Cap how many distinct users a single message may ping.' },
+		{ title: 'Mass mentions', body: 'Stop @everyone, @here and role pings before a ping raid spreads.' },
+		{ title: 'Excessive caps', body: 'Flag messages that are mostly uppercase, ignoring short ones to avoid false positives.' },
+		{ title: 'Excessive emoji', body: 'Catch messages packed with too many unicode or custom emoji.' },
+		{ title: 'Walls of text', body: 'Trip on messages with too many line breaks.' },
+		{ title: 'Disruptive text', body: 'Detect zalgo and glitch text used to disrupt a channel.' },
+		{ title: 'Spoiler spam', body: 'Limit how many spoiler spans one message may carry.' },
+		{ title: 'Attachment flood', body: 'Cap how many attachments arrive in a single message.' },
+		{ title: 'New account gate', body: 'Flag members whose account is younger than a threshold on join. Pair with a quarantine role.' },
+		{ title: 'Username filter', body: 'Block bad usernames and nicknames on join and on change, by word or pattern.' }
+	];
+
+	// A layered action stack, run in order when a rule fires.
+	const actionStack = [
+		{ icon: Trash2, label: 'Delete', body: 'Remove the offending message.' },
+		{ icon: TriangleAlert, label: 'Warn', body: 'Record a warn case and DM the member.' },
+		{ icon: Clock, label: 'Timeout', body: 'Mute the member for a set duration.' },
+		{ icon: Boot, label: 'Kick or ban', body: 'Remove the member, with optional message purge.' },
+		{ icon: Shield, label: 'Role', body: 'Add a quarantine role or revoke an existing one.' },
+		{ icon: MessageSquare, label: 'Notify', body: 'Post a notice or DM, then add infraction points.' }
+	];
+
+	// The escalation ladder: infraction points accumulate per member (with decay)
+	// and crossing a threshold auto-applies a heavier action.
+	const ladder = [
+		{ points: '3 pts', label: 'Timeout', body: 'A short mute once a member starts collecting points.' },
+		{ points: '5 pts', label: 'Longer timeout', body: 'The mute lengthens as the heat keeps climbing.' },
+		{ points: '8 pts', label: 'Kick', body: 'Persistent offenders are removed from the server.' },
+		{ points: '12 pts', label: 'Ban', body: 'The worst repeat offenders are blocked for good.' }
+	];
 
 	// The four manual moderation slash commands, every one with an optional reason
 	// that is written verbatim into the case log.
@@ -57,29 +98,13 @@
 		}
 	];
 
-	// AutoMod rule types. Filters are independent toggles; the response to any of
-	// them is one shared, server-wide action (see the action note below).
-	const rules = [
-		{ title: 'Block invites', body: 'Catch Discord invite links before they spread, including obfuscated discord.gg variants.' },
-		{ title: 'Block links', body: 'Strip URLs from chat to shut down phishing, promo spam and drive-by self-promotion.' },
-		{ title: 'Max mentions', body: 'Cap how many mentions a single message may carry — set the threshold, or 0 to disable.' },
-		{ title: 'Banned words', body: 'Maintain a word list; any message containing one trips the filter.' }
-	];
-
-	// AutoMod always deletes first, then optionally escalates — one global action,
-	// not a per-rule one.
-	const actions = [
-		{ icon: Trash2, label: 'Delete only', body: 'The message is removed. Nothing else happens.' },
-		{ icon: TriangleAlert, label: 'Delete + warn', body: 'The message is removed and the member is warned, with a case logged.' },
-		{ icon: Clock, label: 'Delete + timeout', body: 'The message is removed and the member is timed out for the duration you set.' }
-	];
 </script>
 
 <svelte:head>
 	<title>Moderation &amp; AutoMod · Dia</title>
 	<meta
 		name="description"
-		content="Dia's moderation: /ban /kick /timeout /warn with reasons, optional DMs and a numbered, searchable case log — plus AutoMod that blocks invites, links, mention spam and banned words with one server-wide action and per-channel and per-role exemptions."
+		content="Dia's moderation: /ban /kick /timeout /warn with reasons, optional DMs and a numbered, searchable case log, plus a rule-based AutoMod with many detection triggers (words, regex, invites, links, spam, mentions, caps, new-account gate and more), layered actions and an escalation ladder that climbs from warn to timeout to kick to ban as infraction points add up."
 	/>
 </svelte:head>
 
@@ -89,7 +114,7 @@
 	<PageHero
 		eyebrow="[ feature · moderation ]"
 		title="Keep the peace, on the record."
-		lede="Ban, kick, timeout and warn with slash commands that write every action to a numbered, searchable case log. Then let AutoMod catch invites, links, mention spam and banned words before anyone has to."
+		lede="Ban, kick, timeout and warn with slash commands that write every action to a numbered, searchable case log. Then let a rule-based AutoMod catch words, regex, invites, links, spam, mention floods and risky new accounts, and climb an escalation ladder for repeat offenders."
 	>
 		<div class="flex flex-wrap items-center gap-3">
 			<a href={cta} class="btn btn-accent h-12 px-6 text-base">Get started <ArrowRight size={18} /></a>
@@ -236,13 +261,15 @@
 				</div>
 				<div class="grid items-start gap-6 lg:grid-cols-12">
 					<h2 class="text-3xl font-extrabold tracking-[-0.02em] sm:text-[2.5rem] sm:leading-[1.08] lg:col-span-6">
-						Catch the obvious stuff before anyone sees it.
+						Build the rules. Stack the response.
 					</h2>
 					<div class="lg:col-span-6">
 						<p class="text-lg leading-relaxed text-muted">
-							Turn on the filters you want and AutoMod watches every message. The moment one trips,
-							the message is removed and — if you've asked it to — the member is warned or timed out,
-							with a case logged automatically.
+							AutoMod is a list of rules, each one pairing a single detection trigger with its own
+							stack of actions. Pick from many triggers (words, regex, invites, links, spam, mention
+							floods, formatting and member checks), then decide exactly what happens when each fires:
+							delete, warn, timeout, role, kick or ban, plus infraction points. Rules run in order and
+							the first match wins, so behaviour stays predictable.
 						</p>
 					</div>
 				</div>
@@ -259,13 +286,16 @@
 				<Reveal delay={160}>
 					<div class="card p-6">
 						<h3 class="flex items-center gap-2 text-[15px] font-semibold">
-							<Shield size={16} class="text-accent" /> The rules
+							<Shield size={16} class="text-accent" /> Detection triggers
 						</h3>
-						<div class="mt-4 divide-y divide-line">
-							{#each rules as r (r.title)}
-								<div class="py-3.5 first:pt-0 last:pb-0">
-									<div class="text-sm font-semibold text-ink">{r.title}</div>
-									<p class="mt-1 text-sm leading-relaxed text-muted">{r.body}</p>
+						<p class="mt-1.5 text-sm leading-relaxed text-muted">
+							Sixteen triggers, each the start of a rule you tune to your server.
+						</p>
+						<div class="mt-4 grid gap-2 sm:grid-cols-2">
+							{#each triggers as t (t.title)}
+								<div class="rounded-lg border border-line bg-surface p-3">
+									<div class="text-[13px] font-semibold text-ink">{t.title}</div>
+									<p class="mt-0.5 text-xs leading-relaxed text-muted">{t.body}</p>
 								</div>
 							{/each}
 						</div>
@@ -273,21 +303,21 @@
 				</Reveal>
 			</div>
 
-			<!-- One global action — accuracy: not per-rule -->
+			<!-- Layered actions per rule -->
 			<Reveal delay={80}>
 				<div class="mt-12">
 					<div class="rounded-2xl bg-[#111113] p-8 sm:p-10">
-						<span class="font-mono text-xs uppercase tracking-wider text-accent-ink">One action, every violation</span>
+						<span class="font-mono text-xs uppercase tracking-wider text-accent-ink">Layered actions</span>
 						<h3 class="mt-3 max-w-2xl text-2xl font-extrabold tracking-tight text-white sm:text-3xl">
-							AutoMod always deletes first — then escalates, if you ask.
+							Each rule decides exactly what happens.
 						</h3>
 						<p class="mt-4 max-w-2xl text-[15px] leading-relaxed text-white/65">
-							There's one global action for every rule, not a different one per filter. AutoMod removes
-							the offending message, then optionally warns or times the member out. Pick the response
-							once and it applies to invites, links, mention spam and banned words alike.
+							A rule can run several actions in order: delete the message, warn the member, time them
+							out, add a quarantine role or revoke one, post a notice or DM, and award infraction
+							points. Mix them per rule so a stray link is handled differently from a ping raid.
 						</p>
-						<div class="mt-7 grid gap-px overflow-hidden rounded-xl bg-white/10 sm:grid-cols-3">
-							{#each actions as a (a.label)}
+						<div class="mt-7 grid gap-px overflow-hidden rounded-xl bg-white/10 sm:grid-cols-2 lg:grid-cols-3">
+							{#each actionStack as a (a.label)}
 								<div class="bg-[#111113] p-5">
 									<span class="grid h-9 w-9 place-items-center rounded-lg bg-white/[0.06] text-[#c79bff]">
 										<a.icon size={17} />
@@ -300,11 +330,59 @@
 						<div class="mt-6 flex items-start gap-2 text-[13px] leading-relaxed text-white/55">
 							<EyeOff size={15} class="mt-0.5 shrink-0 text-[#c79bff]" />
 							<span>
-								Exempt the spaces that don't need policing: AutoMod skips any channels you ignore, and
-								members with an exempt role are never moderated.
+								Exempt the spaces that don't need policing: skip any channels and roles globally or
+								per rule, and let staff and bots pass automatically.
 							</span>
 						</div>
 					</div>
+				</div>
+			</Reveal>
+		</div>
+	</section>
+
+	<!-- ───────────────────────── 04 · Escalation ladder ───────────────────────── -->
+	<section class="border-b border-line bg-surface py-20 sm:py-28">
+		<div class="mx-auto max-w-page px-6">
+			<Reveal>
+				<div class="mb-3 flex items-baseline gap-4">
+					<span class="font-mono text-xs font-medium text-accent-ink">04</span>
+					<span class="eyebrow">Escalation ladder</span>
+					<span class="h-px flex-1 bg-line"></span>
+				</div>
+				<div class="grid items-start gap-6 lg:grid-cols-12">
+					<h2 class="text-3xl font-extrabold tracking-[-0.02em] sm:text-[2.5rem] sm:leading-[1.08] lg:col-span-6">
+						Repeat offenders climb the ladder on their own.
+					</h2>
+					<div class="lg:col-span-6">
+						<p class="text-lg leading-relaxed text-muted">
+							Actions can award infraction points that accumulate per member and decay over time.
+							Cross a threshold and AutoMod applies a heavier action automatically, walking from a
+							warn to a timeout to a kick to a ban as the heat builds. First-timers get a nudge,
+							persistent abusers get removed, and you never have to track it by hand.
+						</p>
+					</div>
+				</div>
+			</Reveal>
+
+			<Reveal delay={80}>
+				<div class="mt-12 grid gap-px overflow-hidden rounded-xl border border-line bg-line sm:grid-cols-2 lg:grid-cols-4">
+					{#each ladder as rung (rung.label)}
+						<div class="bg-surface p-6">
+							<span class="font-mono text-xs font-semibold text-accent-ink">{rung.points}</span>
+							<div class="mt-2 text-lg font-semibold">{rung.label}</div>
+							<p class="mt-1 text-sm leading-relaxed text-muted">{rung.body}</p>
+						</div>
+					{/each}
+				</div>
+			</Reveal>
+
+			<Reveal delay={140}>
+				<div class="mt-6 flex items-start gap-2 font-mono text-xs leading-relaxed text-muted">
+					<Flame size={14} class="mt-0.5 shrink-0 text-accent-ink" />
+					<span>
+						Every AutoMod hit also fires an event, so you can route it into Automations, post a
+						staff alert, open a ticket or run any custom flow you build.
+					</span>
 				</div>
 			</Reveal>
 		</div>
@@ -338,7 +416,7 @@
 					<div class="h-full p-7">
 						<span class="grid h-10 w-10 place-items-center rounded-lg bg-blush text-accent"><Shield size={19} /></span>
 						<h3 class="mt-4 text-lg font-semibold">Tunable, not rigid</h3>
-						<p class="mt-1.5 text-sm leading-relaxed text-muted">Choose the filters, the action and the exemptions from a dashboard secured by Discord login.</p>
+						<p class="mt-1.5 text-sm leading-relaxed text-muted">Build rules, stack actions, set the escalation ladder and exemptions from a dashboard secured by Discord login.</p>
 					</div>
 				</Reveal>
 			</div>
