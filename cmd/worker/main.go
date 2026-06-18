@@ -26,8 +26,10 @@ import (
 	automations "github.com/dia-bot/dia/internal/features/automations/runtime"
 	customcommands "github.com/dia-bot/dia/internal/features/customcommands/runtime"
 	"github.com/dia-bot/dia/internal/features/leveling"
+	serverlogs "github.com/dia-bot/dia/internal/features/logging"
 	"github.com/dia-bot/dia/internal/features/moderation"
 	"github.com/dia-bot/dia/internal/features/roles"
+	"github.com/dia-bot/dia/internal/features/verification"
 	"github.com/dia-bot/dia/internal/features/welcome"
 )
 
@@ -91,6 +93,8 @@ func main() {
 		leveling.New(),
 		roles.New(),
 		moderation.New(),
+		verification.New(),
+		serverlogs.New(),
 		customcommands.New(),
 		automations.New(),
 	); err != nil {
