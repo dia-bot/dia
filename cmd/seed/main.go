@@ -129,6 +129,7 @@ func run(ctx context.Context, st *store.Store) error {
 	fmt.Println("  features      : welcome, leveling, autorole, moderation, automod, customcommands, automations (enabled)")
 	fmt.Printf("  leaderboard   : %d members; rewards at level 5 and 10\n", len(levelFixtures))
 	fmt.Println("  moderation    : warn + timeout + ban cases")
+	fmt.Println("  automod       : starter ruleset + blocked-words rule; escalation ladder; demo infractions")
 	fmt.Println("  extras        : 1 reaction-role menu, 2 custom commands, audit entries")
 	fmt.Println()
 	fmt.Println("Re-run any time (idempotent). Point it at your own guild with:")
@@ -148,6 +149,9 @@ func seedPrimary(ctx context.Context, st *store.Store, guildID int64) error {
 		return err
 	}
 	if err := seedModCases(ctx, st, guildID); err != nil {
+		return err
+	}
+	if err := seedInfractions(ctx, st, guildID); err != nil {
 		return err
 	}
 	if err := seedReactionMenu(ctx, st, guildID); err != nil {
@@ -182,9 +186,25 @@ func seedFeatures(ctx context.Context, st *store.Store, guildID int64) error {
 	mod := moderation.Default()
 	mod.LogChannel = sid(logChannel)
 
+	// Start from the rule-based starter ruleset and add one example "blocked
+	// words" rule so the dashboard editor has a content rule to show.
 	automod := moderation.DefaultAutomod()
-	automod.BannedWords = []string{"spamword", "blocked-phrase"}
-	automod.IgnoredChannels = []string{sid(logChannel)}
+	automod.AlertChannel = sid(logChannel)
+	automod.Rules = append(automod.Rules, moderation.AutomodRule{
+		ID:      "rule_blocked_words",
+		Name:    "Blocked words",
+		Enabled: true,
+		Trigger: moderation.RuleTrigger{
+			Type:      moderation.TriggerWords,
+			Words:     []string{"spamword", "blocked-phrase"},
+			MatchMode: "substring",
+		},
+		Actions: []moderation.RuleAction{
+			{Type: moderation.ActionDelete},
+			{Type: moderation.ActionWarn, Reason: "Blocked word"},
+			{Type: moderation.ActionAddPoints, Points: 1},
+		},
+	})
 
 	cc := customcommands.Default()
 
@@ -323,6 +343,54 @@ func seedModCases(ctx context.Context, st *store.Store, guildID int64) error {
 			guildID, c.number, c.user, ownerUser, c.action, c.reason, c.durationSeconds, c.expiresAt, c.active)
 		if err != nil {
 			return fmt.Errorf("mod_case #%d: %w", c.number, err)
+		}
+	}
+	return nil
+}
+
+// seedInfractions inserts a few automod heat-ledger rows so the moderation
+// dashboard's leaderboard and recent-actions list have demo data. The table
+// has only a synthetic id, so we guard the whole batch behind an existence
+// check to keep re-runs idempotent.
+func seedInfractions(ctx context.Context, st *store.Store, guildID int64) error {
+	var existing int
+	if err := st.Pool.QueryRow(ctx,
+		`SELECT count(*) FROM automod_infractions WHERE guild_id = $1`, guildID).Scan(&existing); err != nil {
+		return fmt.Errorf("count infractions: %w", err)
+	}
+	if existing > 0 {
+		return nil // already seeded
+	}
+
+	now := time.Now()
+	channel := logChannel
+	type infraction struct {
+		user       int64
+		ruleID     string
+		ruleName   string
+		trigger    string
+		points     int
+		reason     string
+		minutesAgo int
+		decayHours int
+	}
+	fixtures := []infraction{
+		{2000000000000000010, "rule_invites", "Block Discord invites", moderation.TriggerInvites, 1, "Invite link", 12, 24},
+		{2000000000000000010, "rule_spam", "Message spam", moderation.TriggerSpam, 2, "Sending messages too quickly", 40, 24},
+		{2000000000000000010, "rule_blocked_words", "Blocked words", moderation.TriggerWords, 1, "Blocked word", 95, 24},
+		{2000000000000000011, "rule_mentions", "Mass mentions", moderation.TriggerMentions, 2, "Too many mentions", 30, 24},
+		{2000000000000000011, "rule_everyone", "@everyone / @here pings", moderation.TriggerMassMention, 1, "Mass mention", 180, 24},
+		{2000000000000000012, "rule_blocked_words", "Blocked words", moderation.TriggerWords, 1, "Blocked word", 260, 24},
+	}
+	for _, f := range fixtures {
+		createdAt := now.Add(-time.Duration(f.minutesAgo) * time.Minute)
+		expiresAt := createdAt.Add(time.Duration(f.decayHours) * time.Hour)
+		if _, err := st.Pool.Exec(ctx, `
+			INSERT INTO automod_infractions
+				(guild_id, user_id, rule_id, rule_name, trigger_type, points, reason, channel_id, created_at, expires_at)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+			guildID, f.user, f.ruleID, f.ruleName, f.trigger, f.points, f.reason, channel, createdAt, expiresAt); err != nil {
+			return fmt.Errorf("insert infraction (%s): %w", f.ruleID, err)
 		}
 	}
 	return nil
@@ -531,7 +599,7 @@ func seedAuditLog(ctx context.Context, st *store.Store, guildID int64) error {
 	}{
 		{"feature.enabled", map[string]any{"feature": "welcome"}},
 		{"feature.enabled", map[string]any{"feature": "leveling"}},
-		{"feature.updated", map[string]any{"feature": "automod", "banned_words": 2}},
+		{"feature.updated", map[string]any{"feature": "automod", "rules": 5}},
 		{"command.created", map[string]any{"name": "rules"}},
 	}
 	for _, e := range entries {
