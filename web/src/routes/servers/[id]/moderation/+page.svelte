@@ -7,6 +7,7 @@
 	import Toggle from '$lib/components/Toggle.svelte';
 	import ChannelSelect from '$lib/components/ChannelSelect.svelte';
 	import SaveBar from '$lib/components/SaveBar.svelte';
+	import ChipInput from '$lib/components/automod/ChipInput.svelte';
 	import { TRIGGERS_BY_KEY, type TriggerKey } from '$lib/moderation/automod';
 
 	import Folder from 'lucide-svelte/icons/folder';
@@ -21,6 +22,7 @@
 	type Cfg = {
 		log_channel: string;
 		dm_on_action: boolean;
+		reason_templates: string[];
 	};
 
 	type Case = {
@@ -62,7 +64,8 @@
 	function defaults(): Cfg {
 		return {
 			log_channel: '',
-			dm_on_action: false
+			dm_on_action: false,
+			reason_templates: []
 		};
 	}
 
@@ -244,6 +247,15 @@
 				<Toggle bind:checked={cfg.dm_on_action} />
 				<span class="text-sm">DM users when they're actioned</span>
 			</label>
+
+			<div class="mt-6 border-t border-line pt-5">
+				<Field
+					label="Reason templates"
+					hint="These power the reason autocomplete on /ban, /kick, /timeout and /warn. Type a reason and press Enter to add it."
+				>
+					<ChipInput bind:value={cfg.reason_templates} placeholder="e.g. Spamming in chat" />
+				</Field>
+			</div>
 		</section>
 
 		<!-- Tabs: cases / heat -->

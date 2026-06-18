@@ -21,7 +21,7 @@
 	import RuleCard from '$lib/components/automod/RuleCard.svelte';
 	import RuleEditor from '$lib/components/automod/RuleEditor.svelte';
 	import TriggerPicker from '$lib/components/automod/TriggerPicker.svelte';
-	import { Plus, ShieldAlert, Zap, ArrowRight, Trash2 } from 'lucide-svelte';
+	import { Plus, ShieldAlert, Zap, ArrowRight, Trash2, Users, Server, Lock } from 'lucide-svelte';
 
 	const store = getContext<GuildStore>(GUILD_CTX);
 	const FEATURE = 'automod';
@@ -47,13 +47,121 @@
 			...c,
 			rules: c.rules ?? d.rules,
 			escalation: { ...d.escalation, ...(c.escalation ?? {}) },
+			raid: { ...d.raid, ...(c.raid ?? {}) },
 			exempt_roles: c.exempt_roles ?? d.exempt_roles,
 			exempt_channels: c.exempt_channels ?? d.exempt_channels
 		};
 		enabled = f.enabled;
 		loaded = true;
 		baseline = JSON.stringify({ enabled, cfg });
+		loadNativeRules();
 	});
+
+	// ── Anti-raid ───────────────────────────────────────────────────────────────
+	const raidActionOpts = [
+		{ value: 'kick', label: 'Kick joiners' },
+		{ value: 'ban', label: 'Ban joiners' },
+		{ value: 'timeout', label: 'Timeout joiners' }
+	];
+	function setRaidAction(v: string) {
+		cfg.raid.action = v as 'kick' | 'ban' | 'timeout';
+		if (cfg.raid.action === 'timeout' && !cfg.raid.timeout_seconds) cfg.raid.timeout_seconds = 600;
+	}
+
+	// ── Native Discord AutoMod ───────────────────────────────────────────────────
+	// These live on Discord's side (not Dia's rule engine). We load them best-effort:
+	// the bot may lack Manage Server, in which case we show a friendly notice.
+	type NativeRule = {
+		id?: string;
+		name: string;
+		enabled: boolean;
+		trigger_type: number;
+		event_type: number;
+		trigger_metadata?: {
+			mention_total_limit?: number;
+			keyword_filter?: string[];
+			presets?: number[];
+		};
+		actions?: { type: number; metadata?: Record<string, unknown> }[];
+	};
+	let nativeRules = $state<NativeRule[]>([]);
+	let nativeLoaded = $state(false);
+	let nativeError = $state('');
+	let nativeBusy = $state(false);
+	let mentionLimit = $state(5);
+
+	const NATIVE_TRIGGER_LABELS: Record<number, string> = {
+		1: 'Keyword',
+		3: 'Spam',
+		4: 'Keyword preset',
+		5: 'Mention spam'
+	};
+
+	async function loadNativeRules() {
+		try {
+			const r = await api.automodRules(store.id);
+			nativeRules = (r.rules ?? []) as NativeRule[];
+			nativeError = '';
+		} catch (e) {
+			nativeError = e instanceof Error ? e.message : 'Could not load native rules.';
+		} finally {
+			nativeLoaded = true;
+		}
+	}
+
+	function findNative(triggerType: number): NativeRule | undefined {
+		return nativeRules.find((r) => r.trigger_type === triggerType);
+	}
+
+	async function saveNative(rule: NativeRule) {
+		if (nativeBusy) return;
+		nativeBusy = true;
+		try {
+			await api.saveAutomodRule(store.id, rule);
+			await loadNativeRules();
+		} catch (e) {
+			nativeError = e instanceof Error ? e.message : 'Could not save the native rule.';
+		} finally {
+			nativeBusy = false;
+		}
+	}
+	async function removeNative(rule: NativeRule) {
+		if (nativeBusy || !rule.id) return;
+		nativeBusy = true;
+		try {
+			await api.deleteAutomodRule(store.id, rule.id);
+			await loadNativeRules();
+		} catch (e) {
+			nativeError = e instanceof Error ? e.message : 'Could not delete the native rule.';
+		} finally {
+			nativeBusy = false;
+		}
+	}
+
+	function addMentionSpam() {
+		saveNative({
+			name: 'Block mention spam',
+			enabled: true,
+			trigger_type: 5,
+			event_type: 1,
+			trigger_metadata: { mention_total_limit: Math.max(1, mentionLimit) },
+			actions: [{ type: 1 }]
+		});
+	}
+	function addKeywordPreset() {
+		// presets: 1 = profanity, 2 = sexual content, 3 = slurs.
+		saveNative({
+			name: 'Block profanity & slurs',
+			enabled: true,
+			trigger_type: 4,
+			event_type: 1,
+			trigger_metadata: { presets: [1, 2, 3] },
+			actions: [{ type: 1 }]
+		});
+	}
+	function toggleNative(rule: NativeRule) {
+		saveNative({ ...rule, enabled: !rule.enabled });
+	}
 
 	// ── Rules ──────────────────────────────────────────────────────────────────
 	function pickTrigger(key: TriggerKey) {
@@ -346,6 +454,192 @@
 					Escalation is off. Rules still run their own actions, but repeat offenders are not punished
 					on a points ladder.
 				</p>
+			{/if}
+		</section>
+
+		<!-- Anti-raid -->
+		<section class="card p-5">
+			<div class="mb-4 flex items-center justify-between gap-4">
+				<div class="flex items-start gap-3">
+					<span class="mt-0.5 grid size-8 shrink-0 place-items-center rounded-lg border border-line bg-ink-2 text-accent-ink">
+						<Users size={16} />
+					</span>
+					<div>
+						<div class="eyebrow">Anti-raid</div>
+						<p class="mt-0.5 max-w-lg text-xs text-muted">
+							Join-velocity guard. When a burst of members arrives faster than your threshold, the
+							server enters raid mode and new joiners are actioned until it calms.
+						</p>
+					</div>
+				</div>
+				<Toggle bind:checked={cfg.raid.enabled} label="Anti-raid enabled" />
+			</div>
+
+			{#if cfg.raid.enabled}
+				<div class="space-y-5">
+					<div class="flex flex-wrap items-end gap-2 rounded-xl border border-line bg-ink-2/30 p-3.5 text-sm text-muted">
+						<div>
+							<span class="label !mb-1 text-xs">Trips at</span>
+							<div class="w-24">
+								<NumberField bind:value={cfg.raid.threshold} min={2} max={500} />
+							</div>
+						</div>
+						<span class="pb-2.5">joins within</span>
+						<div>
+							<span class="label !mb-1 text-xs">Window</span>
+							<div class="w-24">
+								<NumberField bind:value={cfg.raid.window} min={1} max={600} />
+							</div>
+						</div>
+						<span class="pb-2.5">seconds.</span>
+					</div>
+
+					<div class="grid gap-5 md:grid-cols-2">
+						<div>
+							<span class="label">Action on joiners</span>
+							<Select
+								bind:value={() => cfg.raid.action, setRaidAction}
+								options={raidActionOpts}
+							/>
+							<p class="hint">Applied to members who join while raid mode is active.</p>
+						</div>
+						{#if cfg.raid.action === 'timeout'}
+							<div>
+								<span class="label">Timeout duration</span>
+								<div class="flex items-center gap-2">
+									<div class="w-28">
+										<NumberField bind:value={cfg.raid.timeout_seconds} min={1} max={2419200} />
+									</div>
+									<span class="text-xs text-muted">seconds</span>
+								</div>
+							</div>
+						{/if}
+					</div>
+
+					<div class="flex items-start justify-between gap-4 border-t border-line pt-4">
+						<div>
+							<div class="text-sm font-medium text-ink">Only action new accounts</div>
+							<p class="text-xs text-muted">During a raid, spare established accounts and only catch fresh ones.</p>
+						</div>
+						<Toggle bind:checked={cfg.raid.only_new_accounts} label="Only new accounts" />
+					</div>
+					{#if cfg.raid.only_new_accounts}
+						<div class="max-w-xs">
+							<span class="label">New account threshold</span>
+							<div class="flex items-center gap-2">
+								<div class="w-28">
+									<NumberField bind:value={cfg.raid.new_account_hours} min={1} max={8760} />
+								</div>
+								<span class="text-xs text-muted">hours old or younger</span>
+							</div>
+						</div>
+					{/if}
+
+					<div class="md:max-w-sm">
+						<span class="label">Alert channel</span>
+						<ChannelSelect bind:value={cfg.raid.alert_channel} />
+						<p class="hint">Optional. A heads-up is posted here when raid mode trips and lifts.</p>
+					</div>
+				</div>
+			{:else}
+				<p class="text-xs text-faint">
+					Anti-raid is off. Turn it on to automatically clamp down when a flood of accounts joins at
+					once.
+				</p>
+			{/if}
+		</section>
+
+		<!-- Native Discord AutoMod -->
+		<section class="card p-5">
+			<div class="mb-4 flex items-start gap-3">
+				<span class="mt-0.5 grid size-8 shrink-0 place-items-center rounded-lg border border-line bg-ink-2 text-accent-ink">
+					<Server size={16} />
+				</span>
+				<div>
+					<div class="eyebrow">Discord AutoMod (native)</div>
+					<p class="mt-0.5 max-w-xl text-xs text-muted">
+						These rules run on Discord's own servers at zero latency, before a message even reaches
+						the bot. They are separate from Dia's rules above. Use them for the heaviest, always-on
+						blocks; use Dia's rules for everything richer.
+					</p>
+				</div>
+			</div>
+
+			{#if !nativeLoaded}
+				<div class="skeleton h-20 w-full rounded-xl"></div>
+			{:else if nativeError}
+				<div class="flex items-start gap-2.5 rounded-xl border border-line bg-ink-2/40 px-3.5 py-3 text-xs text-muted">
+					<Lock size={14} class="mt-0.5 shrink-0 text-faint" />
+					<div>
+						<span class="font-medium text-ink">Native AutoMod isn't available right now.</span>
+						Make sure Dia has the <span class="font-mono">Manage Server</span> permission, then reload.
+						<span class="block text-faint">({nativeError})</span>
+					</div>
+				</div>
+			{:else}
+				<!-- Existing native rules -->
+				{#if nativeRules.length}
+					<ul class="mb-4 space-y-2">
+						{#each nativeRules as r (r.id ?? r.name)}
+							<li class="flex items-center justify-between gap-3 rounded-xl border border-line bg-ink-2/30 px-3.5 py-2.5">
+								<div class="min-w-0">
+									<div class="flex items-center gap-2">
+										<span class="truncate text-sm font-medium text-ink">{r.name}</span>
+										<span class="shrink-0 rounded-full border border-line-strong bg-surface px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-muted">
+											{NATIVE_TRIGGER_LABELS[r.trigger_type] ?? 'Rule'}
+										</span>
+									</div>
+									{#if r.trigger_type === 5 && r.trigger_metadata?.mention_total_limit}
+										<p class="text-[11px] text-faint">Blocks messages with more than {r.trigger_metadata.mention_total_limit} mentions.</p>
+									{/if}
+								</div>
+								<div class="flex shrink-0 items-center gap-2">
+									<Toggle checked={r.enabled} disabled={nativeBusy} onchange={() => toggleNative(r)} label="Rule enabled" />
+									<button
+										type="button"
+										onclick={() => removeNative(r)}
+										disabled={nativeBusy}
+										class="grid size-8 place-items-center rounded-lg text-faint transition-colors hover:bg-blush hover:text-accent-ink disabled:opacity-40"
+										aria-label="Delete native rule"
+									>
+										<Trash2 size={14} />
+									</button>
+								</div>
+							</li>
+						{/each}
+					</ul>
+				{:else}
+					<p class="mb-4 text-xs text-faint">No native rules yet. Add a preset below.</p>
+				{/if}
+
+				<!-- Quick-add presets -->
+				<div class="space-y-3 border-t border-line pt-4">
+					<div class="eyebrow">Quick add</div>
+					<div class="flex flex-wrap items-end gap-3 rounded-xl border border-line bg-ink-2/30 p-3.5">
+						<div>
+							<span class="label !mb-1 text-xs">Max mentions per message</span>
+							<div class="w-24">
+								<NumberField bind:value={mentionLimit} min={1} max={50} />
+							</div>
+						</div>
+						<button
+							type="button"
+							onclick={addMentionSpam}
+							disabled={nativeBusy || !!findNative(5)}
+							class="inline-flex items-center gap-1.5 rounded-lg border border-line-strong px-2.5 py-2 text-xs font-medium text-ink transition-colors hover:bg-ink-2 disabled:opacity-40"
+						>
+							<Plus size={13} /> {findNative(5) ? 'Mention block added' : 'Block mention spam'}
+						</button>
+					</div>
+					<button
+						type="button"
+						onclick={addKeywordPreset}
+						disabled={nativeBusy || !!findNative(4)}
+						class="inline-flex items-center gap-1.5 rounded-lg border border-line-strong px-2.5 py-2 text-xs font-medium text-ink transition-colors hover:bg-ink-2 disabled:opacity-40"
+					>
+						<Plus size={13} /> {findNative(4) ? 'Profanity preset added' : 'Block profanity & slurs (preset)'}
+					</button>
+				</div>
 			{/if}
 		</section>
 

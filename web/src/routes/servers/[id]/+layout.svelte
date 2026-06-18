@@ -15,6 +15,8 @@
 		UserPlus,
 		ShieldCheck,
 		ShieldAlert,
+		UserCheck,
+		ScrollText,
 		Wand2,
 		Zap,
 		Frame,
@@ -58,7 +60,9 @@
 			section: 'Moderation',
 			items: [
 				{ label: 'Moderation', path: 'moderation', icon: ShieldCheck },
-				{ label: 'Automod', path: 'automod', icon: ShieldAlert }
+				{ label: 'Automod', path: 'automod', icon: ShieldAlert },
+				{ label: 'Verification', path: 'verification', icon: UserCheck },
+				{ label: 'Server Logs', path: 'logging', icon: ScrollText }
 			]
 		},
 		{
