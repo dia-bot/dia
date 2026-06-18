@@ -95,6 +95,19 @@ const VOICE_EVENT_VARS: TmplVar[] = [
 	v('.Event.self_stream', 'bool', 'Streaming (Go Live)')
 ];
 
+const AUTOMOD_EVENT_VARS: TmplVar[] = [
+	v('.Event.rule_name', 'string', 'The automod rule that fired'),
+	v('.Event.rule_id', 'string', 'The rule id'),
+	v('.Event.trigger_type', 'string', 'The trigger that matched (keyword, spam, ...)'),
+	v('.Event.reason', 'string', 'Human description of the hit'),
+	v('.Event.points', 'int', 'Points added by this hit'),
+	v('.Event.total_points', 'int', "The member's active infraction total after"),
+	v('.Event.escalated', 'string', 'Escalation action fired ("" if none)'),
+	v('.Event.content', 'string', 'The offending message content (truncated)'),
+	v('.Event.message_id', 'snowflake', 'The offending message id ("" if none)'),
+	v('.Event.channel_id', 'snowflake', 'The channel it happened in ("" if none)')
+];
+
 const CHANNEL_EVENT_VARS: TmplVar[] = [
 	v('.Event.channel.id', 'snowflake', 'The channel id'),
 	v('.Event.channel.name', 'string', 'The channel name'),
@@ -271,6 +284,17 @@ export const TRIGGERS: TriggerKindMeta[] = [
 		hasChannel: false,
 		filters: ['cooldown'],
 		eventVars: []
+	},
+	{
+		key: 'automod_action',
+		label: 'Automod action taken',
+		description: 'An automod rule fires on a member (keyword, spam, escalation, and more).',
+		category: 'moderation',
+		event: 'AUTOMOD_ACTION',
+		actor: 'the flagged member',
+		hasChannel: true,
+		filters: ['ignore_bots', 'cooldown'],
+		eventVars: AUTOMOD_EVENT_VARS
 	},
 	{
 		key: 'channel_create',

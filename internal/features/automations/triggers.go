@@ -74,6 +74,7 @@ var Triggers = []TriggerKind{
 	// Moderation
 	{Key: "ban_add", Label: "Member banned", Description: "A user is banned from the server.", Event: event.TypeBanAdd, Category: CatModeration, Actor: "the banned user", Filters: []Filter{FilterCooldown}},
 	{Key: "ban_remove", Label: "Member unbanned", Description: "A user is unbanned.", Event: event.TypeBanRemove, Category: CatModeration, Actor: "the unbanned user", Filters: []Filter{FilterCooldown}},
+	{Key: "automod_action", Label: "Automod action taken", Description: "An automod rule fires on a member (keyword, spam, escalation, and more).", Event: event.TypeAutomodAction, Category: CatModeration, Actor: "the flagged member", HasChannel: true, Filters: []Filter{FilterIgnoreBots, FilterCooldown}},
 
 	// Channels & threads
 	{Key: "channel_create", Label: "Channel created", Description: "A channel is created.", Event: event.TypeChannelCreate, Category: CatChannels, Actor: "(no actor)", Filters: nil},

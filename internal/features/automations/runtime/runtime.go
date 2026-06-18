@@ -332,6 +332,28 @@ func (p *Plugin) prepare(ctx context.Context, et event.Type, env *event.Envelope
 		}
 		ec.user = b.User
 
+	case event.TypeAutomodAction:
+		a, err := plugin.DecodeData[event.AutomodAction](env)
+		if err != nil {
+			return nil, false
+		}
+		ec.user = a.User
+		ec.member = a.Member
+		ec.channelID = a.ChannelID
+		ec.eventMap = map[string]any{
+			"rule_id":      a.RuleID,
+			"rule_name":    a.RuleName,
+			"trigger_type": a.TriggerType,
+			"reason":       a.Reason,
+			"points":       a.Points,
+			"total_points": a.TotalPoints,
+			"escalated":    a.Escalated,
+			"content":      a.Content,
+			"message_id":   a.MessageID,
+			"channel_id":   a.ChannelID,
+			"actions":      a.Actions,
+		}
+
 	case event.TypeMessageCreate, event.TypeMessageUpdate:
 		m, err := decodeMessage(et, env)
 		if err != nil {
