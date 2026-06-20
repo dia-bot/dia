@@ -32,6 +32,9 @@
 	import Zap from 'lucide-svelte/icons/zap';
 	import Lock from 'lucide-svelte/icons/lock';
 	import ArrowRight from 'lucide-svelte/icons/arrow-right';
+	import Loader2 from 'lucide-svelte/icons/loader-2';
+	import Check from 'lucide-svelte/icons/check';
+	import MousePointerClick from 'lucide-svelte/icons/mouse-pointer-click';
 
 	const store = getContext<GuildStore>(GUILD_CTX);
 	const autoId = $derived($page.params.autoId ?? '');
@@ -76,10 +79,26 @@
 	const readonly = $derived(!!auto?.builtin);
 	const dirty = $derived(loaded && auto && !readonly ? JSON.stringify(auto) !== baseline : false);
 
+	// The Welcome built-in is read-only except for its per-button click actions:
+	// you wire them by dragging button dots here, and they save back into the
+	// Welcome config (the message, embeds and card stay managed on the Welcome
+	// tab). welcomeKind maps the two built-in ids to the config tab.
+	const welcomeEditable = $derived(!!auto?.builtin && auto?.feature_tab === 'welcome');
+	const welcomeKind = $derived(autoId.includes('leave') ? 'goodbye' : 'welcome');
+	const welcomeDirty = $derived(loaded && !!auto && welcomeEditable ? JSON.stringify(auto) !== baseline : false);
+	let welcomeSaving = $state<'idle' | 'saving' | 'saved' | 'error'>('idle');
+	let welcomeErr = $state('');
+	let welcomeDockTimer: ReturnType<typeof setTimeout> | null = null;
+
 	const triggerMeta = $derived(auto ? TRIGGER_BY_KEY.get(auto.trigger_type) : undefined);
 
 	const selectedStep = $derived.by(() => {
 		if (!auto) return null;
+		// On the welcome flow the spine (builtin-*) is generated and read-only;
+		// only its component dots are interactive. Never open the editor drawer for
+		// a spine node, or its in-drawer field edits would be accepted then silently
+		// dropped on save (the spine is regenerated from config, not persisted here).
+		if (welcomeEditable && selectedId.startsWith('builtin-')) return null;
 		return (
 			findStep(auto.definition.steps ?? [], selectedId) ??
 			(auto.definition.scratch ?? []).reduce<Step | null>((acc, ch) => acc ?? findStep(ch, selectedId), null)
@@ -419,9 +438,117 @@
 		}
 	});
 
+	// The welcome flow is read-only except for its button click actions. Spine
+	// (builtin-*) nodes can't be opened in the editor drawer (see selectedStep),
+	// dragged from (except their component dots), or deleted, so a spine edit that
+	// wouldn't persist can never be accepted-then-silently-discarded.
+	const isSpineNode = (id: string | null) => !!id && id.startsWith('builtin-');
+	function welcomeAddFromHandle(sourceNodeId: string, handle: string | null, kind: string) {
+		// Off a spine node two handles are live: a button dot ('component-…'),
+		// which wires that button's click action, and the channel message's main
+		// out handle, which anchors the post-message tail ("connect a new action
+		// after sending the message"). Block the rest (the spine's error / DM
+		// handles can't persist edits). Tail steps (their own non-builtin ids)
+		// stay fully chainable.
+		if (isSpineNode(sourceNodeId)) {
+			const h = handle ?? '';
+			const isButtonDot = h.startsWith('component-');
+			const isTailAnchor = sourceNodeId === 'builtin-send' && (h === 'out' || h === 'after' || h === '');
+			if (!isButtonDot && !isTailAnchor) return;
+		}
+		addFromHandle(sourceNodeId, handle, kind);
+	}
+	function welcomeDeleteStep(id: string) {
+		if (isSpineNode(id)) return; // the generated message/card/DM steps aren't deletable here
+		deleteStep(id);
+	}
+	// guardSpine wraps a node mutation so it no-ops on the generated spine nodes
+	// (builtin-*): their edits regenerate from config and wouldn't persist. Tail
+	// and click-action steps (their own non-builtin ids) pass straight through, so
+	// branching, error handlers and chain edits work on them exactly like a
+	// regular automation.
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	function guardSpine(fn: (id: string, ...rest: any[]) => void) {
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		return (id: string, ...rest: any[]) => {
+			if (!isSpineNode(id)) fn(id, ...rest);
+		};
+	}
+
+	// extractWelcomeActions reads the click-routers (the wait_for + switch pairs
+	// the canvas builds from button dots) back into the per-suffix action programs
+	// the Welcome config stores. There can be two: one right after the DM
+	// (builtin-dm) and one right after the channel message (builtin-send). Anchor
+	// on those spine nodes precisely — a tail step could itself be a wait_for +
+	// switch and must not be mistaken for a button router. Empty cases (all steps
+	// deleted) drop out so the button cleanly reverts to "no action".
+	type WelcomeAction = { suffix: string; steps: Step[] };
+	function routerActions(sw?: Step): WelcomeAction[] {
+		return (sw?.cases ?? [])
+			.map((c) => ({ suffix: c.when?.src ?? '', steps: c.do ?? [] }))
+			.filter((a) => a.suffix && a.steps.length > 0);
+	}
+	function extractWelcomeActions(def: Definition): { channel: WelcomeAction[]; dm: WelcomeAction[] } {
+		const steps = def.steps ?? [];
+		const out: { channel: WelcomeAction[]; dm: WelcomeAction[] } = { channel: [], dm: [] };
+		const dmIdx = steps.findIndex((s) => s.id === 'builtin-dm');
+		if (dmIdx >= 0 && isClickWait(steps[dmIdx + 1]) && isClickSwitch(steps[dmIdx + 2], steps[dmIdx + 1])) {
+			out.dm = routerActions(steps[dmIdx + 2]);
+		}
+		const sendIdx = steps.findIndex((s) => s.id === 'builtin-send');
+		if (sendIdx >= 0 && isClickWait(steps[sendIdx + 1]) && isClickSwitch(steps[sendIdx + 2], steps[sendIdx + 1])) {
+			out.channel = routerActions(steps[sendIdx + 2]);
+		}
+		return out;
+	}
+
+	// extractWelcomeTail reads the post-message flow back out of the generated
+	// definition: everything after the channel message (and its fused click
+	// router) is the editable tail the admin wired ("connect a new action after
+	// sending the message").
+	function extractWelcomeTail(def: Definition): Step[] {
+		const steps = def.steps ?? [];
+		const sendIdx = steps.findIndex((s) => s.id === 'builtin-send');
+		if (sendIdx < 0) return [];
+		return steps.slice(insertionIndex(steps, sendIdx));
+	}
+
+	async function saveWelcome() {
+		if (!auto || welcomeSaving === 'saving' || !welcomeDirty) return;
+		if (welcomeDockTimer) clearTimeout(welcomeDockTimer);
+		welcomeSaving = 'saving';
+		welcomeErr = '';
+		const gen = loadGen;
+		try {
+			const acts = extractWelcomeActions(auto.definition);
+			const tail = extractWelcomeTail(auto.definition);
+			await api.saveWelcomeActions(store.id, welcomeKind, acts.channel, acts.dm, tail);
+			if (gen !== loadGen) return;
+			const fresh = await fetchAuto();
+			if (gen !== loadGen) return;
+			auto = fresh;
+			baseline = JSON.stringify(fresh);
+			welcomeSaving = 'saved';
+			welcomeDockTimer = setTimeout(() => (welcomeSaving = 'idle'), 1500);
+		} catch (e) {
+			if (gen !== loadGen) return;
+			welcomeErr = e instanceof Error ? e.message : 'Could not save';
+			welcomeSaving = 'error';
+		}
+	}
+	function resetWelcome() {
+		if (baseline) auto = JSON.parse(baseline);
+		welcomeSaving = 'idle';
+		welcomeErr = '';
+	}
+
 	function onShortcut(e: KeyboardEvent) {
 		if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
 			e.preventDefault();
+			if (welcomeEditable) {
+				if (welcomeDirty) void saveWelcome();
+				return;
+			}
 			if (inFlight || readonly) return;
 			if (dirty) void save(false);
 			else {
@@ -958,7 +1085,7 @@
 		</header>
 
 		<div class="relative min-h-0 flex-1 overflow-hidden bg-bg">
-			{#if readonly}
+			{#if readonly && !welcomeEditable}
 				<div
 					class="pointer-events-none absolute left-1/2 top-3 z-30 -translate-x-1/2 whitespace-nowrap rounded-full border border-line bg-surface/90 px-3 py-1 font-mono text-[10px] uppercase tracking-[0.12em] text-muted backdrop-blur"
 				>
@@ -972,6 +1099,83 @@
 					bind:selectedId
 					showLegend={false}
 				/>
+			{:else if welcomeEditable}
+				<div
+					class="pointer-events-none absolute left-1/2 top-3 z-30 -translate-x-1/2 max-w-[92%] truncate rounded-full border border-line bg-surface/90 px-3 py-1 text-center font-mono text-[10px] uppercase tracking-[0.12em] text-muted backdrop-blur"
+				>
+					<MousePointerClick size={9} class="mr-1 inline" /> Drag off the message to add a follow-up action, or off a button's dot to set what it does. Message, embed &amp; card are managed in {auto.feature_name}.
+				</div>
+				<FlowCanvas
+					steps={auto.definition.steps as Step[]}
+					scratch={auto.definition.scratch ?? []}
+					commandName={triggerMeta?.label ?? auto.trigger_type}
+					commandId={auto.id}
+					bind:selectedId
+					{errorPaths}
+					palette={paletteFor}
+					showLegend={false}
+					onAddFromHandle={welcomeAddFromHandle}
+					onDeleteStep={welcomeDeleteStep}
+					onDetach={guardSpine(detachToScratch)}
+					onAttachScratch={attachScratch}
+					onAddErrorRouter={guardSpine(addErrorRouter)}
+					onRemoveErrorRouter={removeErrorRouter}
+					onTruncateChain={guardSpine(truncateChain)}
+					onAbsorbAfter={guardSpine(absorbAfterInto)}
+					onAddCase={guardSpine(addCase)}
+					onAddParallelBranch={guardSpine(addParallelBranchSlot)}
+				/>
+				{#if welcomeDirty || welcomeSaving !== 'idle'}
+					<div
+						class="pointer-events-none absolute inset-x-4 bottom-4 z-40 flex justify-center"
+						transition:fly={{ y: 14, duration: dur(180), easing: cubicOut }}
+					>
+						<div
+							class="pointer-events-auto flex h-11 items-center gap-2.5 rounded-[14px] border bg-surface/95 px-3.5 shadow-[0_16px_40px_-12px_rgba(0,0,0,0.7)] backdrop-blur-md {welcomeSaving ===
+							'error'
+								? 'border-danger/40'
+								: 'border-line'}"
+						>
+							{#if welcomeSaving === 'saving'}
+								<Loader2 size={15} class="animate-spin text-muted" />
+								<span class="text-[12.5px] text-muted">Saving…</span>
+							{:else if welcomeSaving === 'saved'}
+								<span class="grid size-4 place-items-center rounded-full bg-success/15 text-success"
+									><Check size={11} /></span
+								>
+								<span class="text-[12.5px] text-ink">Saved</span>
+							{:else if welcomeSaving === 'error'}
+								<CircleAlert size={15} class="text-danger" />
+								<span class="max-w-[16rem] truncate text-[12.5px] text-ink" title={welcomeErr}
+									>{welcomeErr || "Couldn't save"}</span
+								>
+								<button
+									type="button"
+									onclick={() => saveWelcome()}
+									class="ml-1 inline-flex h-7 items-center rounded-md bg-ink px-2.5 text-[12px] font-medium text-bg transition-opacity hover:opacity-90"
+									>Retry</button
+								>
+							{:else}
+								<span class="size-1.5 animate-pulse rounded-full bg-accent"></span>
+								<span class="text-[12.5px] text-muted">Unsaved button actions</span>
+								<div class="ml-1 flex items-center gap-1.5">
+									<button
+										type="button"
+										onclick={resetWelcome}
+										class="inline-flex h-7 items-center rounded-md border border-line-strong px-2.5 text-[12px] font-medium text-muted transition-colors hover:text-ink"
+										>Discard</button
+									>
+									<button
+										type="button"
+										onclick={() => saveWelcome()}
+										class="inline-flex h-7 items-center gap-1.5 rounded-md bg-ink px-3 text-[12px] font-medium text-bg transition-opacity hover:opacity-90"
+										>Save <kbd class="hidden font-mono text-[10px] text-bg/60 sm:inline">⌘S</kbd></button
+									>
+								</div>
+							{/if}
+						</div>
+					</div>
+				{/if}
 			{:else}
 				<div
 					class="absolute inset-0 transition-[filter] duration-300 motion-reduce:transition-none {auto.enabled ? '' : 'brightness-[0.85] saturate-[0.85]'}"
