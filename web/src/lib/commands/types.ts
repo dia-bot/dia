@@ -337,6 +337,7 @@ export const STEP_KINDS: StepKindMeta[] = [
 	{ kind: 'exit', category: 'flow', label: 'Exit', short: 'End the run successfully.', icon: 'CircleCheck' },
 	{ kind: 'fail', category: 'flow', label: 'Fail', short: 'Abort with an error.', icon: 'CircleAlert' },
 	{ kind: 'run_command', category: 'flow', label: 'Run command', short: 'Invoke another custom command.', icon: 'Terminal' },
+	{ kind: 'run_automation', category: 'flow', label: 'Run automation', short: "Launch another automation's steps inline.", icon: 'Zap' },
 	{ kind: 'audit_note', category: 'flow', label: 'Audit note', short: 'Record an entry in the audit log.', icon: 'FileText' }
 ];
 
@@ -521,6 +522,9 @@ export function newStep(kind: string): Step {
 			break;
 		case 'run_command':
 			step.spec = { command: '' };
+			break;
+		case 'run_automation':
+			step.spec = { automation: '' };
 			break;
 		case 'audit_note':
 			step.spec = { action: 'note', detail: { lang: 'tmpl', src: '' } };

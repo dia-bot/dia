@@ -72,5 +72,6 @@ func registerStdHandlers(e *Engine) {
 	e.Register(cc.KindFail, hFail)
 	e.Register(cc.KindNoop, hNoop)
 	e.Register(cc.KindRunCommand, hRunCommand)
+	e.Register(cc.KindRunAutomation, hRunAutomation)
 	e.Register(cc.KindAuditNote, hAuditNote)
 }

@@ -641,7 +641,14 @@ func (p *Plugin) resume(c *interactions.Context, kind string) error {
 	if err := json.Unmarshal(run.DefinitionSnapshot, &def); err != nil {
 		return err
 	}
-	scope, err := cc.RestoreScope(p.deps.GuildState, c.GuildID, run.Scope)
+	// A DM interaction carries no guild, so fall back to the run's stored guild
+	// (the scope's guild isn't persisted) — otherwise a DM-originated resume
+	// loses guildstate-backed lookups. Channel clicks already carry it.
+	scopeGuild := c.GuildID
+	if scopeGuild == "" {
+		scopeGuild = event.FormatID(run.GuildID)
+	}
+	scope, err := cc.RestoreScope(p.deps.GuildState, scopeGuild, run.Scope)
 	if err != nil {
 		return err
 	}

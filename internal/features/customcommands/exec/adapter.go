@@ -242,6 +242,9 @@ func (a *StoreAdapter) AppendAudit(ctx context.Context, e store.AuditEntry) erro
 func (a *StoreAdapter) GetCommandByName(ctx context.Context, guildID int64, name string) (store.CustomCommand, error) {
 	return a.S.CustomCommands.GetByName(ctx, guildID, name)
 }
+func (a *StoreAdapter) GetAutomation(ctx context.Context, guildID int64, id string) (store.Automation, error) {
+	return a.S.Automations.Get(ctx, guildID, id)
+}
 
 // ── Imaging adapter ────────────────────────────────────────────────────────
 

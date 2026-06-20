@@ -81,6 +81,8 @@ type StoreClient interface {
 	AppendAudit(ctx context.Context, e store.AuditEntry) error
 	// Commands (for run_command)
 	GetCommandByName(ctx context.Context, guildID int64, name string) (store.CustomCommand, error)
+	// Automations (for run_automation)
+	GetAutomation(ctx context.Context, guildID int64, id string) (store.Automation, error)
 }
 
 // ImagingClient renders Studio layouts to PNG bytes.

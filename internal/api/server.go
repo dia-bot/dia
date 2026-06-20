@@ -141,6 +141,7 @@ func (s *Server) Handler() http.Handler {
 	g.POST("/billing/portal", s.handlePortal)
 	g.POST("/welcome/preview", s.handleWelcomePreview)
 	g.POST("/welcome/test", s.handleWelcomeTest)
+	g.POST("/welcome/actions", s.handleWelcomeActions)
 	g.GET("/welcome/variables", s.handleWelcomeVariables)
 	g.POST("/rank/preview", s.handleRankPreview)
 	g.POST("/layout/preview", s.handleLayoutPreview)
