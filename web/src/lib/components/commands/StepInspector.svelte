@@ -12,6 +12,7 @@
 	import MessageRefField from './MessageRefField.svelte';
 	import ChannelExprField from './ChannelExprField.svelte';
 	import ChannelPicker from '$lib/components/ChannelPicker.svelte';
+	import AutomationPicker from './AutomationPicker.svelte';
 	import FieldSelect from './FieldSelect.svelte';
 	import Field from '$lib/components/Field.svelte';
 	import Toggle from '$lib/components/Toggle.svelte';
@@ -890,6 +891,11 @@
 						oninput={(e) => set('args', textToArgs((e.currentTarget as HTMLTextAreaElement).value))}
 					></textarea>
 				</Field>
+			{:else if step.kind === 'run_automation'}
+				<Field label="Automation">
+					<AutomationPicker value={spec.automation ?? ''} onChange={(id) => set('automation', id)} />
+				</Field>
+				<p class="hint">Runs that automation's steps right here, with this flow's variables.</p>
 			{:else if step.kind === 'audit_note'}
 				<Field label="Action">
 					<input class="input" value={spec.action ?? ''} oninput={(e) => set('action', (e.currentTarget as HTMLInputElement).value)} />

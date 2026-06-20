@@ -125,6 +125,8 @@ export function stepSummary(s: Step): string {
 			return spec.message || '';
 		case 'run_command':
 			return `/${spec.command || '?'}`;
+		case 'run_automation':
+			return spec.automation ? 'launch automation' : '?';
 		case 'audit_note':
 			return spec.action || '';
 	}
