@@ -1,6 +1,7 @@
 package welcome
 
 import (
+	cc "github.com/dia-bot/dia/internal/features/customcommands"
 	"github.com/dia-bot/dia/internal/imaging"
 	"github.com/dia-bot/dia/internal/layout"
 )
@@ -27,8 +28,39 @@ type MessageConfig struct {
 	Content   string        `json:"content"`
 	PingUser  bool          `json:"ping_user"` // when false, mentions render without pinging
 	Embeds    []EmbedConfig `json:"embeds"`    // up to 10, in order
-	Card      CardConfig    `json:"card"`
-	DM        DMConfig      `json:"dm"`
+
+	// Components are the message's button / select rows (up to 5), mirroring the
+	// custom-command message shape so the dashboard composer can edit them in
+	// place. A non-link component routes its click to this feature's handler
+	// (custom_id "welcome:<tab>:<suffix>"); if no action is wired for it the
+	// click is acknowledged silently.
+	Components []cc.ComponentRow `json:"components,omitempty"`
+
+	// Actions are the per-component click programs, keyed by the component's
+	// custom_id_suffix. Authored by dragging the component's dot on the
+	// Welcome automation flow and run when the component is clicked. A click
+	// program is a full durable flow (it may open a modal, wait for a reply,
+	// branch, send follow-ups).
+	Actions []ButtonAction `json:"actions,omitempty"`
+
+	// Tail is the post-message flow: the steps wired AFTER the channel message
+	// on the Welcome automation canvas ("connect a new action after sending a
+	// message"). It runs as a durable automation run once the join/leave message
+	// has been posted, so it can do anything an automation can — add roles, post
+	// elsewhere, wait, branch, DM, even wait for the member's reply.
+	Tail []cc.Step `json:"tail,omitempty"`
+
+	Card CardConfig `json:"card"`
+	DM   DMConfig   `json:"dm"`
+}
+
+// ButtonAction is the click-action program for one interactive component
+// (button or select), keyed by its custom_id_suffix. The Steps reuse the
+// automation/custom-command step model verbatim, so the same canvas editor and
+// runtime engine drive them.
+type ButtonAction struct {
+	Suffix string    `json:"suffix"`
+	Steps  []cc.Step `json:"steps,omitempty"`
 }
 
 // EmbedConfig is a full Discord embed; all text fields are templated.
@@ -77,10 +109,17 @@ type CardConfig struct {
 	SubTextColor string             `json:"sub_text_color,omitempty"`
 }
 
-// DMConfig optionally direct-messages the member.
+// DMConfig optionally direct-messages the member. It carries the same rich
+// surface as the channel message (embeds, button / select rows and their click
+// actions); a DM component routes its click to this feature's handler with the
+// custom_id "welcome:dm:<tab>:<guildID>:<suffix>" (the guild id is embedded
+// because a DM interaction carries no guild on its own).
 type DMConfig struct {
-	Enabled bool   `json:"enabled"`
-	Content string `json:"content"`
+	Enabled    bool              `json:"enabled"`
+	Content    string            `json:"content"`
+	Embeds     []EmbedConfig     `json:"embeds,omitempty"`
+	Components []cc.ComponentRow `json:"components,omitempty"`
+	Actions    []ButtonAction    `json:"actions,omitempty"`
 }
 
 // Default returns sensible defaults using the Dia brand palette: a welcome with

@@ -145,3 +145,30 @@ func hRunCommand(ctx context.Context, h *Halt) error {
 	// inherit the parent's logs, cursor and durability semantics.
 	return h.Engine.walk(ctx, h.Run, h.Scope, def.Steps, "subcommand")
 }
+
+// hRunAutomation launches another automation: its step program walks inline
+// against the current scope, so a flow can reuse an automation as a subroutine.
+// The shared step budget bounds recursion. Disabled / missing targets error
+// (catchable via on_error).
+func hRunAutomation(ctx context.Context, h *Halt) error {
+	var spec cc.SpecRunAutomation
+	if err := decodeSpec(h.Step.Spec, &spec); err != nil {
+		return err
+	}
+	if spec.Automation == "" {
+		return errors.New("run_automation: automation required")
+	}
+	gid, _ := event.ParseID(h.Run.GuildID)
+	target, err := h.Deps.Store.GetAutomation(ctx, gid, spec.Automation)
+	if err != nil {
+		return err
+	}
+	if !target.Enabled {
+		return errors.New("run_automation: target is disabled")
+	}
+	var def cc.Definition
+	if err := json.Unmarshal(target.Definition, &def); err != nil {
+		return err
+	}
+	return h.Engine.walk(ctx, h.Run, h.Scope, def.Steps, "automation")
+}

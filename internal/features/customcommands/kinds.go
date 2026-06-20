@@ -72,9 +72,10 @@ const (
 	KindFail     = "fail"
 	KindNoop     = "noop"
 
-	// Sub-commands & audit
-	KindRunCommand = "run_command"
-	KindAuditNote  = "audit_note"
+	// Sub-flows & audit
+	KindRunCommand    = "run_command"
+	KindRunAutomation = "run_automation"
+	KindAuditNote     = "audit_note"
 )
 
 // Latency is the worst-case timing class for a step. The validator walks the
@@ -594,6 +595,14 @@ type SpecRunCommand struct {
 	Command      string          `json:"command"`
 	Args         json.RawMessage `json:"args,omitempty"` // object {name: value}; string values are templated
 	InheritScope bool            `json:"inherit_scope,omitempty"`
+}
+
+// SpecRunAutomation launches another automation in the same run: the target's
+// step program walks inline against the current scope, so any flow (a custom
+// command, an automation, or a welcome flow) can reuse an automation as a
+// subroutine. The target is referenced by its automation id.
+type SpecRunAutomation struct {
+	Automation string `json:"automation"`
 }
 
 // SpecAuditNote writes a row to dashboard_audit_log.

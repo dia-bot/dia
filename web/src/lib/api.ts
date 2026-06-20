@@ -203,6 +203,22 @@ export const api = {
 		req<{ variables: { token: string; desc: string }[] }>('GET', `/api/guilds/${id}/welcome/variables`),
 	welcomeTest: (id: string, kind: 'welcome' | 'goodbye') =>
 		req<{ ok: boolean }>('POST', `/api/guilds/${id}/welcome/test`, { kind }),
+	// saveWelcomeActions persists the canvas-authored programs back into the
+	// welcome config: the per-button click actions and the post-message tail
+	// (the follow-up flow wired after the message).
+	saveWelcomeActions: (
+		id: string,
+		kind: 'welcome' | 'goodbye',
+		actions: unknown,
+		dmActions: unknown,
+		tail: unknown
+	) =>
+		req<{ ok: boolean }>('POST', `/api/guilds/${id}/welcome/actions`, {
+			kind,
+			actions,
+			dm_actions: dmActions,
+			tail
+		}),
 	levelingVariables: (id: string) =>
 		req<{ variables: { token: string; desc: string }[] }>('GET', `/api/guilds/${id}/leveling/variables`),
 	// templatingPreview renders one template string and returns the text + any error.

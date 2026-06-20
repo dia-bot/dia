@@ -28,6 +28,16 @@ const maxAutomationWait = time.Minute
 // enforces event semantics: interaction-only steps are valid only inside a
 // component/modal wait_for continuation, and waits are capped at one minute.
 func ValidateAutomation(def Definition) ValidationResult {
+	return ValidateEventFlow(def, false)
+}
+
+// ValidateEventFlow validates an event-triggered step program. rootInteraction
+// says whether a live Discord interaction exists at the root: false for a flow
+// that runs on the bare event (an automation, or Welcome's post-message tail),
+// true for a button/select click program (the click IS the interaction, so
+// reply / modal_open are valid from the first step). Everything else matches
+// ValidateAutomation.
+func ValidateEventFlow(def Definition, rootInteraction bool) ValidationResult {
 	r := ValidationResult{OK: true}
 
 	// Declared variable shape + uniqueness — identical to the command path.
@@ -62,7 +72,7 @@ func ValidateAutomation(def Definition) ValidationResult {
 	}
 
 	// Event semantics: interaction availability + wait-window cap.
-	checkAutomationSteps(def.Steps, "steps", false, &r)
+	checkAutomationSteps(def.Steps, "steps", rootInteraction, &r)
 
 	// Only errors block; warnings (e.g. a long wait that gets clamped) are advisory.
 	r.OK = true
