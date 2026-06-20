@@ -35,6 +35,9 @@
 	import AtSign from 'lucide-svelte/icons/at-sign';
 	import Check from 'lucide-svelte/icons/check';
 	import MousePointerClick from 'lucide-svelte/icons/mouse-pointer-click';
+	import ImageIcon from 'lucide-svelte/icons/image';
+	import Wand2 from 'lucide-svelte/icons/wand-2';
+	import Loader2 from 'lucide-svelte/icons/loader-2';
 
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
 	type AnySpec = any;
@@ -44,7 +47,14 @@
 		ephemeral = false,
 		embeds = true,
 		components = false,
-		attachments = false
+		attachments = false,
+		clickPaths = true,
+		card = false,
+		cardEnabled = false,
+		cardUrl = '',
+		cardAspect = '1024/450',
+		onCardToggle,
+		onCardEdit
 	}: {
 		step: Step;
 		// Which message features this step kind supports (mirrors the Go spec).
@@ -52,6 +62,21 @@
 		embeds?: boolean;
 		components?: boolean;
 		attachments?: boolean;
+		// Whether this editor lives on a flow canvas where a button's click can be
+		// wired to a path. Off for surfaces without a canvas (e.g. Welcome), where
+		// a non-link button is simply decorative.
+		clickPaths?: boolean;
+		// Welcome card image, rendered inline inside the bubble (as Discord shows an
+		// attachment). The parent owns the layout + live preview; this surface just
+		// shows it and exposes edit / add / remove affordances on the artifact.
+		card?: boolean;
+		cardEnabled?: boolean;
+		cardUrl?: string;
+		// Aspect ratio (`w/h`) for the loading placeholder, so it matches the real
+		// canvas size instead of jumping when the rendered image arrives.
+		cardAspect?: string;
+		onCardToggle?: (on: boolean) => void;
+		onCardEdit?: () => void;
 	} = $props();
 
 	// In automations, raw custom-id editing is hidden — buttons are wired by the
@@ -242,7 +267,7 @@
 									type: 'button',
 									style: 'secondary',
 									label: 'Button',
-									custom_id_suffix: `btn${ri + 1}_${r.components.length + 1}`
+									custom_id_suffix: randId('btn')
 								}
 							]
 						}
@@ -508,6 +533,54 @@
 					</div>
 				{/if}
 
+				<!-- Welcome card: the rendered image, attached inside the message -->
+				{#if card}
+					<div class="mt-2">
+						{#if cardEnabled}
+							<div
+								class="group/card relative inline-block w-full max-w-[420px] overflow-hidden rounded-md border border-[#1e1f22]"
+							>
+								{#if cardUrl}
+									<img src={cardUrl} alt="Welcome card" class="block w-full" />
+								{:else}
+									<div
+										class="grid w-full place-items-center bg-[#2b2d31] text-[#949ba4]"
+										style="aspect-ratio: {cardAspect}"
+									>
+										<Loader2 size={18} class="animate-spin" />
+									</div>
+								{/if}
+								<div
+									class="absolute inset-0 flex items-center justify-center gap-2 bg-black/55 opacity-0 transition-opacity group-hover/card:opacity-100 group-focus-within:opacity-100"
+								>
+									<button
+										type="button"
+										class="inline-flex h-8 items-center gap-1.5 rounded-md bg-white/95 px-3 text-[12px] font-semibold text-[#1e1f22] transition-colors hover:bg-white"
+										onclick={() => onCardEdit?.()}
+									>
+										<Wand2 size={13} /> Edit image
+									</button>
+									<button
+										type="button"
+										class="inline-flex h-8 items-center gap-1.5 rounded-md border border-white/30 px-3 text-[12px] font-medium text-white transition-colors hover:bg-white/10"
+										onclick={() => onCardToggle?.(false)}
+									>
+										<Trash2 size={12} /> Remove
+									</button>
+								</div>
+							</div>
+						{:else}
+							<button
+								type="button"
+								class="flex w-full max-w-[420px] items-center justify-center gap-2 rounded-md border border-dashed border-white/15 py-6 text-[12px] font-medium text-[#6d6f78] transition-colors hover:border-white/30 hover:text-[#b5bac1]"
+								onclick={() => onCardToggle?.(true)}
+							>
+								<ImageIcon size={14} /> Add a welcome card image
+							</button>
+						{/if}
+					</div>
+				{/if}
+
 				<!-- Buttons & selects — rendered like Discord, click to edit -->
 				{#if components && rowList.length > 0}
 					<div class="mt-2 space-y-2">
@@ -590,10 +663,17 @@
 																url: (e.currentTarget as HTMLInputElement).value
 															})}
 													/>
+												{:else if !clickPaths}
+													<p class="mt-2 text-[10px] leading-snug text-muted-foreground">
+														To make a click do something, open <span class="font-medium text-foreground">Advanced</span>
+														and drag this button's dot to an action. Or choose the
+														<span class="font-medium text-foreground">link</span> style above to open a URL.
+													</p>
 												{:else if c.custom_id_manual}
 													<input
 														class="mt-1.5 h-7 w-full rounded-md border border-input bg-background px-2 font-mono text-[11px] text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
-														placeholder="custom id — templates work: vote_{'{{ .Vars.idx }}'}"
+														placeholder="custom id, templates work: vote_{'{{ .Vars.idx }}'}"
+														maxlength="50"
 														value={c.custom_id_suffix ?? ''}
 														oninput={(e) =>
 															patchComponent(ri, ci, {
@@ -719,6 +799,7 @@
 													<input
 														class="h-7 rounded-md border border-input bg-background px-2 font-mono text-[11px] text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
 														placeholder="pick id"
+														maxlength="50"
 														value={c.custom_id_suffix ?? ''}
 														oninput={(e) =>
 															patchComponent(ri, ci, {

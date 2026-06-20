@@ -16,15 +16,13 @@
 	import CardStudioModal from '$lib/components/editor/CardStudioModal.svelte';
 	import {
 		Send,
-		Wand2,
-		MessageSquare,
-		Mail,
 		Image as ImageIcon,
-		Frame,
 		UserPlus,
 		UserMinus,
 		Zap,
 		ExternalLink,
+		Hash,
+		Mail,
 		Loader2,
 		Check,
 		CircleAlert
@@ -71,14 +69,30 @@
 		timestamp: boolean;
 	};
 	type Card = { enabled: boolean; layout?: Layout };
+	// One row of message components (buttons / selects), mirroring the Go
+	// ComponentRow shape the MessageEditor produces in `spec.components`.
+	type CompRow = { components: Record<string, unknown>[] };
 	type SavedMsg = {
 		enabled: boolean;
 		channel_id: string;
 		content: string;
 		ping_user: boolean;
 		embeds: Embed[];
+		components: CompRow[];
+		// Per-button click programs, authored on the Welcome automation flow.
+		// The page never edits these; it round-trips them untouched so saving
+		// the message here can't wipe actions wired on the canvas.
+		actions: Record<string, unknown>[];
 		card: Card;
-		dm: { enabled: boolean; content: string };
+		// The DM carries the same rich surface as the channel message (embeds,
+		// buttons / selects and their click actions), mirroring Go's DMConfig.
+		dm: {
+			enabled: boolean;
+			content: string;
+			embeds: Embed[];
+			components: CompRow[];
+			actions: Record<string, unknown>[];
+		};
 	};
 	type SavedCfg = { welcome: SavedMsg; goodbye: SavedMsg };
 
@@ -88,8 +102,11 @@
 		enabled: boolean;
 		channel_id: string;
 		step: Step;
+		// Carried through untouched (click actions are edited on the flow, not here).
+		actions: Record<string, unknown>[];
 		card: Card;
-		dm: { enabled: boolean; step: Step };
+		// The DM is its own send_dm Step; its click actions ride along untouched too.
+		dm: { enabled: boolean; step: Step; actions: Record<string, unknown>[] };
 	};
 	type CfgState = { welcome: MsgState; goodbye: MsgState };
 
@@ -101,8 +118,10 @@
 				content: 'Hey {user.mention}, welcome to **{server}**! 🎉',
 				ping_user: true,
 				embeds: [],
+				components: [],
+				actions: [],
 				card: { enabled: true, layout: templateLayout('aurora') },
-				dm: { enabled: false, content: '' }
+				dm: { enabled: false, content: '', embeds: [], components: [], actions: [] }
 			},
 			goodbye: {
 				enabled: false,
@@ -110,8 +129,10 @@
 				content: '**{user.name}** just left. We are now {count} members.',
 				ping_user: false,
 				embeds: [],
+				components: [],
+				actions: [],
 				card: { enabled: false, layout: templateLayout('midnight') },
-				dm: { enabled: false, content: '' }
+				dm: { enabled: false, content: '', embeds: [], components: [], actions: [] }
 			}
 		};
 	}
@@ -119,13 +140,15 @@
 	// Strip welcome's per-embed `enabled` flag; MessageEditor's EmbedSpec has the
 	// same field names otherwise, so the rest passes straight through.
 	function toSpecEmbed(e: Embed): Record<string, unknown> {
-		const { enabled: _enabled, ...rest } = e;
-		return rest;
+		// Keep every field, `enabled` included: EmbedBuilder treats the embed as
+		// opaque and spreads it on each edit, so the flag rides along untouched and
+		// fromState can preserve a stored disabled embed instead of forcing it on.
+		return { ...e };
 	}
 	function toSavedEmbed(e: Record<string, unknown>): Embed {
 		const f = (e.fields as Field[]) ?? [];
 		return {
-			enabled: true,
+			enabled: (e.enabled as boolean) ?? true,
 			color: (e.color as string) ?? '',
 			author_name: (e.author_name as string) ?? '',
 			author_icon: (e.author_icon as string) ?? '',
@@ -146,15 +169,24 @@
 	function toState(id: string, m: SavedMsg): MsgState {
 		const spec: Record<string, unknown> = { content: m.content ?? '' };
 		if (m.embeds?.length) spec.embeds = m.embeds.map(toSpecEmbed);
+		if (m.components?.length) spec.components = m.components;
 		// undefined allowed_mentions = members ping (the safe default). Only encode
 		// the suppressed case, matching MessageEditor's convention.
 		if (m.ping_user === false) spec.allowed_mentions = { users: false, roles: false, everyone: false };
+		const dmSpec: Record<string, unknown> = { content: m.dm?.content ?? '' };
+		if (m.dm?.embeds?.length) dmSpec.embeds = m.dm.embeds.map(toSpecEmbed);
+		if (m.dm?.components?.length) dmSpec.components = m.dm.components;
 		return {
 			enabled: m.enabled,
 			channel_id: m.channel_id ?? '',
 			step: { id: `${id}-msg`, kind: 'send_message', spec },
+			actions: m.actions ?? [],
 			card: { enabled: m.card?.enabled ?? false, layout: m.card?.layout },
-			dm: { enabled: m.dm?.enabled ?? false, step: { id: `${id}-dm`, kind: 'send_dm', spec: { content: m.dm?.content ?? '' } } }
+			dm: {
+				enabled: m.dm?.enabled ?? false,
+				step: { id: `${id}-dm`, kind: 'send_dm', spec: dmSpec },
+				actions: m.dm?.actions ?? []
+			}
 		};
 	}
 	function fromState(st: MsgState): SavedMsg {
@@ -167,8 +199,16 @@
 			content: (spec.content as string) ?? '',
 			ping_user: am ? am.users !== false : true,
 			embeds: ((spec.embeds as Record<string, unknown>[]) ?? []).map(toSavedEmbed),
+			components: (spec.components as CompRow[]) ?? [],
+			actions: st.actions ?? [],
 			card: { enabled: st.card.enabled, layout: st.card.layout },
-			dm: { enabled: st.dm.enabled, content: (dmSpec.content as string) ?? '' }
+			dm: {
+				enabled: st.dm.enabled,
+				content: (dmSpec.content as string) ?? '',
+				embeds: ((dmSpec.embeds as Record<string, unknown>[]) ?? []).map(toSavedEmbed),
+				components: (dmSpec.components as CompRow[]) ?? [],
+				actions: st.dm.actions ?? []
+			}
 		};
 	}
 
@@ -178,15 +218,24 @@
 			...d,
 			...c,
 			embeds: c.embeds ?? d.embeds,
+			components: c.components ?? d.components,
+			actions: c.actions ?? d.actions,
 			card: c.card ? { enabled: c.card.enabled ?? d.card.enabled, layout: c.card.layout } : d.card,
-			dm: { ...d.dm, ...(c.dm ?? {}) }
+			dm: c.dm
+				? {
+						...d.dm,
+						...c.dm,
+						embeds: c.dm.embeds ?? d.dm.embeds,
+						components: c.dm.components ?? d.dm.components,
+						actions: c.dm.actions ?? d.dm.actions
+					}
+				: d.dm
 		};
 	}
 
 	let enabled = $state(false);
 	let cfg = $state<CfgState>({ welcome: toState('w', savedDefaults().welcome), goodbye: toState('g', savedDefaults().goodbye) });
 	let tab = $state<'welcome' | 'goodbye'>('welcome');
-	let selected = $state<string>('message');
 	let loaded = $state(false);
 	let testing = $state(false);
 	let testMsg = $state('');
@@ -210,17 +259,12 @@
 	} as const;
 	const trigger = $derived(TRIGGERS[tab]);
 
-	function stepContent(st: Step): string {
-		return (((st.spec ?? {}) as Record<string, unknown>).content as string)?.trim() ?? '';
-	}
-
-	// Ordered flow steps, as the left-rail nodes. Summaries are live.
-	const steps = $derived([
-		{ key: 'message', icon: MessageSquare, kind: 'send_message', title: 'Message', summary: stepContent(cfg[tab].step) || 'No message yet', on: cfg[tab].enabled },
-		{ key: 'card', icon: Frame, kind: 'image.render', title: 'Card image', summary: cfg[tab].card.enabled ? 'Attached' : 'Off', on: cfg[tab].card.enabled },
-		{ key: 'dm', icon: Mail, kind: 'send_dm', title: 'Direct message', summary: cfg[tab].dm.enabled ? stepContent(cfg[tab].dm.step) || 'Empty' : 'Off', on: cfg[tab].dm.enabled }
-	]);
-	const sel = $derived(steps.find((s) => s.key === selected));
+	// Aspect ratio of the active card, so the inline loading placeholder matches
+	// the real canvas size (defaults handled by MessageEditor when undefined).
+	const cardAspect = $derived.by(() => {
+		const l = cfg[tab].card.layout;
+		return l ? `${l.width}/${l.height}` : undefined;
+	});
 
 	onMount(async () => {
 		const f = await api.feature(store.id, FEATURE);
@@ -236,25 +280,58 @@
 	});
 
 	function openStudio() {
-		if (!cfg[tab].card.layout) cfg[tab].card.layout = templateLayout('aurora');
+		if (!cfg[tab].card.layout) cfg[tab].card.layout = templateLayout(tab === 'welcome' ? 'aurora' : 'midnight');
 		studioOpen = true;
 	}
+	// Add / remove the card straight from the artifact. Adding it opens the studio
+	// so designing the image is the immediate next move.
+	function toggleCard(on: boolean) {
+		cfg[tab].card.enabled = on;
+		if (on) openStudio();
+	}
 
-	// live card preview (debounced) — renders the layout through the real engine.
+	// Live card preview (debounced), rendered through the real layout engine.
+	// previewUrl feeds the inline card slot in the message bubble. We mirror the
+	// live blob in a non-reactive var (liveUrl) so revoking it never re-triggers
+	// this effect, and a sequence token discards superseded / out-of-order renders
+	// (fast edits, trigger switches, toggling the card off mid-request).
 	let timer: ReturnType<typeof setTimeout>;
+	let liveUrl = '';
+	let previewSeq = 0;
+	let previewTab: 'welcome' | 'goodbye' | '' = '';
+
+	function setPreview(url: string) {
+		if (liveUrl && liveUrl !== url) URL.revokeObjectURL(liveUrl);
+		liveUrl = url;
+		previewUrl = url;
+	}
+
 	$effect(() => {
-		const card = cfg[tab].card;
-		if (!loaded || !card.enabled || !card.layout) {
-			previewUrl = '';
+		const t = tab;
+		const card = cfg[t].card;
+		const json = card.enabled && card.layout ? JSON.stringify(card.layout) : '';
+
+		clearTimeout(timer);
+		const seq = ++previewSeq;
+		const tabChanged = t !== previewTab;
+		previewTab = t;
+
+		if (!loaded || !json) {
+			setPreview('');
 			return;
 		}
-		const json = JSON.stringify(card.layout);
-		clearTimeout(timer);
+		// On a real trigger switch, drop the other tab's card at once so the slot
+		// shows the loading state rather than the wrong image during the round-trip.
+		if (tabChanged) setPreview('');
+
 		timer = setTimeout(async () => {
 			try {
 				const url = await layoutPreview(store.id, JSON.parse(json));
-				if (previewUrl) URL.revokeObjectURL(previewUrl);
-				previewUrl = url;
+				if (seq !== previewSeq) {
+					URL.revokeObjectURL(url); // superseded by a newer edit / tab / toggle
+					return;
+				}
+				setPreview(url);
 			} catch {
 				/* best-effort */
 			}
@@ -263,7 +340,7 @@
 
 	onDestroy(() => {
 		clearTimeout(timer);
-		if (previewUrl) URL.revokeObjectURL(previewUrl);
+		if (liveUrl) URL.revokeObjectURL(liveUrl);
 	});
 
 	async function save() {
@@ -325,7 +402,7 @@
 
 <div class="flex h-full flex-col bg-bg text-ink">
 	<!-- ── Slab topbar ──────────────────────────────────────────────────── -->
-	<PageTopbar eyebrow="Welcome" subtitle="A built-in automation that greets members and bids them farewell.">
+	<PageTopbar eyebrow="Welcome" subtitle="Greet members the moment they join, and bid them farewell when they leave.">
 		{#snippet leading()}
 			<div class="grid size-6 place-items-center rounded border border-line bg-surface text-accent-ink">
 				<ImageIcon size={13} />
@@ -335,9 +412,9 @@
 			<a
 				href={`${base}/automations/${trigger.builtin}`}
 				class="inline-flex h-8 items-center gap-1.5 rounded-md border border-line px-2.5 text-[12px] font-medium text-muted transition-colors hover:border-line-strong hover:text-ink"
-				title="See this flow (read-only) in Automations"
+				title="Advanced: see this flow and wire button click actions"
 			>
-				<Zap size={13} /> <span class="hidden sm:inline">View in Automations</span>
+				<Zap size={13} /> <span class="hidden sm:inline">Advanced</span>
 				<ExternalLink size={11} class="text-faint" />
 			</a>
 			<label class="ml-1 flex items-center gap-2 text-[12px]">
@@ -349,7 +426,7 @@
 
 	<!-- ── Trigger switch ───────────────────────────────────────────────── -->
 	<div class="flex min-h-10 shrink-0 flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-line/60 bg-bg px-5 py-1.5 md:flex-nowrap">
-		<span class="hidden font-mono text-[10px] uppercase tracking-[0.14em] text-faint sm:inline">Trigger</span>
+		<span class="hidden font-mono text-[10px] uppercase tracking-[0.14em] text-faint sm:inline">Editing</span>
 		<div class="flex items-center gap-1 rounded-lg border border-line bg-ink-2 p-0.5">
 			{#each tabs as t (t.k)}
 				{@const Icon = TRIGGERS[t.k].icon}
@@ -383,142 +460,97 @@
 		</div>
 	</div>
 
-	<!-- ── Body: flow rail + full-width editor surface + save dock ──────── -->
-	<div class="relative min-h-0 flex-1 overflow-hidden bg-bg">
+	<!-- ── Body: one live message you edit in place ─────────────────────── -->
+	<div class="relative min-h-0 flex-1 overflow-y-auto bg-bg">
 		{#if !loaded}
-			<div class="flex h-full">
-				<div class="hidden w-[300px] shrink-0 space-y-3 border-r border-line p-4 md:block">
-					<div class="skeleton h-14 w-full rounded-xl"></div>
-					<div class="skeleton h-16 w-full rounded-xl"></div>
-					<div class="skeleton h-16 w-full rounded-xl"></div>
-				</div>
-				<div class="flex-1 p-6"><div class="skeleton mx-auto h-80 w-full max-w-2xl rounded-xl"></div></div>
+			<div class="mx-auto w-full max-w-2xl p-6">
+				<div class="skeleton mb-3 h-6 w-40 rounded"></div>
+				<div class="skeleton h-72 w-full rounded-xl"></div>
 			</div>
 		{:else}
 			{@const TIcon = trigger.icon}
-			<div class="flex h-full flex-col md:flex-row">
-				<!-- Flow rail (navigator) -->
-				<aside class="shrink-0 overflow-y-auto border-b border-line p-4 md:w-[300px] md:border-b-0 md:border-r">
+			{#key tab}
+				<div class="mx-auto w-full max-w-2xl space-y-6 px-5 py-6" in:fly={{ y: 8, duration: 160, easing: cubicOut }}>
 					{#if !enabled}
-						<div class="mb-3 flex items-center gap-2 rounded-lg border border-line bg-ink-2 px-3 py-2 text-[12px] text-muted">
+						<div class="flex items-center gap-2 rounded-lg border border-line bg-ink-2 px-3 py-2 text-[12px] text-muted">
 							<span class="size-1.5 shrink-0 rounded-full bg-faint/40"></span>
-							System is off — turn it on, top-right.
+							The welcome system is off. Turn it on, top-right, to send anything.
 						</div>
 					{/if}
 
-					<!-- Trigger entry node -->
-					<div class="rounded-xl border border-accent/25 bg-accent/[0.06] px-3.5 py-2.5">
-						<div class="flex items-center gap-2.5">
+					<!-- Per-trigger enable + what fires this -->
+					<div class="flex items-center justify-between gap-3 rounded-xl border border-accent/25 bg-accent/[0.06] px-3.5 py-2.5">
+						<div class="flex min-w-0 items-center gap-2.5">
 							<span class="grid size-7 shrink-0 place-items-center rounded-lg border border-accent/30 bg-accent/10 text-accent-ink">
 								<TIcon size={15} />
 							</span>
-							<div class="min-w-0 flex-1">
+							<div class="min-w-0">
 								<div class="flex items-center gap-1.5">
-									<span class="font-mono text-[9px] uppercase tracking-[0.16em] text-accent-ink/80">Trigger</span>
+									<span class="font-mono text-[9px] uppercase tracking-[0.16em] text-accent-ink/80">When</span>
 									<span class="font-mono text-[9.5px] text-faint">{trigger.key}</span>
 								</div>
-								<div class="truncate text-[12.5px] font-medium text-ink">When a member {trigger.verb}</div>
+								<div class="truncate text-[12.5px] font-medium text-ink">A member {trigger.verb}, send this</div>
 							</div>
-							<Toggle bind:checked={cfg[tab].enabled} label="Run this flow" />
 						</div>
+						<label class="flex shrink-0 items-center gap-2 text-[12px]">
+							<span class="hidden text-muted sm:inline">{cfg[tab].enabled ? 'On' : 'Off'}</span>
+							<Toggle bind:checked={cfg[tab].enabled} label="Send on {trigger.key}" />
+						</label>
 					</div>
 
-					<!-- Step nodes -->
 					<div class="transition-opacity {cfg[tab].enabled ? '' : 'opacity-60'}">
-						{#each steps as s (s.key)}
-							{@const Icon = s.icon}
-							<div class="ml-[26px] h-4 w-px bg-line-strong/70"></div>
-							<button
-								type="button"
-								onclick={() => (selected = s.key)}
-								class="block w-full rounded-xl border bg-card text-left transition-all duration-200 {selected ===
-								s.key
-									? 'border-foreground/40 shadow-[0_0_0_3px_hsl(var(--foreground)/0.08),0_12px_32px_-12px_rgba(0,0,0,0.5)]'
-									: 'border-border/60 shadow-[0_1px_2px_rgba(0,0,0,0.3)] hover:border-foreground/25 hover:shadow-[0_4px_16px_-4px_rgba(0,0,0,0.45)]'}"
-							>
-								<div class="flex items-center gap-2.5 rounded-t-xl border-b border-border/50 bg-gradient-to-r from-foreground/[0.05] to-transparent px-3 py-2">
-									<span class="grid size-6 shrink-0 place-items-center rounded-md bg-foreground/[0.07] text-foreground/80 ring-1 ring-border/70">
-										<Icon size={13} />
-									</span>
-									<span class="min-w-0 flex-1 truncate text-[12.5px] font-semibold text-foreground">{s.title}</span>
-									<span class="size-1.5 shrink-0 rounded-full {s.on ? 'bg-success' : 'bg-faint/40'}"></span>
-								</div>
-								<div class="px-3 py-2">
-									<div class="font-mono text-[9px] uppercase tracking-[0.12em] text-muted-foreground/60">{s.kind}</div>
-									<div class="mt-0.5 truncate text-[11.5px] text-muted-foreground">{s.summary}</div>
-								</div>
-							</button>
-						{/each}
-					</div>
-				</aside>
+						<!-- Channel: the message's destination, shown as its header -->
+						<div class="mb-2 flex flex-wrap items-center gap-2 text-[12.5px] text-muted">
+							<Hash size={14} class="text-faint" />
+							<span>Posts in</span>
+							<div class="min-w-[200px] max-w-xs flex-1"><ChannelSelect bind:value={cfg[tab].channel_id} placeholder="Channel to post the welcome in" /></div>
+						</div>
 
-				<!-- Editor surface -->
-				<div class="min-w-0 flex-1 overflow-y-auto px-6 py-6">
-					{#key tab + selected}
-						<div class="mx-auto w-full max-w-2xl" in:fly={{ y: 8, duration: 160, easing: cubicOut }}>
-							{#if selected === 'message'}
-								<header class="mb-4">
-									<h2 class="text-[15px] font-semibold text-ink">Message</h2>
-									<p class="mt-0.5 text-[12.5px] text-muted">Posted in a channel when a member {trigger.verb}. Edit it right in the preview.</p>
-								</header>
-								<div class="mb-4 max-w-sm">
-									<div class="label">Channel</div>
-									<ChannelSelect bind:value={cfg[tab].channel_id} />
+						<!-- The message itself: content, embeds, the card image, buttons /
+						     selects, all edited right on the Discord surface. -->
+						<MessageEditor
+							step={cfg[tab].step}
+							embeds
+							components
+							clickPaths={false}
+							card
+							cardEnabled={cfg[tab].card.enabled && !!cfg[tab].card.layout}
+							cardUrl={previewUrl}
+							cardAspect={cardAspect}
+							onCardToggle={toggleCard}
+							onCardEdit={openStudio}
+						/>
+
+						<!-- DM: a second, private message to the member -->
+						<div class="mt-6 border-t border-line/60 pt-5">
+							<div class="mb-2 flex items-center justify-between gap-3">
+								<div class="flex min-w-0 items-center gap-2">
+									<Mail size={14} class="text-faint" />
+									<span class="text-[12.5px] font-medium text-ink">Private DM</span>
+									<span class="hidden truncate text-[11.5px] text-muted sm:inline">also message the member directly</span>
 								</div>
-								<MessageEditor step={cfg[tab].step} embeds />
-							{:else if selected === 'card'}
-								<header class="mb-4 flex items-start justify-between gap-4">
-									<div>
-										<h2 class="text-[15px] font-semibold text-ink">Card image</h2>
-										<p class="mt-0.5 text-[12.5px] text-muted">A rendered welcome card, attached beneath the message.</p>
-									</div>
-									<Toggle bind:checked={cfg[tab].card.enabled} />
-								</header>
-								{#if cfg[tab].card.enabled}
-									<div class="overflow-hidden rounded-xl border border-line bg-ink-2">
-										{#if previewUrl}
-											<img src={previewUrl} alt="Welcome card preview" class="block w-full" />
-										{:else}
-											<div class="grid aspect-[1024/450] place-items-center text-faint"><Loader2 size={20} class="animate-spin" /></div>
-										{/if}
-									</div>
-									<button
-										type="button"
-										onclick={openStudio}
-										class="mt-4 flex w-full items-center justify-center gap-2 rounded-lg border border-line-strong bg-ink-2 py-2.5 text-[13px] font-medium text-ink transition-colors hover:bg-surface"
-									>
-										<Wand2 size={15} class="text-accent-ink" /> Edit image
-									</button>
-								{:else}
-									<div class="rounded-xl border border-dashed border-line px-4 py-10 text-center text-[12.5px] text-faint">
-										No card image. Turn it on to attach a rendered card.
-									</div>
-								{/if}
-							{:else if selected === 'dm'}
-								<header class="mb-4 flex items-start justify-between gap-4">
-									<div>
-										<h2 class="text-[15px] font-semibold text-ink">Direct message</h2>
-										<p class="mt-0.5 text-[12.5px] text-muted">Also send the member a private DM when they {trigger.verb}.</p>
-									</div>
-									<Toggle bind:checked={cfg[tab].dm.enabled} />
-								</header>
-								{#if cfg[tab].dm.enabled}
-									<MessageEditor step={cfg[tab].dm.step} embeds={false} />
-								{:else}
-									<div class="rounded-xl border border-dashed border-line px-4 py-10 text-center text-[12.5px] text-faint">
-										No DM. Turn it on to greet the member privately.
-									</div>
-								{/if}
+								<Toggle bind:checked={cfg[tab].dm.enabled} label="Send a DM" />
+							</div>
+							{#if cfg[tab].dm.enabled}
+								<MessageEditor step={cfg[tab].dm.step} embeds components clickPaths={false} />
+							{:else}
+								<button
+									type="button"
+									onclick={() => (cfg[tab].dm.enabled = true)}
+									class="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-line px-4 py-6 text-[12.5px] font-medium text-faint transition-colors hover:border-line-strong hover:text-muted"
+								>
+									<Mail size={14} /> Add a private DM
+								</button>
 							{/if}
 						</div>
-					{/key}
+					</div>
 				</div>
-			</div>
+			{/key}
 		{/if}
 
 		<!-- Release dock — the saving experience -->
 		{#if loaded && dockVisible}
-			<div class="pointer-events-none absolute inset-x-4 bottom-4 z-40 flex justify-center" transition:fly={{ y: 14, duration: 180, easing: cubicOut }}>
+			<div class="pointer-events-none sticky inset-x-0 bottom-4 z-40 flex justify-center px-4" transition:fly={{ y: 14, duration: 180, easing: cubicOut }}>
 				<div
 					class="pointer-events-auto relative flex h-11 items-center gap-2.5 overflow-hidden rounded-[14px] border bg-surface/95 px-3.5 shadow-[0_16px_40px_-12px_rgba(0,0,0,0.7)] backdrop-blur-md {savePhase ===
 					'error'
