@@ -87,11 +87,19 @@
 	const pageTitle = $derived(flatPages.find((p) => p.path === currentSeg)?.label ?? 'Overview');
 
 	// A few builder pages want the whole content width (no centered column).
-	const fullWidthPages = ['welcome', 'editor', 'commands', 'automations'];
+	const fullWidthPages = [
+		'welcome',
+		'leveling',
+		'reaction-roles',
+		'auto-roles',
+		'editor',
+		'commands',
+		'automations'
+	];
 	const fullWidth = $derived(fullWidthPages.includes(currentSeg));
 	// And a few want to paint edge-to-edge — no outer px/py wrapper at all.
 	// Used by the dashboard surfaces that draw their own slab topbar / rows.
-	const flushPages = ['welcome', 'commands', 'automations'];
+	const flushPages = ['welcome', 'leveling', 'reaction-roles', 'auto-roles', 'commands', 'automations'];
 	const flush = $derived(flushPages.includes(currentSeg));
 
 	let paletteOpen = $state(false);
