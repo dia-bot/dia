@@ -78,18 +78,32 @@ export const cardTemplates: CardTemplate[] = [
 	}
 ];
 
-// rankStarterLayout is the default canvas when a guild first designs its rank
-// card in Card Studio — sized for a rank card (934×282) with rank {tokens}.
+// rankStarterLayout is the default rank card AND the seed the studio opens with
+// when a guild first designs one. It is the FLAT house card: a solid charcoal
+// canvas (no gradient) filling the full 934×282 space, an avatar on the left,
+// the member's name + level/rank, and a rose XP bar over a hairline track. The
+// palette matches the flat rank-card constants (bg #141417, text #FAFAFA, sub
+// #A4A4AE, bar #FF6363, bar track #212126) and mirrors the Go leveling.Default()
+// layout bit-for-bit so the dashboard preview and the bot's /rank agree.
 export function rankStarterLayout(): Layout {
 	return cloneLayout({
 		width: 934,
 		height: 282,
-		background: { type: 'gradient', from: '#1F1B2E', to: '#3A2E5C', angle: 30 },
+		background: { type: 'solid', color: '#141417' },
 		layers: [
-			avatar(48, 51, 180, '#B244FC', 6),
-			text('name', 'Username', 260, 56, 630, 60, '{{.User.Name}}', 46, 700, '#FFFFFF', 'left'),
-			text('meta', 'Level / Rank', 260, 124, 630, 36, 'Level {{.Level}}   ·   Rank #{{.Rank}}', 28, 400, '#C9C3DA', 'left'),
-			text('xp', 'XP', 260, 178, 630, 32, '{{.LevelXP}} / {{.LevelNeeded}} XP   ({{.Progress}})', 24, 400, '#9AA0AA', 'left')
+			// Avatar on the left, circular, with a subtle hairline ring.
+			avatar(48, 51, 180, '#212126', 4),
+			// Member name, large and bright.
+			text('name', 'Username', 268, 52, 618, 62, '{{.User.Name}}', 48, 700, '#FAFAFA', 'left'),
+			// Level / rank line, dimmed sub-text.
+			text('meta', 'Level / Rank', 268, 122, 618, 36, 'LEVEL {{.Level}}    ·    RANK #{{.Rank}}', 26, 700, '#A4A4AE', 'left'),
+			// XP progress-bar track (full width of the text column).
+			{ id: 'bar-bg', type: 'rect', name: 'XP track', x: 268, y: 178, w: 618, h: 22, opacity: 1, hidden: false, fill: '#212126', radius: 11 },
+			// XP progress fill — a rose bar. Width is a sensible sample; admins tune it
+			// in the studio. The renderer paints the real progress on the live card.
+			{ id: 'bar', type: 'rect', name: 'XP fill', x: 268, y: 178, w: 278, h: 22, opacity: 1, hidden: false, fill: '#FF6363', radius: 11 },
+			// XP figures under the bar.
+			text('xp', 'XP', 268, 214, 618, 30, '{{.LevelXP}} / {{.LevelNeeded}} XP   ·   {{.Progress}}', 22, 400, '#A4A4AE', 'left')
 		]
 	});
 }

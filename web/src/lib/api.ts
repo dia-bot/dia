@@ -225,6 +225,15 @@ export const api = {
 			dm_actions: dmActions,
 			tail
 		}),
+	// saveLevelingActions persists the canvas-authored programs back into the
+	// leveling config: the level-up announcement's per-button click actions and
+	// the post-message tail. Mirrors saveWelcomeActions, minus the welcome/goodbye
+	// kind and DM tab (the announcement is a single channel message).
+	saveLevelingActions: (id: string, actions: unknown, tail: unknown) =>
+		req<{ ok: boolean }>('POST', `/api/guilds/${id}/leveling/actions`, {
+			actions,
+			tail
+		}),
 	levelingVariables: (id: string) =>
 		req<{ variables: { token: string; desc: string }[] }>('GET', `/api/guilds/${id}/leveling/variables`),
 	// templatingPreview renders one template string and returns the text + any error.

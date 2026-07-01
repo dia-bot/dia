@@ -18,18 +18,19 @@
 	import ColorField from '$lib/components/ColorField.svelte';
 	import PageTopbar from '$lib/components/page/PageTopbar.svelte';
 	import SectionBar from '$lib/components/page/SectionBar.svelte';
+	import Row from '$lib/components/page/Row.svelte';
 	import ReleaseDock from '$lib/components/page/ReleaseDock.svelte';
 	import MessageEditor from '$lib/components/commands/MessageEditor.svelte';
 	import CardStudioModal from '$lib/components/editor/CardStudioModal.svelte';
-	import { TrendingUp, Trash2, Frame, Hash, Mail } from 'lucide-svelte';
+	import { TrendingUp, Trash2, Frame, Hash, Mail, Zap, ExternalLink, ChevronDown } from 'lucide-svelte';
 
 	const store = getContext<GuildStore>(GUILD_CTX);
 	const FEATURE = 'leveling';
+	const base = $derived(`/servers/${store.id}`);
 
 	// The level-up composer reads the same two contexts the welcome composer does:
 	// AUTOMATION_CTX (false = the plain, non-canvas form) and EXPR_SCOPE_CTX (a
-	// hint catalogue for the variable picker, never a runtime contract). Leveling
-	// has no component handler, so we render buttons off in the editor below.
+	// hint catalogue for the variable picker, never a runtime contract).
 	setContext(AUTOMATION_CTX, false);
 	const exprScope: ExprScope = {
 		options: [],
@@ -54,9 +55,12 @@
 		bar_color: string;
 		bar_bg_color: string;
 	};
-	// The rich level-up message (content + opaque embed specs), mirroring Go's
-	// LevelUpMsg. The embeds pass through the composer untouched.
-	type LevelUpMsg = { content: string; embeds: Record<string, unknown>[] };
+	// One row of message components (buttons / selects), mirroring the Go
+	// ComponentRow shape MessageEditor produces in `spec.components`.
+	type CompRow = { components: Record<string, unknown>[] };
+	// The rich level-up message (content + opaque embed specs + component rows),
+	// mirroring Go's LevelUpMsg. Embeds/components pass through the composer untouched.
+	type LevelUpMsg = { content: string; embeds: Record<string, unknown>[]; components: CompRow[] };
 	type Cfg = {
 		xp_min: number;
 		xp_max: number;
@@ -66,6 +70,12 @@
 		announce_channel: string;
 		level_up_msg: LevelUpMsg;
 		level_up_message: string; // legacy single-line message, kept for read migration
+		// Per-button click programs + the post-announce tail, authored on the Leveling
+		// automation flow (/automations/leveling.levelup). The page never edits these;
+		// it round-trips them untouched so saving the message here can't wipe actions
+		// wired on the canvas.
+		level_up_actions: Record<string, unknown>[];
+		level_up_tail: Record<string, unknown>[];
 		no_xp_channels: string[];
 		no_xp_roles: string[];
 		stack_rewards: boolean;
@@ -74,6 +84,9 @@
 
 	const DEFAULT_LEVEL_UP = 'GG {user.mention}, you reached **level {level}**!';
 
+	// Flat rank-card palette (no gradient, no amber) — kept in lockstep with the Go
+	// leveling.Default(): solid #141417 canvas, bright #FAFAFA text, dimmed #A4A4AE
+	// sub-text, a rose #FF6363 XP bar over a #212126 track.
 	function defaults(): Cfg {
 		return {
 			xp_min: 15,
@@ -82,18 +95,20 @@
 			multiplier: 1.0,
 			announce_level_up: true,
 			announce_channel: '',
-			level_up_msg: { content: DEFAULT_LEVEL_UP, embeds: [] },
+			level_up_msg: { content: DEFAULT_LEVEL_UP, embeds: [], components: [] },
 			level_up_message: '',
+			level_up_actions: [],
+			level_up_tail: [],
 			no_xp_channels: [],
 			no_xp_roles: [],
 			stack_rewards: true,
 			rank_card: {
-				background: { from: '#1F1B2E', to: '#3A2E5C', angle: 30, color: '', image_url: '' },
-				accent_color: '#B244FC',
-				text_color: '#FFFFFF',
-				sub_text_color: '#C9C3DA',
-				bar_color: '#B244FC',
-				bar_bg_color: ''
+				background: { from: '', to: '', angle: 0, color: '#141417', image_url: '' },
+				accent_color: '#FF6363',
+				text_color: '#FAFAFA',
+				sub_text_color: '#A4A4AE',
+				bar_color: '#FF6363',
+				bar_bg_color: '#212126'
 			}
 		};
 	}
@@ -102,13 +117,14 @@
 	let cfg = $state<Cfg>(defaults());
 	// The level-up message is edited as a live send_message Step, mirroring how
 	// welcome edits cfg[tab].step. MessageEditor reassigns step.spec in place, so
-	// this must be $state (proxied) for those edits to be tracked. A $effect below
-	// syncs the edited content + opaque embeds back into cfg for dirty/save.
+	// this must be $state (proxied). msgFromStep folds content/embeds/components
+	// back into cfg on save.
 	let levelUpStep = $state<Step>({ id: 'levelup-msg', kind: 'send_message', spec: { content: DEFAULT_LEVEL_UP } });
 	let tab = $state<'xp' | 'message'>('xp');
 	let loaded = $state(false);
 	let baseline = $state('');
-	let bgType = $state<'gradient' | 'solid'>('gradient');
+	let bgType = $state<'gradient' | 'solid'>('solid');
+	let simpleColours = $state(false); // the classic 6-colour editor disclosure (fallback)
 	let previewUrl = $state('');
 	let studioOpen = $state(false);
 	let studioLayout = $state<Layout>(); // local seed for the modal; only committed on Apply
@@ -125,6 +141,9 @@
 		'{level.needed}': '1,000',
 		'{progress}': '45%'
 	};
+	// A sample avatar for the classic (non-Studio) preview so the disc isn't blank
+	// (the page has no real member to draw). Discord's default embed avatar.
+	const SAMPLE_AVATAR = 'https://cdn.discordapp.com/embed/avatars/0.png';
 
 	// Rewards (a separate, immediate-save resource — not part of the feature blob)
 	let rewards = $state<any[]>([]);
@@ -143,18 +162,20 @@
 	// The level-up message is edited as a live send_message Step (mirroring how
 	// welcome edits cfg[tab].step). The step spec is the source of truth while
 	// editing; msgFromStep folds it back into cfg.level_up_msg on save, and it is
-	// part of serialize() so message edits count toward the dirty state. Embeds are
-	// opaque EmbedSpec objects, passed through untouched.
+	// part of serialize() so message edits count toward the dirty state. Embeds and
+	// component rows are opaque, passed through untouched.
 	function msgFromStep(): LevelUpMsg {
 		const spec = (levelUpStep.spec ?? {}) as Record<string, unknown>;
 		return {
 			content: (spec.content as string) ?? '',
-			embeds: (spec.embeds as Record<string, unknown>[]) ?? []
+			embeds: (spec.embeds as Record<string, unknown>[]) ?? [],
+			components: (spec.components as CompRow[]) ?? []
 		};
 	}
 	function stepFromMsg(m: LevelUpMsg): Step {
 		const spec: Record<string, unknown> = { content: m.content };
 		if (m.embeds?.length) spec.embeds = m.embeds;
+		if (m.components?.length) spec.components = m.components;
 		return { id: 'levelup-msg', kind: 'send_message', spec };
 	}
 	function serialize() {
@@ -184,20 +205,29 @@
 		const savedMsg = c.level_up_msg;
 		const content = savedMsg?.content ?? c.level_up_message ?? DEFAULT_LEVEL_UP;
 		const embeds = Array.isArray(savedMsg?.embeds) ? savedMsg!.embeds : [];
+		const components = Array.isArray(savedMsg?.components) ? savedMsg!.components : [];
 		cfg = {
 			...d,
 			...c,
-			level_up_msg: { content, embeds },
+			level_up_msg: { content, embeds, components },
 			level_up_message: c.level_up_message ?? '',
+			// Round-trip the canvas-authored click actions + tail untouched.
+			level_up_actions: Array.isArray(c.level_up_actions) ? c.level_up_actions : [],
+			level_up_tail: Array.isArray(c.level_up_tail) ? c.level_up_tail : [],
 			rank_card: {
 				...d.rank_card,
 				...(c.rank_card ?? {}),
 				background: { ...d.rank_card.background, ...(c.rank_card?.background ?? {}) }
 			}
 		};
-		// Seed the live composer step from the resolved message (new rich content,
-		// legacy single-line, or the default) so an existing guild's message shows.
-		levelUpStep = stepFromMsg({ content, embeds });
+		// Seed the flat Card Studio rank card by default: a fresh/unset guild should
+		// render the full-space avatar + username card, not the classic avatar-less
+		// preset. Existing guilds that saved a design keep it; guilds that saved no
+		// layout get the flat starter so the preview is correct out of the box.
+		if (!cfg.rank_card.layout) cfg.rank_card.layout = rankStarterLayout();
+		// Seed the live composer step from the resolved message so an existing guild's
+		// message + components show.
+		levelUpStep = stepFromMsg({ content, embeds, components });
 		enabled = f.enabled;
 		bgType = cfg.rank_card.background.from && cfg.rank_card.background.to ? 'gradient' : 'solid';
 		loaded = true;
@@ -215,11 +245,11 @@
 		if (t === 'solid') {
 			cfg.rank_card.background.from = '';
 			cfg.rank_card.background.to = '';
-			if (!cfg.rank_card.background.color) cfg.rank_card.background.color = '#1F1B2E';
+			if (!cfg.rank_card.background.color) cfg.rank_card.background.color = '#141417';
 		} else {
 			cfg.rank_card.background.color = '';
-			if (!cfg.rank_card.background.from) cfg.rank_card.background.from = '#1F1B2E';
-			if (!cfg.rank_card.background.to) cfg.rank_card.background.to = '#3A2E5C';
+			if (!cfg.rank_card.background.from) cfg.rank_card.background.from = '#141417';
+			if (!cfg.rank_card.background.to) cfg.rank_card.background.to = '#212126';
 		}
 	}
 
@@ -227,7 +257,8 @@
 	let timer: ReturnType<typeof setTimeout>;
 	$effect(() => {
 		if (!loaded) return;
-		// A Card Studio design takes precedence; otherwise the classic preset.
+		// A Card Studio design takes precedence; otherwise the classic preset (with a
+		// sample avatar so the disc renders, and the flat palette defaults).
 		const layout = cfg.rank_card.layout;
 		const payload = layout
 			? { mode: 'layout', layout }
@@ -239,6 +270,7 @@
 					sub_text_color: cfg.rank_card.sub_text_color,
 					bar_color: cfg.rank_card.bar_color,
 					bar_bg_color: cfg.rank_card.bar_bg_color,
+					avatar_url: SAMPLE_AVATAR,
 					username: 'Member',
 					rank: 1,
 					level: 12,
@@ -300,6 +332,12 @@
 		}
 	}
 
+	function openStudio() {
+		// Seed the modal from a local copy; commit only on Apply so Cancel reverts.
+		studioLayout = cfg.rank_card.layout ?? rankStarterLayout();
+		studioOpen = true;
+	}
+
 	async function addReward() {
 		if (!newRole || !newLevel) return;
 		rewardBusy = true;
@@ -350,11 +388,19 @@
 		subtitle="Reward activity with XP, ranks, role rewards, and a level-up announcement."
 	>
 		{#snippet leading()}
-			<div class="grid size-6 place-items-center rounded border border-line bg-surface text-accent-ink">
+			<div class="grid size-6 place-items-center rounded border border-line bg-surface text-muted">
 				<TrendingUp size={13} />
 			</div>
 		{/snippet}
 		{#snippet actions()}
+			<a
+				href={`${base}/automations/leveling.levelup`}
+				class="inline-flex h-8 items-center gap-1.5 rounded-md border border-line px-2.5 text-[12px] font-medium text-muted transition-colors hover:border-line-strong hover:text-ink"
+				title="Advanced: see this flow and wire button click actions"
+			>
+				<Zap size={13} class="text-muted" /> <span class="hidden sm:inline">Advanced</span>
+				<ExternalLink size={11} class="text-faint" />
+			</a>
 			<label class="ml-1 flex items-center gap-2 text-[12px]">
 				<span class="hidden text-muted sm:inline">{enabled ? 'On' : 'Off'}</span>
 				<Toggle bind:checked={enabled} label="Leveling system" />
@@ -384,9 +430,9 @@
 	<!-- ── Body ─────────────────────────────────────────────────────────── -->
 	<div class="relative min-h-0 flex-1 overflow-y-auto bg-bg">
 		{#if !loaded}
-			<div class="mx-auto w-full max-w-2xl p-6">
+			<div class="p-6">
 				<div class="skeleton mb-3 h-6 w-40 rounded"></div>
-				<div class="skeleton h-72 w-full rounded-xl"></div>
+				<div class="skeleton h-72 w-full rounded"></div>
 			</div>
 		{:else}
 			{#key tab}
@@ -394,8 +440,8 @@
 					{#if tab === 'xp'}
 						<!-- ── XP earning ─────────────────────────────────────── -->
 						<SectionBar label="XP earning" />
-						<div class="mx-auto w-full max-w-3xl px-5 py-6">
-							<div class="grid gap-4 sm:grid-cols-2">
+						<div class="px-5 py-6">
+							<div class="grid max-w-3xl gap-4 sm:grid-cols-2">
 								<Field label="Min XP per message">
 									<NumberField min={0} bind:value={cfg.xp_min} />
 								</Field>
@@ -413,101 +459,122 @@
 
 						<!-- ── No-XP exclusions ───────────────────────────────── -->
 						<SectionBar label="No-XP exclusions" />
-						<div class="mx-auto w-full max-w-3xl px-5 py-6">
-							<Field label="No-XP channels" hint="Messages in these channels earn no XP.">
-								<ChannelPicker
-									multiple
-									value={cfg.no_xp_channels}
-									onChange={(v) => (cfg.no_xp_channels = v as string[])}
-									placeholder="Add a channel…"
-								/>
-							</Field>
-							<Field label="No-XP roles" hint="Members with these roles earn no XP.">
-								<RolePicker
-									multiple
-									value={cfg.no_xp_roles}
-									onChange={(v) => (cfg.no_xp_roles = v as string[])}
-									placeholder="Add a role…"
-								/>
-							</Field>
+						<div class="px-5 py-6">
+							<div class="max-w-3xl">
+								<Field label="No-XP channels" hint="Messages in these channels earn no XP.">
+									<ChannelPicker
+										multiple
+										value={cfg.no_xp_channels}
+										onChange={(v) => (cfg.no_xp_channels = v as string[])}
+										placeholder="Add a channel…"
+									/>
+								</Field>
+								<Field label="No-XP roles" hint="Members with these roles earn no XP.">
+									<RolePicker
+										multiple
+										value={cfg.no_xp_roles}
+										onChange={(v) => (cfg.no_xp_roles = v as string[])}
+										placeholder="Add a role…"
+									/>
+								</Field>
+							</div>
 						</div>
 
 						<!-- ── Rank card ──────────────────────────────────────── -->
 						<SectionBar label="Rank card">
 							<button
 								type="button"
-								class="inline-flex h-7 items-center gap-1.5 rounded-md border border-line px-2.5 text-[12px] font-medium text-muted transition-colors hover:border-line-strong hover:text-ink"
-								onclick={() => {
-									// Seed the modal from a local copy; commit only on Apply so Cancel reverts.
-									studioLayout = cfg.rank_card.layout ?? rankStarterLayout();
-									studioOpen = true;
-								}}
+								class="inline-flex h-7 items-center gap-1.5 rounded-md bg-ink px-3 text-[12px] font-medium text-bg transition-opacity hover:opacity-90"
+								onclick={openStudio}
 							>
-								<Frame size={13} />
-								{cfg.rank_card.layout ? 'Edit in Card Studio' : 'Design in Card Studio'}
+								<Frame size={13} /> Edit in Card Studio
 							</button>
 						</SectionBar>
-						<div class="mx-auto w-full max-w-3xl px-5 py-6">
-							<!-- Live preview -->
-							<div class="mb-5 overflow-hidden rounded-xl border border-line bg-ink-2">
-								{#if previewUrl}
-									<img src={previewUrl} alt="Rank card preview" class="w-full" />
-								{:else}
-									<div class="flex aspect-[934/282] items-center justify-center text-sm text-faint">
-										Rendering preview…
+						<div class="px-5 py-6">
+							<!-- Live preview: full-width, flat (no box). -->
+							{#if previewUrl}
+								<img src={previewUrl} alt="Rank card preview" class="block w-full" />
+							{:else}
+								<div class="flex aspect-[934/282] w-full items-center justify-center text-sm text-faint">
+									Rendering preview…
+								</div>
+							{/if}
+
+							<p class="mt-3 text-[11.5px] text-muted">
+								The rank card renders on every <span class="font-mono text-faint">/rank</span>. Design it
+								full-space in Card Studio, or drop to simple colours below.
+							</p>
+							<p class="mt-2 text-[11px] text-faint">
+								Card variables:
+								<span class="font-mono">{'{{.User.Username}}'} {'{{.User.Avatar}}'} {'{{.Level}}'} {'{{.Rank}}'} {'{{.XP}}'} {'{{.Progress}}'} {'{{.Guild.Name}}'} {'{{.Guild.Icon}}'}</span>
+							</p>
+
+							<!-- Simple colours: a small disclosure fallback for the classic
+							     avatar-left preset (only rendered when no Studio layout is set). -->
+							<div class="mt-4 border-t border-line/60 pt-4">
+								<button
+									type="button"
+									class="inline-flex items-center gap-1.5 text-[12px] font-medium text-muted transition-colors hover:text-ink"
+									onclick={() => (simpleColours = !simpleColours)}
+									aria-expanded={simpleColours}
+								>
+									<ChevronDown size={14} class="text-faint transition-transform {simpleColours ? 'rotate-180' : ''}" />
+									Simple colours
+									{#if cfg.rank_card.layout}
+										<span class="text-[11px] font-normal text-faint">(overridden by the Card Studio design)</span>
+									{/if}
+								</button>
+
+								{#if simpleColours}
+									<div class="mt-4 max-w-3xl {cfg.rank_card.layout ? 'opacity-60' : ''}">
+										{#if cfg.rank_card.layout}
+											<div class="mb-4 flex flex-wrap items-center gap-2 text-[12px]">
+												<span class="text-muted">A Card Studio design is in use.</span>
+												<button
+													type="button"
+													class="font-medium text-muted underline-offset-2 hover:text-ink hover:underline"
+													onclick={() => (cfg.rank_card.layout = undefined)}
+												>
+													Revert to simple colours
+												</button>
+											</div>
+										{/if}
+										<Field label="Background">
+											<div class="mb-3 inline-flex rounded-lg border border-line-strong p-0.5">
+												{#each ['gradient', 'solid'] as t (t)}
+													<button
+														type="button"
+														onclick={() => setBgType(t as 'gradient' | 'solid')}
+														class="rounded-md px-3 py-1 text-sm capitalize {bgType === t
+															? 'bg-ink text-white'
+															: 'text-muted'}"
+													>
+														{t}
+													</button>
+												{/each}
+											</div>
+											{#if bgType === 'gradient'}
+												<div class="grid gap-3 sm:grid-cols-2">
+													<ColorField label="From" bind:value={cfg.rank_card.background.from} />
+													<ColorField label="To" bind:value={cfg.rank_card.background.to} />
+												</div>
+											{:else}
+												<ColorField label="Color" bind:value={cfg.rank_card.background.color} />
+											{/if}
+										</Field>
+
+										<div class="grid gap-4 sm:grid-cols-3">
+											<ColorField label="Accent" bind:value={cfg.rank_card.accent_color} />
+											<ColorField label="Text" bind:value={cfg.rank_card.text_color} />
+											<ColorField label="Subtext" bind:value={cfg.rank_card.sub_text_color} />
+										</div>
+										<div class="grid gap-4 sm:grid-cols-2">
+											<ColorField label="Progress bar" bind:value={cfg.rank_card.bar_color} />
+											<ColorField label="Progress bar track" bind:value={cfg.rank_card.bar_bg_color} />
+										</div>
 									</div>
 								{/if}
 							</div>
-
-							{#if cfg.rank_card.layout}
-								<div class="flex flex-wrap items-center gap-2 rounded-xl border border-line bg-ink-2 p-3 text-sm">
-									<span class="text-muted">Using a Card Studio design.</span>
-									<button
-										type="button"
-										class="ml-auto text-xs font-medium text-muted underline-offset-2 hover:text-accent-ink hover:underline"
-										onclick={() => (cfg.rank_card.layout = undefined)}
-									>
-										Revert to classic colours
-									</button>
-								</div>
-								<p class="mt-2 text-[11px] text-faint">
-									Card variables: <span class="font-mono">{'{{.User.Username}}'} {'{{.User.Avatar}}'} {'{{.Level}}'} {'{{.Rank}}'} {'{{.XP}}'} {'{{.Progress}}'} {'{{.Guild.Name}}'} {'{{.Guild.Icon}}'}</span>
-								</p>
-							{:else}
-								<Field label="Background">
-									<div class="mb-3 inline-flex rounded-lg border border-line-strong p-0.5">
-										{#each ['gradient', 'solid'] as t (t)}
-											<button
-												type="button"
-												onclick={() => setBgType(t as 'gradient' | 'solid')}
-												class="rounded-md px-3 py-1 text-sm capitalize {bgType === t
-													? 'bg-ink text-white'
-													: 'text-muted'}"
-											>
-												{t}
-											</button>
-										{/each}
-									</div>
-									{#if bgType === 'gradient'}
-										<div class="grid gap-3 sm:grid-cols-2">
-											<ColorField label="From" bind:value={cfg.rank_card.background.from} />
-											<ColorField label="To" bind:value={cfg.rank_card.background.to} />
-										</div>
-									{:else}
-										<ColorField label="Color" bind:value={cfg.rank_card.background.color} />
-									{/if}
-								</Field>
-
-								<div class="grid gap-4 sm:grid-cols-3">
-									<ColorField label="Accent" bind:value={cfg.rank_card.accent_color} />
-									<ColorField label="Text" bind:value={cfg.rank_card.text_color} />
-									<ColorField label="Subtext" bind:value={cfg.rank_card.sub_text_color} />
-								</div>
-								<div class="grid gap-4 sm:grid-cols-2">
-									<ColorField label="Progress bar" bind:value={cfg.rank_card.bar_color} />
-									<ColorField label="Progress bar track" bind:value={cfg.rank_card.bar_bg_color} />
-								</div>
-							{/if}
 						</div>
 
 						<!-- ── Level rewards ──────────────────────────────────── -->
@@ -516,64 +583,57 @@
 								Stack rewards <Toggle bind:checked={cfg.stack_rewards} />
 							</label>
 						</SectionBar>
-						<div class="mx-auto w-full max-w-3xl px-5 py-6">
-							{#if rewards.length}
-								<div class="mb-4 divide-y divide-line rounded-xl border border-line">
-									{#each rewards as r (r.level)}
-										<div class="flex items-center justify-between gap-3 px-4 py-3">
-											<div class="flex items-center gap-3">
-												<span class="inline-flex h-7 min-w-7 items-center justify-center rounded-full bg-blush px-2 text-xs font-semibold text-accent-ink">
-													Lvl {r.level}
-												</span>
-												<span class="text-sm font-medium">{roleName(r.role_id)}</span>
-												{#if r.remove_previous}
-													<span class="text-xs text-faint">replaces previous</span>
-												{/if}
-											</div>
-											<button
-												type="button"
-												class="text-muted hover:text-accent disabled:opacity-50"
-												disabled={rewardBusy}
-												onclick={() => removeReward(r.level)}
-												aria-label="Remove reward"
-											>
-												<Trash2 size={16} />
-											</button>
-										</div>
-									{/each}
-								</div>
-							{:else}
-								<p class="mb-4 text-sm text-muted">No level rewards yet.</p>
-							{/if}
-
-							<div class="rounded-xl border border-line bg-ink-2 p-4">
-								<div class="grid items-end gap-3 sm:grid-cols-[7rem_1fr_auto]">
-									<div>
-										<span class="label">Level</span>
-										<NumberField min={1} bind:value={newLevel} />
-									</div>
-									<div>
-										<span class="label">Role</span>
-										<RolePicker value={newRole} onChange={(v) => (newRole = v as string)} placeholder="Select a role…" />
-									</div>
+						{#if rewards.length}
+							{#each rewards as r (r.level)}
+								<Row>
+									<span class="w-16 shrink-0 font-mono text-[11px] uppercase tracking-[0.08em] text-faint">Lvl {r.level}</span>
+									<span class="min-w-0 truncate text-[13px] font-medium text-ink">{roleName(r.role_id)}</span>
+									{#if r.remove_previous}
+										<span class="text-[11px] text-faint">replaces previous</span>
+									{/if}
 									<button
 										type="button"
-										class="btn btn-accent"
-										disabled={rewardBusy || !newRole || !newLevel}
-										onclick={addReward}
+										class="ml-auto text-muted transition-colors hover:text-accent-ink disabled:opacity-50"
+										disabled={rewardBusy}
+										onclick={() => removeReward(r.level)}
+										aria-label="Remove reward"
 									>
-										Add reward
+										<Trash2 size={15} />
 									</button>
+								</Row>
+							{/each}
+						{:else}
+							<div class="border-b border-line/60 px-5 py-6 text-[13px] text-muted">No level rewards yet.</div>
+						{/if}
+
+						<!-- Add-reward form: a flush row, no box. -->
+						<div class="px-5 py-6">
+							<div class="grid max-w-3xl items-end gap-3 sm:grid-cols-[7rem_1fr_auto]">
+								<div>
+									<span class="label">Level</span>
+									<NumberField min={1} bind:value={newLevel} />
 								</div>
-								<label class="mt-3 flex items-center gap-3">
-									<Toggle bind:checked={newRemovePrevious} />
-									<span class="text-sm">Remove previously earned reward roles</span>
-								</label>
+								<div>
+									<span class="label">Role</span>
+									<RolePicker value={newRole} onChange={(v) => (newRole = v as string)} placeholder="Select a role…" />
+								</div>
+								<button
+									type="button"
+									class="btn btn-accent"
+									disabled={rewardBusy || !newRole || !newLevel}
+									onclick={addReward}
+								>
+									Add reward
+								</button>
 							</div>
+							<label class="mt-3 flex items-center gap-3">
+								<Toggle bind:checked={newRemovePrevious} />
+								<span class="text-[13px]">Remove previously earned reward roles</span>
+							</label>
 						</div>
 
 						<!-- ── Leaderboard ────────────────────────────────────── -->
-						<SectionBar label="Leaderboard">
+						<SectionBar label="Leaderboard" count={boardLoaded ? board.length : undefined}>
 							<button
 								type="button"
 								class="inline-flex h-7 items-center rounded-md border border-line px-2.5 text-[12px] font-medium text-muted transition-colors hover:border-line-strong hover:text-ink disabled:opacity-50"
@@ -583,38 +643,33 @@
 								{boardLoading ? 'Loading…' : boardLoaded ? 'Refresh' : 'Load leaderboard'}
 							</button>
 						</SectionBar>
-						<div class="mx-auto w-full max-w-3xl px-5 py-6">
-							{#if boardLoaded}
-								{#if board.length}
-									<div class="divide-y divide-line rounded-xl border border-line">
-										{#each board as e, i (e.user_id ?? i)}
-											<div class="flex items-center justify-between gap-3 px-4 py-3 text-sm">
-												<div class="flex min-w-0 items-center gap-3">
-													<span class="w-6 shrink-0 text-right font-mono text-muted">#{e.rank ?? i + 1}</span>
-													<span class="truncate font-medium">&lt;@{e.user_id}&gt;</span>
-												</div>
-												<div class="flex shrink-0 items-center gap-4 text-muted">
-													<span>Level {e.level}</span>
-													<span class="font-mono text-xs">{e.xp} XP</span>
-												</div>
-											</div>
-										{/each}
-									</div>
-								{:else}
-									<p class="text-sm text-muted">No leaderboard entries yet.</p>
-								{/if}
+						{#if boardLoaded}
+							{#if board.length}
+								{#each board as e, i (e.user_id ?? i)}
+									<Row>
+										<span class="w-8 shrink-0 text-right font-mono text-[12px] text-muted">#{e.rank ?? i + 1}</span>
+										<span class="min-w-0 truncate text-[13px] font-medium text-ink">&lt;@{e.user_id}&gt;</span>
+										<span class="ml-auto shrink-0 text-[12px] text-muted">Level {e.level}</span>
+										<span class="shrink-0 font-mono text-[11px] text-faint">{e.xp} XP</span>
+									</Row>
+								{/each}
 							{:else}
-								<p class="text-sm text-muted">Load the leaderboard to see the top members by XP.</p>
+								<div class="border-b border-line/60 px-5 py-6 text-[13px] text-muted">No leaderboard entries yet.</div>
 							{/if}
-						</div>
+						{:else}
+							<div class="border-b border-line/60 px-5 py-6 text-[13px] text-muted">
+								Load the leaderboard to see the top members by XP.
+							</div>
+						{/if}
 					{:else}
-						<!-- ── Level-up message ───────────────────────────────── -->
+						<!-- ── Level-up announcement ──────────────────────────── -->
 						<SectionBar label="Announce" />
-						<div class="mx-auto w-full max-w-2xl px-5 py-6 space-y-4">
-							<div class="flex items-center justify-between gap-3 rounded-xl border border-accent/25 bg-accent/[0.06] px-3.5 py-2.5">
+						<div class="px-5 py-6">
+							<!-- Flat hairline toggle row (no rose accent box). -->
+							<div class="flex max-w-2xl items-center justify-between gap-4 border-b border-line/60 pb-4">
 								<div class="min-w-0">
-									<div class="truncate text-[12.5px] font-medium text-ink">Announce level-ups</div>
-									<div class="truncate text-[11.5px] text-muted">Post a message when a member reaches a new level.</div>
+									<div class="text-[13px] font-medium text-ink">Announce level-ups</div>
+									<div class="mt-0.5 text-[12px] text-muted">Post a message when a member reaches a new level.</div>
 								</div>
 								<label class="flex shrink-0 items-center gap-2 text-[12px]">
 									<span class="hidden text-muted sm:inline">{cfg.announce_level_up ? 'On' : 'Off'}</span>
@@ -623,7 +678,7 @@
 							</div>
 
 							{#if cfg.announce_level_up}
-								<div class="flex flex-wrap items-center gap-2 text-[12.5px] text-muted">
+								<div class="mt-4 flex max-w-2xl flex-wrap items-center gap-2 text-[12.5px] text-muted">
 									<Hash size={14} class="text-faint" />
 									<span>Announce in</span>
 									<div class="flex items-center gap-1 rounded-lg border border-line bg-ink-2 p-0.5">
@@ -668,11 +723,11 @@
 										</div>
 									{/if}
 								</div>
-								<p class="text-[11.5px] text-faint">
+								<p class="mt-2 max-w-2xl text-[11.5px] text-faint">
 									{#if cfg.announce_channel === ''}
 										The message posts in the channel they leveled up in.
 									{:else if cfg.announce_channel === 'dm'}
-										The message is sent to the member as a direct message.
+										The message is sent to the member as a direct message. Buttons are not sent to DMs.
 									{:else}
 										The message posts in the chosen channel.
 									{/if}
@@ -680,10 +735,19 @@
 							{/if}
 						</div>
 
-						<SectionBar label="Message" />
-						<div class="mx-auto w-full max-w-2xl px-5 py-6">
-							<div class="transition-opacity {cfg.announce_level_up ? '' : 'opacity-60'}">
-								<MessageEditor step={levelUpStep} embeds components={false} clickPaths={false} />
+						<SectionBar label="Message">
+							<a
+								href={`${base}/automations/leveling.levelup`}
+								class="inline-flex h-7 items-center gap-1.5 rounded-md border border-line px-2.5 text-[12px] font-medium text-muted transition-colors hover:border-line-strong hover:text-ink"
+								title="Advanced: wire what each button does"
+							>
+								<Zap size={13} class="text-muted" /> Advanced
+								<ExternalLink size={11} class="text-faint" />
+							</a>
+						</SectionBar>
+						<div class="px-5 py-6">
+							<div class="max-w-2xl transition-opacity {cfg.announce_level_up ? '' : 'opacity-60'}">
+								<MessageEditor step={levelUpStep} embeds components clickPaths={false} />
 							</div>
 						</div>
 					{/if}

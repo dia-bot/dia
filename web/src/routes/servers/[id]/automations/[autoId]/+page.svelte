@@ -79,16 +79,23 @@
 	const readonly = $derived(!!auto?.builtin);
 	const dirty = $derived(loaded && auto && !readonly ? JSON.stringify(auto) !== baseline : false);
 
-	// The Welcome built-in is read-only except for its per-button click actions:
-	// you wire them by dragging button dots here, and they save back into the
-	// Welcome config (the message, embeds and card stay managed on the Welcome
-	// tab). welcomeKind maps the two built-in ids to the config tab.
-	const welcomeEditable = $derived(!!auto?.builtin && auto?.feature_tab === 'welcome');
+	// Some built-ins are read-only except for their per-button click actions and
+	// post-message tail: you wire them by dragging button dots here, and they save
+	// back into the owning feature's config (the message, embeds and card stay
+	// managed on that feature's tab). Today Welcome (welcome/goodbye tabs, plus a
+	// DM router) and Leveling (a single channel surface, no DM) share this
+	// "editable spine" shape. featureEditable turns the shared canvas editing on;
+	// the save routes to the matching endpoint by feature_tab.
+	const featureEditable = $derived(
+		!!auto?.builtin && (auto?.feature_tab === 'welcome' || auto?.feature_tab === 'leveling')
+	);
+	// Welcome distinguishes its two built-in ids (join vs leave) as config tabs;
+	// leveling has a single surface so this is only meaningful for welcome.
 	const welcomeKind = $derived(autoId.includes('leave') ? 'goodbye' : 'welcome');
-	const welcomeDirty = $derived(loaded && !!auto && welcomeEditable ? JSON.stringify(auto) !== baseline : false);
-	let welcomeSaving = $state<'idle' | 'saving' | 'saved' | 'error'>('idle');
-	let welcomeErr = $state('');
-	let welcomeDockTimer: ReturnType<typeof setTimeout> | null = null;
+	const featureDirty = $derived(loaded && !!auto && featureEditable ? JSON.stringify(auto) !== baseline : false);
+	let featureSaving = $state<'idle' | 'saving' | 'saved' | 'error'>('idle');
+	let featureErr = $state('');
+	let featureDockTimer: ReturnType<typeof setTimeout> | null = null;
 
 	const triggerMeta = $derived(auto ? TRIGGER_BY_KEY.get(auto.trigger_type) : undefined);
 
@@ -98,7 +105,7 @@
 		// only its component dots are interactive. Never open the editor drawer for
 		// a spine node, or its in-drawer field edits would be accepted then silently
 		// dropped on save (the spine is regenerated from config, not persisted here).
-		if (welcomeEditable && selectedId.startsWith('builtin-')) return null;
+		if (featureEditable && selectedId.startsWith('builtin-')) return null;
 		return (
 			findStep(auto.definition.steps ?? [], selectedId) ??
 			(auto.definition.scratch ?? []).reduce<Step | null>((acc, ch) => acc ?? findStep(ch, selectedId), null)
@@ -513,40 +520,48 @@
 		return steps.slice(insertionIndex(steps, sendIdx));
 	}
 
-	async function saveWelcome() {
-		if (!auto || welcomeSaving === 'saving' || !welcomeDirty) return;
-		if (welcomeDockTimer) clearTimeout(welcomeDockTimer);
-		welcomeSaving = 'saving';
-		welcomeErr = '';
+	// saveFeatureActions writes the canvas-authored click actions + tail back into
+	// the owning feature's config, routing to the right endpoint by feature_tab:
+	// welcome takes a kind (welcome/goodbye) and a DM router; leveling is a single
+	// channel surface with no DM tab.
+	async function saveFeatureActions() {
+		if (!auto || featureSaving === 'saving' || !featureDirty) return;
+		if (featureDockTimer) clearTimeout(featureDockTimer);
+		featureSaving = 'saving';
+		featureErr = '';
 		const gen = loadGen;
 		try {
 			const acts = extractWelcomeActions(auto.definition);
 			const tail = extractWelcomeTail(auto.definition);
-			await api.saveWelcomeActions(store.id, welcomeKind, acts.channel, acts.dm, tail);
+			if (auto.feature_tab === 'leveling') {
+				await api.saveLevelingActions(store.id, acts.channel, tail);
+			} else {
+				await api.saveWelcomeActions(store.id, welcomeKind, acts.channel, acts.dm, tail);
+			}
 			if (gen !== loadGen) return;
 			const fresh = await fetchAuto();
 			if (gen !== loadGen) return;
 			auto = fresh;
 			baseline = JSON.stringify(fresh);
-			welcomeSaving = 'saved';
-			welcomeDockTimer = setTimeout(() => (welcomeSaving = 'idle'), 1500);
+			featureSaving = 'saved';
+			featureDockTimer = setTimeout(() => (featureSaving = 'idle'), 1500);
 		} catch (e) {
 			if (gen !== loadGen) return;
-			welcomeErr = e instanceof Error ? e.message : 'Could not save';
-			welcomeSaving = 'error';
+			featureErr = e instanceof Error ? e.message : 'Could not save';
+			featureSaving = 'error';
 		}
 	}
-	function resetWelcome() {
+	function resetFeatureActions() {
 		if (baseline) auto = JSON.parse(baseline);
-		welcomeSaving = 'idle';
-		welcomeErr = '';
+		featureSaving = 'idle';
+		featureErr = '';
 	}
 
 	function onShortcut(e: KeyboardEvent) {
 		if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
 			e.preventDefault();
-			if (welcomeEditable) {
-				if (welcomeDirty) void saveWelcome();
+			if (featureEditable) {
+				if (featureDirty) void saveFeatureActions();
 				return;
 			}
 			if (inFlight || readonly) return;
@@ -1085,7 +1100,7 @@
 		</header>
 
 		<div class="relative min-h-0 flex-1 overflow-hidden bg-bg">
-			{#if readonly && !welcomeEditable}
+			{#if readonly && !featureEditable}
 				<div
 					class="pointer-events-none absolute left-1/2 top-3 z-30 -translate-x-1/2 whitespace-nowrap rounded-full border border-line bg-surface/90 px-3 py-1 font-mono text-[10px] uppercase tracking-[0.12em] text-muted backdrop-blur"
 				>
@@ -1099,7 +1114,7 @@
 					bind:selectedId
 					showLegend={false}
 				/>
-			{:else if welcomeEditable}
+			{:else if featureEditable}
 				<div
 					class="pointer-events-none absolute left-1/2 top-3 z-30 -translate-x-1/2 max-w-[92%] truncate rounded-full border border-line bg-surface/90 px-3 py-1 text-center font-mono text-[10px] uppercase tracking-[0.12em] text-muted backdrop-blur"
 				>
@@ -1125,33 +1140,33 @@
 					onAddCase={guardSpine(addCase)}
 					onAddParallelBranch={guardSpine(addParallelBranchSlot)}
 				/>
-				{#if welcomeDirty || welcomeSaving !== 'idle'}
+				{#if featureDirty || featureSaving !== 'idle'}
 					<div
 						class="pointer-events-none absolute inset-x-4 bottom-4 z-40 flex justify-center"
 						transition:fly={{ y: 14, duration: dur(180), easing: cubicOut }}
 					>
 						<div
-							class="pointer-events-auto flex h-11 items-center gap-2.5 rounded-[14px] border bg-surface/95 px-3.5 shadow-[0_16px_40px_-12px_rgba(0,0,0,0.7)] backdrop-blur-md {welcomeSaving ===
+							class="pointer-events-auto flex h-11 items-center gap-2.5 rounded-[14px] border bg-surface/95 px-3.5 shadow-[0_16px_40px_-12px_rgba(0,0,0,0.7)] backdrop-blur-md {featureSaving ===
 							'error'
 								? 'border-danger/40'
 								: 'border-line'}"
 						>
-							{#if welcomeSaving === 'saving'}
+							{#if featureSaving === 'saving'}
 								<Loader2 size={15} class="animate-spin text-muted" />
 								<span class="text-[12.5px] text-muted">Saving…</span>
-							{:else if welcomeSaving === 'saved'}
+							{:else if featureSaving === 'saved'}
 								<span class="grid size-4 place-items-center rounded-full bg-success/15 text-success"
 									><Check size={11} /></span
 								>
 								<span class="text-[12.5px] text-ink">Saved</span>
-							{:else if welcomeSaving === 'error'}
+							{:else if featureSaving === 'error'}
 								<CircleAlert size={15} class="text-danger" />
-								<span class="max-w-[16rem] truncate text-[12.5px] text-ink" title={welcomeErr}
-									>{welcomeErr || "Couldn't save"}</span
+								<span class="max-w-[16rem] truncate text-[12.5px] text-ink" title={featureErr}
+									>{featureErr || "Couldn't save"}</span
 								>
 								<button
 									type="button"
-									onclick={() => saveWelcome()}
+									onclick={() => saveFeatureActions()}
 									class="ml-1 inline-flex h-7 items-center rounded-md bg-ink px-2.5 text-[12px] font-medium text-bg transition-opacity hover:opacity-90"
 									>Retry</button
 								>
@@ -1161,13 +1176,13 @@
 								<div class="ml-1 flex items-center gap-1.5">
 									<button
 										type="button"
-										onclick={resetWelcome}
+										onclick={resetFeatureActions}
 										class="inline-flex h-7 items-center rounded-md border border-line-strong px-2.5 text-[12px] font-medium text-muted transition-colors hover:text-ink"
 										>Discard</button
 									>
 									<button
 										type="button"
-										onclick={() => saveWelcome()}
+										onclick={() => saveFeatureActions()}
 										class="inline-flex h-7 items-center gap-1.5 rounded-md bg-ink px-3 text-[12px] font-medium text-bg transition-opacity hover:opacity-90"
 										>Save <kbd class="hidden font-mono text-[10px] text-bg/60 sm:inline">⌘S</kbd></button
 									>

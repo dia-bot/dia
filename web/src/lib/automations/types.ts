@@ -70,6 +70,14 @@ const MEMBER_EVENT_VARS: TmplVar[] = [
 	v('.Event.boosting', 'bool', 'True if currently boosting')
 ];
 
+const LEVELUP_EVENT_VARS: TmplVar[] = [
+	v('.Event.level', 'int', 'The level the member just reached'),
+	v('.Event.new_level', 'int', 'The new level (same as level)'),
+	v('.Event.xp', 'int', "The member's total XP"),
+	v('.Event.rank', 'int', "The member's leaderboard position"),
+	v('.Event.channel_id', 'snowflake', 'The channel they leveled up in')
+];
+
 const MESSAGE_EVENT_VARS: TmplVar[] = [
 	v('.Event.content', 'string', 'The message content'),
 	v('.Event.message.id', 'snowflake', 'The message id'),
@@ -176,6 +184,17 @@ export const TRIGGERS: TriggerKindMeta[] = [
 		hasChannel: false,
 		filters: ['cooldown'],
 		eventVars: MEMBER_EVENT_VARS
+	},
+	{
+		key: 'level_up',
+		label: 'Member levels up',
+		description: 'A member reaches a new level.',
+		category: 'members',
+		event: 'LEVEL_UP',
+		actor: 'the member who leveled up',
+		hasChannel: true,
+		filters: ['channels', 'cooldown'],
+		eventVars: LEVELUP_EVENT_VARS
 	},
 	{
 		key: 'verification_passed',
