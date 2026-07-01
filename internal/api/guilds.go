@@ -10,6 +10,7 @@ import (
 
 	"github.com/dia-bot/dia/internal/discord"
 	"github.com/dia-bot/dia/internal/event"
+	"github.com/dia-bot/dia/internal/features/moderation"
 	"github.com/dia-bot/dia/internal/features/welcome"
 	"github.com/dia-bot/dia/internal/imaging"
 	"github.com/dia-bot/dia/pkg/discordgo"
@@ -19,7 +20,8 @@ import (
 // knownFeatures is the set of feature keys the dashboard may configure.
 var knownFeatures = map[string]bool{
 	"welcome": true, "leveling": true, "autorole": true,
-	"moderation": true, "automod": true, "customcommands": true, "reactionroles": true,
+	"moderation": true, "automod": true, "verification": true, "logging": true,
+	"customcommands": true, "reactionroles": true,
 }
 
 // botInvitePerms is the permission requested in the bot invite URL: Administrator,
@@ -323,6 +325,20 @@ func (s *Server) handlePutFeature(c *gin.Context) {
 	if len(req.Config) > 0 && !json.Valid(req.Config) {
 		fail(c, http.StatusBadRequest, "config is not valid JSON")
 		return
+	}
+	// Automod configs are structurally validated before they're persisted so the
+	// editor can surface field-level problems and the runtime never decodes a
+	// rule set it can't execute.
+	if key == moderation.AutomodKey && len(req.Config) > 0 {
+		var cfg moderation.AutomodConfig
+		if err := json.Unmarshal(req.Config, &cfg); err != nil {
+			fail(c, http.StatusBadRequest, "invalid automod config")
+			return
+		}
+		if errs := moderation.ValidateAutomod(cfg); len(errs) > 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"errors": errs})
+			return
+		}
 	}
 	gid := guildID(c)
 	gidInt, _ := event.ParseID(gid)

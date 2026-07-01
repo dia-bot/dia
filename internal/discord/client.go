@@ -147,6 +147,60 @@ func (c *Client) Unban(guildID, userID, reason string) error {
 	return c.s.GuildBanDelete(guildID, userID, discordgo.WithAuditLogReason(reason))
 }
 
+// GuildMember fetches a single member (used by verification / raid scoring when
+// the gateway event lacks the field).
+func (c *Client) GuildMember(guildID, userID string) (*discordgo.Member, error) {
+	return c.s.GuildMember(guildID, userID)
+}
+
+// ── Channels & lockdown ──────────────────────────────────────
+
+// GuildChannels lists a guild's channels, including their permission overwrites
+// (used by lockdown to read and restore @everyone send permission).
+func (c *Client) GuildChannels(guildID string) ([]*discordgo.Channel, error) {
+	return c.s.GuildChannels(guildID)
+}
+
+// SetRolePermission writes a role-targeted permission overwrite on a channel
+// (allow/deny are permission bitfields). Used by lockdown to deny SEND_MESSAGES
+// for @everyone, and to restore the prior overwrite afterwards.
+func (c *Client) SetRolePermission(channelID, roleID string, allow, deny int64, reason string) error {
+	return c.s.ChannelPermissionSet(channelID, roleID, discordgo.PermissionOverwriteTypeRole, allow, deny,
+		discordgo.WithAuditLogReason(reason))
+}
+
+// ClearRolePermission removes a role's permission overwrite from a channel
+// (used to restore a channel that had no @everyone overwrite before lockdown).
+func (c *Client) ClearRolePermission(channelID, roleID, reason string) error {
+	return c.s.ChannelPermissionDelete(channelID, roleID, discordgo.WithAuditLogReason(reason))
+}
+
+// ── Native Discord AutoMod (REST) ────────────────────────────
+//
+// These wrap Discord's built-in AutoMod so the dashboard can manage native
+// rules (Block Mention Spam, keyword/preset filters) alongside Dia's own engine.
+// They require the MANAGE_GUILD permission.
+
+// AutoModRules lists a guild's native AutoMod rules.
+func (c *Client) AutoModRules(guildID string) ([]*discordgo.AutoModerationRule, error) {
+	return c.s.AutoModerationRules(guildID)
+}
+
+// AutoModRuleCreate creates a native AutoMod rule.
+func (c *Client) AutoModRuleCreate(guildID string, rule *discordgo.AutoModerationRule) (*discordgo.AutoModerationRule, error) {
+	return c.s.AutoModerationRuleCreate(guildID, rule)
+}
+
+// AutoModRuleEdit updates a native AutoMod rule.
+func (c *Client) AutoModRuleEdit(guildID, ruleID string, rule *discordgo.AutoModerationRule) (*discordgo.AutoModerationRule, error) {
+	return c.s.AutoModerationRuleEdit(guildID, ruleID, rule)
+}
+
+// AutoModRuleDelete deletes a native AutoMod rule.
+func (c *Client) AutoModRuleDelete(guildID, ruleID, reason string) error {
+	return c.s.AutoModerationRuleDelete(guildID, ruleID, discordgo.WithAuditLogReason(reason))
+}
+
 // ── Slash command registration ───────────────────────────────
 
 // BulkOverwriteGuildCommands replaces a guild's command set (instant update).

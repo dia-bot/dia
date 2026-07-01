@@ -95,12 +95,52 @@ const VOICE_EVENT_VARS: TmplVar[] = [
 	v('.Event.self_stream', 'bool', 'Streaming (Go Live)')
 ];
 
+const AUTOMOD_EVENT_VARS: TmplVar[] = [
+	v('.Event.rule_name', 'string', 'The automod rule that fired'),
+	v('.Event.rule_id', 'string', 'The rule id'),
+	v('.Event.trigger_type', 'string', 'The trigger that matched (keyword, spam, ...)'),
+	v('.Event.reason', 'string', 'Human description of the hit'),
+	v('.Event.points', 'int', 'Points added by this hit'),
+	v('.Event.total_points', 'int', "The member's active infraction total after"),
+	v('.Event.escalated', 'string', 'Escalation action fired ("" if none)'),
+	v('.Event.content', 'string', 'The offending message content (truncated)'),
+	v('.Event.message_id', 'snowflake', 'The offending message id ("" if none)'),
+	v('.Event.channel_id', 'snowflake', 'The channel it happened in ("" if none)')
+];
+
 const CHANNEL_EVENT_VARS: TmplVar[] = [
 	v('.Event.channel.id', 'snowflake', 'The channel id'),
 	v('.Event.channel.name', 'string', 'The channel name'),
 	v('.Event.channel.type', 'int', 'The channel type'),
 	v('.Event.channel.parent_id', 'snowflake', 'The parent category id'),
 	v('.Event.channel.topic', 'string', 'The channel topic')
+];
+
+const VERIFY_PASSED_VARS: TmplVar[] = [
+	v('.Event.mode', 'string', 'How they verified ("button" or "captcha")'),
+	v('.Event.channel_id', 'snowflake', 'The gate channel id')
+];
+
+const VERIFY_FAILED_VARS: TmplVar[] = [
+	v('.Event.reason', 'string', 'Why it failed ("failed_captcha" or "timed_out")'),
+	v('.Event.kicked', 'bool', 'Whether the member was removed')
+];
+
+const RAID_EVENT_VARS: TmplVar[] = [
+	v('.Event.active', 'bool', 'True when raid mode is entered, false when lifted'),
+	v('.Event.joins', 'int', 'Joins counted in the window (on trip)'),
+	v('.Event.threshold', 'int', 'The configured trip threshold'),
+	v('.Event.window', 'int', 'The rolling window, seconds'),
+	v('.Event.action', 'string', 'Action applied to joiners (kick/ban/timeout)')
+];
+
+const MODACTION_EVENT_VARS: TmplVar[] = [
+	v('.Event.action', 'string', 'The action (ban/kick/timeout/untimeout/unban/warn/note)'),
+	v('.Event.reason', 'string', 'The moderator-supplied reason'),
+	v('.Event.moderator_id', 'snowflake', 'The moderator who ran the command'),
+	v('.Event.moderator_name', 'string', "The moderator's name"),
+	v('.Event.case_number', 'int', 'The mod-log case number'),
+	v('.Event.duration_seconds', 'int', 'Timeout/temp-ban duration in seconds (0 if none)')
 ];
 
 export const TRIGGERS: TriggerKindMeta[] = [
@@ -136,6 +176,28 @@ export const TRIGGERS: TriggerKindMeta[] = [
 		hasChannel: false,
 		filters: ['cooldown'],
 		eventVars: MEMBER_EVENT_VARS
+	},
+	{
+		key: 'verification_passed',
+		label: 'Member verified',
+		description: 'A member passes verification (button or captcha).',
+		category: 'members',
+		event: 'VERIFICATION_PASSED',
+		actor: 'the verified member',
+		hasChannel: false,
+		filters: ['cooldown'],
+		eventVars: VERIFY_PASSED_VARS
+	},
+	{
+		key: 'verification_failed',
+		label: 'Verification failed',
+		description: 'A member fails the captcha, or is removed for not verifying in time.',
+		category: 'members',
+		event: 'VERIFICATION_FAILED',
+		actor: 'the member who failed',
+		hasChannel: false,
+		filters: ['cooldown'],
+		eventVars: VERIFY_FAILED_VARS
 	},
 	{
 		key: 'role_added',
@@ -271,6 +333,39 @@ export const TRIGGERS: TriggerKindMeta[] = [
 		hasChannel: false,
 		filters: ['cooldown'],
 		eventVars: []
+	},
+	{
+		key: 'automod_action',
+		label: 'Automod action taken',
+		description: 'An automod rule fires on a member (keyword, spam, escalation, and more).',
+		category: 'moderation',
+		event: 'AUTOMOD_ACTION',
+		actor: 'the flagged member',
+		hasChannel: true,
+		filters: ['ignore_bots', 'cooldown'],
+		eventVars: AUTOMOD_EVENT_VARS
+	},
+	{
+		key: 'moderation_action',
+		label: 'Moderation action taken',
+		description: 'A moderator runs /ban, /kick, /timeout, /warn or /note.',
+		category: 'moderation',
+		event: 'MODERATION_ACTION',
+		actor: 'the actioned member',
+		hasChannel: false,
+		filters: ['cooldown'],
+		eventVars: MODACTION_EVENT_VARS
+	},
+	{
+		key: 'raid_alert',
+		label: 'Anti-raid mode changes',
+		description: 'The server enters or leaves anti-raid mode (branch on .Event.active).',
+		category: 'moderation',
+		event: 'RAID_ALERT',
+		actor: '(no actor)',
+		hasChannel: false,
+		filters: ['cooldown'],
+		eventVars: RAID_EVENT_VARS
 	},
 	{
 		key: 'channel_create',

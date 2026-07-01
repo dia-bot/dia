@@ -90,6 +90,20 @@ func (s *Store) Reserve(ctx context.Context, key string, ttl time.Duration) (boo
 	return s.rdb.SetNX(ctx, key, 1, ttl).Result()
 }
 
+// Incr atomically increments a counter and, on the first increment, sets its
+// TTL so the counter is a fixed window that auto-expires. It returns the new
+// value. Used for rate-based automod (e.g. N messages within W seconds).
+func (s *Store) Incr(ctx context.Context, key string, ttl time.Duration) (int64, error) {
+	n, err := s.rdb.Incr(ctx, key).Result()
+	if err != nil {
+		return 0, err
+	}
+	if n == 1 {
+		_ = s.rdb.Expire(ctx, key, ttl).Err()
+	}
+	return n, nil
+}
+
 // ReplaceHashes deletes the target hashes and writes the replacement fields in
 // one Redis transaction.
 func (s *Store) ReplaceHashes(ctx context.Context, deleteKeys []string, hashes map[string]map[string]any) error {
