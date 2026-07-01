@@ -25,6 +25,7 @@ type Store struct {
 	Features       *FeatureConfigRepo
 	Levels         *LevelRepo
 	Moderation     *ModRepo
+	Infractions    *InfractionRepo
 	ReactionRoles  *ReactionRoleRepo
 	CustomCommands *CustomCommandRepo
 	CommandGroups  *CommandGroupRepo
@@ -67,6 +68,7 @@ func Open(ctx context.Context, cfg config.PostgresConfig, log *slog.Logger) (*St
 	s.Features = &FeatureConfigRepo{pool: pool}
 	s.Levels = &LevelRepo{pool: pool}
 	s.Moderation = &ModRepo{pool: pool}
+	s.Infractions = &InfractionRepo{pool: pool}
 	s.ReactionRoles = &ReactionRoleRepo{pool: pool}
 	s.CustomCommands = &CustomCommandRepo{pool: pool}
 	s.CommandGroups = &CommandGroupRepo{pool: pool}

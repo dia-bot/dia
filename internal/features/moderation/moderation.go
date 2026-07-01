@@ -29,7 +29,7 @@ func (*Plugin) Info() plugin.Info {
 	return plugin.Info{
 		Key:         FeatureKey,
 		Name:        "Moderation",
-		Description: "Ban, kick, timeout and warn members with a case log, plus an automod for invites, links, banned words and mention spam.",
+		Description: "Ban, kick, timeout and warn members with a case log, plus a rule-based automod: ordered detection rules (words, regex, invites, links, spam, mentions, caps, emoji, new accounts, names, and more), per-rule actions, and a cross-rule escalation ladder driven by infraction points.",
 		Category:    plugin.CategoryModeration,
 	}
 }
@@ -40,32 +40,40 @@ func (*Plugin) Init(ctx context.Context, d plugin.Deps, reg *plugin.Registrar) e
 	banPerm := int64(discordgo.PermissionBanMembers)
 	kickPerm := int64(discordgo.PermissionKickMembers)
 	modPerm := int64(discordgo.PermissionModerateMembers)
+	chanPerm := int64(discordgo.PermissionManageChannels)
+
+	// autocompleteReason is the shared reason-template autocomplete handler wired
+	// onto every command whose reason/text option opts into autocomplete.
+	autocompleteReason := func(c *interactions.Context) error { return reasonAutocomplete(c, d) }
 
 	reg.Command(&interactions.Command{
 		Def: interactions.RequirePerms(interactions.Slash("ban", "Ban a member from the server",
 			interactions.UserOpt("user", "The member to ban", true),
-			interactions.StringOpt("reason", "Reason for the ban", false),
+			interactions.WithAutocomplete(interactions.StringOpt("reason", "Reason for the ban", false)),
 			interactions.IntOpt("delete_days", "Delete this many days of their messages (0-7)", false),
 			interactions.StringOpt("duration", "Temp-ban duration, e.g. 30s, 10m, 2h, 7d", false),
 		), banPerm),
-		Handler: func(c *interactions.Context) error { return handleBan(c, d) },
+		Handler:      func(c *interactions.Context) error { return handleBan(c, d) },
+		Autocomplete: autocompleteReason,
 	})
 
 	reg.Command(&interactions.Command{
 		Def: interactions.RequirePerms(interactions.Slash("kick", "Kick a member from the server",
 			interactions.UserOpt("user", "The member to kick", true),
-			interactions.StringOpt("reason", "Reason for the kick", false),
+			interactions.WithAutocomplete(interactions.StringOpt("reason", "Reason for the kick", false)),
 		), kickPerm),
-		Handler: func(c *interactions.Context) error { return handleKick(c, d) },
+		Handler:      func(c *interactions.Context) error { return handleKick(c, d) },
+		Autocomplete: autocompleteReason,
 	})
 
 	reg.Command(&interactions.Command{
 		Def: interactions.RequirePerms(interactions.Slash("timeout", "Timeout a member",
 			interactions.UserOpt("user", "The member to timeout", true),
 			interactions.StringOpt("duration", "Timeout duration, e.g. 30s, 10m, 2h, 7d", true),
-			interactions.StringOpt("reason", "Reason for the timeout", false),
+			interactions.WithAutocomplete(interactions.StringOpt("reason", "Reason for the timeout", false)),
 		), modPerm),
-		Handler: func(c *interactions.Context) error { return handleTimeout(c, d) },
+		Handler:      func(c *interactions.Context) error { return handleTimeout(c, d) },
+		Autocomplete: autocompleteReason,
 	})
 
 	reg.Command(&interactions.Command{
@@ -87,9 +95,10 @@ func (*Plugin) Init(ctx context.Context, d plugin.Deps, reg *plugin.Registrar) e
 	reg.Command(&interactions.Command{
 		Def: interactions.RequirePerms(interactions.Slash("warn", "Warn a member",
 			interactions.UserOpt("user", "The member to warn", true),
-			interactions.StringOpt("reason", "Reason for the warning", false),
+			interactions.WithAutocomplete(interactions.StringOpt("reason", "Reason for the warning", false)),
 		), modPerm),
-		Handler: func(c *interactions.Context) error { return handleWarn(c, d) },
+		Handler:      func(c *interactions.Context) error { return handleWarn(c, d) },
+		Autocomplete: autocompleteReason,
 	})
 
 	reg.Command(&interactions.Command{
@@ -106,11 +115,51 @@ func (*Plugin) Init(ctx context.Context, d plugin.Deps, reg *plugin.Registrar) e
 		Handler: func(c *interactions.Context) error { return handleCases(c, d) },
 	})
 
+	reg.Command(&interactions.Command{
+		Def: interactions.RequirePerms(interactions.Slash("note", "Attach a private staff note to a member",
+			interactions.UserOpt("user", "The member to note", true),
+			interactions.WithAutocomplete(interactions.StringOpt("text", "The note text", true)),
+		), modPerm),
+		Handler:      func(c *interactions.Context) error { return handleNote(c, d) },
+		Autocomplete: autocompleteReason,
+	})
+
+	reg.Command(&interactions.Command{
+		Def: interactions.RequirePerms(interactions.Slash("notes", "List a member's staff notes",
+			interactions.UserOpt("user", "The member whose notes to list", true),
+		), modPerm),
+		Handler: func(c *interactions.Context) error { return handleNotes(c, d) },
+	})
+
+	reg.Command(&interactions.Command{
+		Def: interactions.RequirePerms(interactions.Slash("lockdown", "Deny @everyone send-messages on every text channel",
+			interactions.StringOpt("reason", "Reason for the lockdown", false),
+		), chanPerm),
+		Handler: func(c *interactions.Context) error { return handleLockdown(c, d) },
+	})
+
+	reg.Command(&interactions.Command{
+		Def: interactions.RequirePerms(interactions.Slash("unlock", "Restore channels after a lockdown and lift raid mode",
+			interactions.StringOpt("reason", "Reason for the unlock", false),
+		), chanPerm),
+		Handler: func(c *interactions.Context) error { return handleUnlock(c, d) },
+	})
+
 	reg.OnEvent(event.TypeMessageCreate, func(ctx context.Context, env *event.Envelope) error {
-		return handleAutomod(ctx, d, env)
+		return handleAutomodMessage(ctx, d, env, false)
+	})
+	reg.OnEvent(event.TypeMessageUpdate, func(ctx context.Context, env *event.Envelope) error {
+		return handleAutomodMessage(ctx, d, env, true)
+	})
+	reg.OnEvent(event.TypeMemberAdd, func(ctx context.Context, env *event.Envelope) error {
+		return handleAutomodMember(ctx, d, env)
+	})
+	reg.OnEvent(event.TypeMemberUpdate, func(ctx context.Context, env *event.Envelope) error {
+		return handleAutomodMember(ctx, d, env)
 	})
 
 	reg.Worker("mod-expiry", func(ctx context.Context) { runExpiry(ctx, d) })
+	reg.Worker("automod-threatfeed", func(ctx context.Context) { runThreatFeed(ctx, d) })
 
 	return nil
 }
@@ -273,6 +322,17 @@ func finishAction(c *interactions.Context, d plugin.Deps, target event.User, act
 		return c.RespondEphemeral("Action applied but failed to record case: " + err.Error())
 	}
 
+	// Let automations react to the manual action ("moderation_action" trigger).
+	publishEvent(c.Ctx, d, event.TypeModerationAction, c.GuildID, event.ModerationAction{
+		GuildID:         c.GuildID,
+		Action:          action,
+		Reason:          reason,
+		User:            target,
+		Moderator:       c.User,
+		CaseNumber:      created.CaseNumber,
+		DurationSeconds: durSecs,
+	})
+
 	if cfg.DMOnAction && target.ID != "" {
 		notice := dmNotice(action, reason)
 		if notice != "" {
@@ -378,6 +438,10 @@ func actionTitle(action string) string {
 		return "Unban"
 	case "warn":
 		return "Warn"
+	case "note":
+		return "Note"
+	case "run_automation":
+		return "Automation"
 	default:
 		if action == "" {
 			return "Action"
@@ -398,6 +462,8 @@ func actionColor(action string) int {
 		return 0xFEE75C
 	case "unban", "untimeout":
 		return 0x57F287
+	case "note":
+		return 0x99AAB5 // neutral grey
 	default:
 		return 0x5865F2
 	}

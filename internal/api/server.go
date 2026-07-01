@@ -185,6 +185,12 @@ func (s *Server) Handler() http.Handler {
 	g.DELETE("/reaction-roles/:mid", s.handleDeleteMenu)
 
 	g.GET("/cases", s.handleListCases)
+	g.GET("/infractions", s.handleListInfractions)
+	g.GET("/automod-stats", s.handleAutomodStats)
+
+	g.GET("/automod-rules", s.handleListAutoModRules)
+	g.PUT("/automod-rules", s.handleUpsertAutoModRule)
+	g.DELETE("/automod-rules/:ruleId", s.handleDeleteAutoModRule)
 
 	return r
 }
