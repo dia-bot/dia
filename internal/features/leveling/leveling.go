@@ -18,6 +18,7 @@ import (
 	"github.com/dia-bot/dia/internal/interactions"
 	"github.com/dia-bot/dia/internal/plugin"
 	"github.com/dia-bot/dia/internal/store"
+	"github.com/dia-bot/dia/internal/tmpllookup"
 	"github.com/dia-bot/dia/pkg/discordgo"
 )
 
@@ -192,21 +193,40 @@ func grantRewards(ctx context.Context, d plugin.Deps, cfg Config, guildID, userI
 	}
 }
 
-// announce posts the level-up message to the configured destination.
+// announce posts the level-up message to the configured destination. The rich
+// LevelUp message (content + embeds) renders when configured; older configs fall
+// back to the legacy single-string LevelUpMessage. Both render as templates
+// against the leveling scope.
 func announce(ctx context.Context, d plugin.Deps, cfg Config, msg event.Message, level int) {
 	name, _ := guildInfo(ctx, d, msg.GuildID)
-	text := applyVars(cfg.LevelUpMessage, msg.Author, name, level)
-	if text == "" {
+	v := levelVars{
+		user:    msg.Author,
+		guildID: msg.GuildID,
+		server:  name,
+		level:   level,
+		lookup:  tmpllookup.New(ctx, d.GuildState, msg.GuildID),
+	}
+
+	var send *discordgo.MessageSend
+	if hasLevelUp(cfg.LevelUp) {
+		send = buildLevelUp(cfg.LevelUp, v)
+	} else if text := v.render(cfg.LevelUpMessage); text != "" {
+		send = &discordgo.MessageSend{Content: text}
+	}
+	if send == nil {
 		return
 	}
 
 	switch cfg.AnnounceChannel {
 	case "dm":
-		_ = d.Discord.SendDM(msg.Author.ID, text)
+		// A DM carries plain content only; an embed-only message can't be DMed.
+		if send.Content != "" {
+			_ = d.Discord.SendDM(msg.Author.ID, send.Content)
+		}
 	case "":
-		_, _ = d.Discord.SendMessage(msg.ChannelID, &discordgo.MessageSend{Content: text})
+		_, _ = d.Discord.SendMessage(msg.ChannelID, send)
 	default:
-		_, _ = d.Discord.SendMessage(cfg.AnnounceChannel, &discordgo.MessageSend{Content: text})
+		_, _ = d.Discord.SendMessage(cfg.AnnounceChannel, send)
 	}
 }
 
@@ -407,20 +427,6 @@ func guildInfo(ctx context.Context, d plugin.Deps, guildID string) (name string,
 		name = "the server"
 	}
 	return name, count
-}
-
-// applyVars substitutes the level-up message placeholders.
-func applyVars(s string, user event.User, server string, level int) string {
-	if s == "" {
-		return ""
-	}
-	return strings.NewReplacer(
-		"{user.mention}", "<@"+user.ID+">",
-		"{username}", user.Username,
-		"{user}", displayName(user),
-		"{server}", server,
-		"{level}", strconv.Itoa(level),
-	).Replace(s)
 }
 
 // formatInt adds thousands separators to an int64.
