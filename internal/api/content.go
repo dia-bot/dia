@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"regexp"
 	"sort"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/dia-bot/dia/internal/event"
 	cc "github.com/dia-bot/dia/internal/features/customcommands"
+	"github.com/dia-bot/dia/internal/features/roles"
 	"github.com/dia-bot/dia/internal/store"
 	"github.com/dia-bot/dia/pkg/discordgo"
 	"github.com/gin-gonic/gin"
@@ -724,6 +726,41 @@ func (s *Server) handleDeleteMenu(c *gin.Context) {
 	}
 	s.audit(c, gidInt, "reactionrole.delete", gin.H{"id": id})
 	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+type postMenuReq struct {
+	ChannelID string `json:"channel_id"`
+}
+
+// handlePostMenu posts a saved reaction-role menu to a channel from the
+// dashboard, reusing the same build + send + record path as /reactionroles post.
+func (s *Server) handlePostMenu(c *gin.Context) {
+	menuID, err := strconv.ParseInt(c.Param("mid"), 10, 64)
+	if err != nil {
+		fail(c, http.StatusBadRequest, "invalid id")
+		return
+	}
+	var req postMenuReq
+	if err := c.ShouldBindJSON(&req); err != nil || req.ChannelID == "" {
+		fail(c, http.StatusBadRequest, "channel_id is required")
+		return
+	}
+	gid := guildID(c)
+	gidInt, _ := event.ParseID(gid)
+	msgID, err := roles.PostMenu(c.Request.Context(), s.discord, s.store, gid, req.ChannelID, menuID)
+	if err != nil {
+		switch {
+		case errors.Is(err, roles.ErrMenuWrongGuild), errors.Is(err, roles.ErrMenuNoOptions):
+			fail(c, http.StatusBadRequest, err.Error())
+		case errors.Is(err, store.ErrNotFound):
+			fail(c, http.StatusNotFound, "menu not found")
+		default:
+			fail(c, http.StatusBadGateway, "could not post menu: "+err.Error())
+		}
+		return
+	}
+	s.audit(c, gidInt, "reactionrole.post", gin.H{"menu": menuID, "channel": req.ChannelID})
+	c.JSON(http.StatusOK, gin.H{"ok": true, "message_id": msgID})
 }
 
 // ── Moderation ───────────────────────────────────────────────
