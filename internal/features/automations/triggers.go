@@ -52,6 +52,8 @@ var Triggers = []TriggerKind{
 	{Key: "member_join", Label: "Member joins", Description: "A member joins the server.", Event: event.TypeMemberAdd, Category: CatMembers, Actor: "the member who joined", Filters: []Filter{FilterIgnoreBots, FilterCooldown}},
 	{Key: "member_leave", Label: "Member leaves", Description: "A member leaves, is kicked, or is banned.", Event: event.TypeMemberRemove, Category: CatMembers, Actor: "the member who left", Filters: []Filter{FilterCooldown}},
 	{Key: "member_update", Label: "Member updated", Description: "A member's roles, nickname or boost status changes.", Event: event.TypeMemberUpdate, Category: CatMembers, Actor: "the updated member", Filters: []Filter{FilterCooldown}},
+	{Key: "verification_passed", Label: "Member verified", Description: "A member passes verification (button or captcha).", Event: event.TypeVerificationPassed, Category: CatMembers, Actor: "the verified member", Filters: []Filter{FilterCooldown}},
+	{Key: "verification_failed", Label: "Verification failed", Description: "A member fails the captcha, or is removed for not verifying in time.", Event: event.TypeVerificationFailed, Category: CatMembers, Actor: "the member who failed", Filters: []Filter{FilterCooldown}},
 
 	// Roles (derived from member updates)
 	{Key: "role_added", Label: "Role added", Description: "A specific role is granted to a member (use for boost detection: watch the Server Booster role).", Event: event.TypeMemberUpdate, Category: CatRoles, Actor: "the member who got the role", Filters: []Filter{FilterRole, FilterCooldown}},
@@ -75,6 +77,8 @@ var Triggers = []TriggerKind{
 	{Key: "ban_add", Label: "Member banned", Description: "A user is banned from the server.", Event: event.TypeBanAdd, Category: CatModeration, Actor: "the banned user", Filters: []Filter{FilterCooldown}},
 	{Key: "ban_remove", Label: "Member unbanned", Description: "A user is unbanned.", Event: event.TypeBanRemove, Category: CatModeration, Actor: "the unbanned user", Filters: []Filter{FilterCooldown}},
 	{Key: "automod_action", Label: "Automod action taken", Description: "An automod rule fires on a member (keyword, spam, escalation, and more).", Event: event.TypeAutomodAction, Category: CatModeration, Actor: "the flagged member", HasChannel: true, Filters: []Filter{FilterIgnoreBots, FilterCooldown}},
+	{Key: "moderation_action", Label: "Moderation action taken", Description: "A moderator runs /ban, /kick, /timeout, /warn or /note.", Event: event.TypeModerationAction, Category: CatModeration, Actor: "the actioned member", Filters: []Filter{FilterCooldown}},
+	{Key: "raid_alert", Label: "Anti-raid mode changes", Description: "The server enters or leaves anti-raid mode (branch on .Event.active).", Event: event.TypeRaidAlert, Category: CatModeration, Actor: "(no actor)", Filters: []Filter{FilterCooldown}},
 
 	// Channels & threads
 	{Key: "channel_create", Label: "Channel created", Description: "A channel is created.", Event: event.TypeChannelCreate, Category: CatChannels, Actor: "(no actor)", Filters: nil},

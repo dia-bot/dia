@@ -432,6 +432,57 @@ func (p *Plugin) prepare(ctx context.Context, et event.Type, env *event.Envelope
 			"self_stream":    vs.Stream,
 		}
 
+	case event.TypeVerificationPassed:
+		v, err := plugin.DecodeData[event.VerificationPassed](env)
+		if err != nil {
+			return nil, false
+		}
+		ec.user = v.User
+		ec.member = v.Member
+		ec.channelID = v.ChannelID
+		ec.eventMap = map[string]any{"mode": v.Mode, "channel_id": v.ChannelID}
+
+	case event.TypeVerificationFailed:
+		v, err := plugin.DecodeData[event.VerificationFailed](env)
+		if err != nil {
+			return nil, false
+		}
+		ec.user = v.User
+		ec.member = v.Member
+		ec.eventMap = map[string]any{"reason": v.Reason, "kicked": v.Kicked}
+
+	case event.TypeRaidAlert:
+		r, err := plugin.DecodeData[event.RaidAlert](env)
+		if err != nil {
+			return nil, false
+		}
+		ec.eventMap = map[string]any{
+			"active":    r.Active,
+			"joins":     r.Joins,
+			"threshold": r.Threshold,
+			"window":    r.Window,
+			"action":    r.Action,
+		}
+
+	case event.TypeModerationAction:
+		a, err := plugin.DecodeData[event.ModerationAction](env)
+		if err != nil {
+			return nil, false
+		}
+		ec.user = a.User
+		modName := a.Moderator.GlobalName
+		if modName == "" {
+			modName = a.Moderator.Username
+		}
+		ec.eventMap = map[string]any{
+			"action":           a.Action,
+			"reason":           a.Reason,
+			"moderator_id":     a.Moderator.ID,
+			"moderator_name":   modName,
+			"case_number":      a.CaseNumber,
+			"duration_seconds": a.DurationSeconds,
+		}
+
 	case event.TypeChannelCreate, event.TypeChannelDelete, event.TypeThreadCreate:
 		ce, err := plugin.DecodeData[event.ChannelEvent](env)
 		if err != nil {

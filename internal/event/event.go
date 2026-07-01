@@ -46,6 +46,14 @@ const (
 	// same stream when an automod rule fires, so the automations runtime can
 	// trigger flows off moderation activity. It has no gateway/Elixir mapper.
 	TypeAutomodAction Type = "AUTOMOD_ACTION"
+
+	// These are worker-published like TypeAutomodAction (no gateway/Elixir
+	// mapper): the verification, anti-raid and manual-moderation features emit
+	// them so the automations runtime can trigger flows off safety activity.
+	TypeVerificationPassed Type = "VERIFICATION_PASSED"
+	TypeVerificationFailed Type = "VERIFICATION_FAILED"
+	TypeRaidAlert          Type = "RAID_ALERT"
+	TypeModerationAction   Type = "MODERATION_ACTION"
 )
 
 // SubjectPrefix is the JetStream subject root for forwarded gateway events.
@@ -242,6 +250,51 @@ type AutomodAction struct {
 	ChannelID   string   `json:"channel_id,omitempty"`
 	MessageID   string   `json:"message_id,omitempty"`
 	Content     string   `json:"content,omitempty"` // offending message content (truncated)
+}
+
+// VerificationPassed is published when a member clears verification (button or
+// captcha). The automations runtime consumes it as the "verification_passed"
+// trigger, with the member as .User / .Member.
+type VerificationPassed struct {
+	GuildID   string  `json:"guild_id"`
+	User      User    `json:"user"`
+	Member    *Member `json:"member,omitempty"`
+	Mode      string  `json:"mode"`                 // "button" | "captcha"
+	ChannelID string  `json:"channel_id,omitempty"` // the gate channel
+}
+
+// VerificationFailed is published when a member fails the captcha too many times
+// or is removed for not verifying in time. Consumed as "verification_failed".
+type VerificationFailed struct {
+	GuildID string  `json:"guild_id"`
+	User    User    `json:"user"`
+	Member  *Member `json:"member,omitempty"`
+	Reason  string  `json:"reason"` // "failed_captcha" | "timed_out"
+	Kicked  bool    `json:"kicked"` // whether the member was removed
+}
+
+// RaidAlert is published when anti-raid mode is entered or lifted. Consumed as
+// the "raid_alert" trigger; flows branch on .Event.active.
+type RaidAlert struct {
+	GuildID   string `json:"guild_id"`
+	Active    bool   `json:"active"`    // true = raid mode entered, false = lifted
+	Joins     int    `json:"joins"`     // joins counted in the window (on trip)
+	Threshold int    `json:"threshold"` // the configured trip threshold
+	Window    int    `json:"window"`    // the rolling window, seconds
+	Action    string `json:"action"`    // action applied to joiners (kick/ban/timeout)
+}
+
+// ModerationAction is published when a moderator runs a manual mod command
+// (/ban /kick /timeout /untimeout /unban /warn /note). Consumed as the
+// "moderation_action" trigger; .User / .Member is the actioned member.
+type ModerationAction struct {
+	GuildID         string `json:"guild_id"`
+	Action          string `json:"action"` // ban|kick|timeout|untimeout|unban|warn|note
+	Reason          string `json:"reason"`
+	User            User   `json:"user"`      // the actioned member
+	Moderator       User   `json:"moderator"` // the moderator who ran the command
+	CaseNumber      int    `json:"case_number"`
+	DurationSeconds int    `json:"duration_seconds,omitempty"`
 }
 
 // VoiceState is delivered on VOICE_STATE_UPDATE. ChannelID == "" means the

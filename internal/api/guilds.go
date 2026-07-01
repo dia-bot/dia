@@ -20,7 +20,8 @@ import (
 // knownFeatures is the set of feature keys the dashboard may configure.
 var knownFeatures = map[string]bool{
 	"welcome": true, "leveling": true, "autorole": true,
-	"moderation": true, "automod": true, "customcommands": true, "reactionroles": true,
+	"moderation": true, "automod": true, "verification": true, "logging": true,
+	"customcommands": true, "reactionroles": true,
 }
 
 // botInvitePerms is the permission requested in the bot invite URL: Administrator,
