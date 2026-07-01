@@ -177,6 +177,12 @@ export const api = {
 		req<{ id?: number; ok?: boolean }>('PUT', `/api/guilds/${id}/reaction-roles`, menu),
 	deleteMenu: (id: string, mid: number) =>
 		req('DELETE', `/api/guilds/${id}/reaction-roles/${mid}`),
+	postMenu: (id: string, mid: number, channel_id: string) =>
+		req<{ ok: boolean; message_id: string }>(
+			'POST',
+			`/api/guilds/${id}/reaction-roles/${mid}/post`,
+			{ channel_id }
+		),
 
 	cases: (id: string) => req<{ cases: any[] }>('GET', `/api/guilds/${id}/cases`),
 	welcomePresets: () => req<{ presets: any[] }>('GET', '/api/welcome/presets'),
