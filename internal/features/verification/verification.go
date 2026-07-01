@@ -35,6 +35,12 @@ const (
 	idStart  = "verify:start"  // shared, stateless "Verify" button on the prompt
 	idEnter  = "verify:enter"  // per-user "Enter code" button (captcha mode)
 	idAnswer = "verify:answer" // captcha answer modal
+
+	// vbtnPrefix namespaces clicks on the prompt's custom buttons. Each custom
+	// button mints custom_id "vbtn:<custom_id_suffix>"; a click routes here and,
+	// when ButtonActions maps the suffix, runs the named automation as a durable
+	// run. (The "Verify" button uses idStart and is injected separately.)
+	vbtnPrefix = "vbtn:"
 )
 
 // Redis keys (all decimal-string ids):
@@ -71,6 +77,12 @@ func (*Plugin) Init(ctx context.Context, d plugin.Deps, reg *plugin.Registrar) e
 	reg.Component("verify:", func(c *interactions.Context) error {
 		return onComponent(c, d)
 	})
+	// Clicks on the prompt's custom buttons route here ("vbtn:<suffix>"); a
+	// mapped button runs its automation as a durable run, an unmapped one is
+	// acked silently.
+	reg.Component(vbtnPrefix, func(c *interactions.Context) error {
+		return onCustomButton(c, d)
+	})
 	reg.Modal("verify:", func(c *interactions.Context) error {
 		return onModal(c, d)
 	})
@@ -97,9 +109,10 @@ func onJoin(ctx context.Context, d plugin.Deps, env *event.Envelope) error {
 		return nil // bots are admitted/handled by the autorole feature, not gated.
 	}
 
-	// OnlySuspicious: a member who is old enough AND has an avatar passes
-	// instantly (grant the verified role, never restrict them).
-	if cfg.OnlySuspicious && !isSuspicious(u, cfg.MinAccountAgeHours) {
+	// OnlySuspicious: a member who passes the behavioural checks (old enough, and
+	// has an avatar when RequireAvatar is on) passes instantly (grant the verified
+	// role, never restrict them).
+	if cfg.OnlySuspicious && !isSuspicious(u, cfg) {
 		if cfg.VerifiedRole != "" {
 			_ = d.Discord.AddRole(ma.GuildID, u.ID, cfg.VerifiedRole, "verification: trusted joiner")
 		}
@@ -121,19 +134,20 @@ func onJoin(ctx context.Context, d plugin.Deps, env *event.Envelope) error {
 	return nil
 }
 
-// isSuspicious reports whether a joiner looks risky: account younger than
-// minAgeHours, or no custom avatar.
-func isSuspicious(u event.User, minAgeHours int) bool {
-	if u.Avatar == "" {
+// isSuspicious reports whether a joiner looks risky per the configured
+// behavioural checks: no profile picture (when RequireAvatar is on), or an
+// account younger than MinAccountAgeHours.
+func isSuspicious(u event.User, cfg Config) bool {
+	if cfg.RequireAvatar && u.Avatar == "" {
 		return true
 	}
-	if minAgeHours <= 0 {
+	if cfg.MinAccountAgeHours <= 0 {
 		return false
 	}
 	id, _ := strconv.ParseInt(u.ID, 10, 64)
 	createdMS := (id >> 22) + 1420070400000
 	age := time.Since(time.UnixMilli(createdMS))
-	return age < time.Duration(minAgeHours)*time.Hour
+	return age < time.Duration(cfg.MinAccountAgeHours)*time.Hour
 }
 
 // ensurePrompt posts the persistent verification prompt once per guild and
@@ -151,28 +165,11 @@ func ensurePrompt(ctx context.Context, d plugin.Deps, guildID string, gid int64,
 	if ok, _ := d.Cache.Reserve(ctx, keyMsg+guildID+":lock", 30*time.Second); !ok {
 		return
 	}
-	// Build the prompt. The body text is templated; since there is no specific
+	// Build the prompt. Every string is templated; since there is no specific
 	// joiner here (the prompt is shared by everyone), {{ .User.* }} renders empty
 	// and admins are expected to write guild-level copy.
 	name := guildName(ctx, d, gid)
-	body := renderTemplate(cfg.WelcomeText, event.User{}, guildID, name)
-	if strings.TrimSpace(body) == "" {
-		body = "Click the button below to verify and unlock the server."
-	}
-	send := &discordgo.MessageSend{
-		Content: body,
-		Components: []discordgo.MessageComponent{
-			discordgo.ActionsRow{Components: []discordgo.MessageComponent{
-				discordgo.Button{
-					Style:    discordgo.SuccessButton,
-					Label:    "Verify",
-					CustomID: idStart,
-					Emoji:    &discordgo.ComponentEmoji{Name: startEmoji},
-				},
-			}},
-		},
-		AllowedMentions: &discordgo.MessageAllowedMentions{Parse: []discordgo.AllowedMentionType{}},
-	}
+	send := buildPrompt(cfg, guildID, name)
 	msg, err := d.Discord.SendMessage(cfg.Channel, send)
 	if err != nil || msg == nil {
 		return
@@ -193,6 +190,41 @@ func onComponent(c *interactions.Context, d plugin.Deps) error {
 	default:
 		return nil // stale / unknown
 	}
+}
+
+// onCustomButton handles a click on one of the prompt's custom buttons
+// ("vbtn:<suffix>"). It loads the verification config, finds the automation
+// mapped to the clicked suffix in ButtonActions, and runs it as a durable run
+// (trigger "verification_click"). An unmapped button (or a disabled feature) is
+// acked silently. Link buttons never reach here (Discord opens the URL).
+func onCustomButton(c *interactions.Context, d plugin.Deps) error {
+	suffix := strings.TrimPrefix(c.CustomID(), vbtnPrefix)
+	gid, _ := event.ParseID(c.GuildID)
+	cfg, enabled, err := plugin.LoadConfig[Config](c.Ctx, d, gid, FeatureKey)
+	if err != nil || !enabled {
+		return c.DeferUpdate()
+	}
+	automationID := ""
+	for _, a := range cfg.ButtonActions {
+		if a.Suffix == suffix {
+			automationID = strings.TrimSpace(a.AutomationID)
+			break
+		}
+	}
+	if automationID == "" {
+		return c.DeferUpdate() // decorative / unmapped
+	}
+	// Claim the 3s window; the automation posts its own follow-up output.
+	_ = c.DeferUpdate()
+	runVerificationAutomation(c.Ctx, d, c.GuildID, interactionUser(c), c.I.Member, runOpts{
+		AutomationID:     automationID,
+		TriggerKind:      "verification_click",
+		ChannelID:        c.I.ChannelID,
+		InteractionID:    c.I.ID,
+		InteractionToken: c.I.Token,
+		Event:            map[string]any{"custom_id": c.CustomID(), "suffix": suffix},
+	})
+	return nil
 }
 
 // onStart handles the shared "Verify" button. Button mode verifies immediately;
@@ -217,6 +249,7 @@ func onStart(c *interactions.Context, d plugin.Deps) error {
 	if err := pass(c.Ctx, d, c.GuildID, uid, cfg); err != nil {
 		return c.RespondEphemeral("Verification hit a snag granting your roles. Please ping a moderator.")
 	}
+	onVerified(d, c, cfg)
 	return c.RespondEphemeral("✅ You're verified. Welcome in!")
 }
 
@@ -294,6 +327,13 @@ func onModal(c *interactions.Context, d plugin.Deps) error {
 			if cfg.KickAfterMinutes > 0 {
 				_ = d.Cache.DeleteHashField(c.Ctx, keyPending+c.GuildID, uid)
 				_ = d.Discord.Kick(c.GuildID, uid, "verification: failed captcha")
+				publishVerification(c.Ctx, d, event.TypeVerificationFailed, c.GuildID, event.VerificationFailed{
+					GuildID: c.GuildID,
+					User:    interactionUser(c),
+					Member:  c.I.Member,
+					Reason:  "failed_captcha",
+					Kicked:  true,
+				})
 				return c.RespondEphemeral("Too many incorrect attempts. You have been removed; you can rejoin and try again.")
 			}
 			return c.RespondEphemeral("Too many incorrect attempts. Click **Verify** to get a fresh code.")
@@ -306,6 +346,7 @@ func onModal(c *interactions.Context, d plugin.Deps) error {
 		return c.RespondEphemeral("Verification hit a snag granting your roles. Please ping a moderator.")
 	}
 	_ = d.Cache.Delete(c.Ctx, keyCode+c.GuildID+":"+uid, keyTries+c.GuildID+":"+uid, keySalt+c.GuildID+":"+uid)
+	onVerified(d, c, cfg)
 	return c.RespondEphemeral("✅ You're verified. Welcome in!")
 }
 
@@ -375,6 +416,12 @@ func sweepKicks(ctx context.Context, d plugin.Deps) {
 			// Past deadline: kick only if still unverified (still holds the role).
 			if stillUnverified(ctx, d, guildID, uid, cfg) {
 				_ = d.Discord.Kick(guildID, uid, "verification: not verified in time")
+				publishVerification(ctx, d, event.TypeVerificationFailed, guildID, event.VerificationFailed{
+					GuildID: guildID,
+					User:    event.User{ID: uid},
+					Reason:  "timed_out",
+					Kicked:  true,
+				})
 			}
 			_ = d.Cache.DeleteHashField(ctx, keyPending+guildID, uid)
 		}
