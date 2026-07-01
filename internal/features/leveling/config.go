@@ -1,6 +1,7 @@
 package leveling
 
 import (
+	cc "github.com/dia-bot/dia/internal/features/customcommands"
 	"github.com/dia-bot/dia/internal/imaging"
 	"github.com/dia-bot/dia/internal/layout"
 )
@@ -21,7 +22,15 @@ type Config struct {
 	// Level-up announcements
 	AnnounceLevelUp bool   `json:"announce_level_up"`
 	AnnounceChannel string `json:"announce_channel"` // "" = same channel, a channel id, or "dm"
-	LevelUpMessage  string `json:"level_up_message"`
+
+	// LevelUp is the rich announcement edited in the dashboard composer (content
+	// + embeds). When it is empty the legacy single-string LevelUpMessage is used
+	// instead, so announcements configured before the composer keep working.
+	LevelUp LevelUpMsg `json:"level_up_msg"`
+
+	// LevelUpMessage is the legacy single-line announcement. Kept for back-compat:
+	// it renders only when LevelUp is empty.
+	LevelUpMessage string `json:"level_up_message"`
 
 	// Exclusions
 	NoXPChannels []string `json:"no_xp_channels"`
@@ -32,6 +41,16 @@ type Config struct {
 
 	// Rank card appearance
 	RankCard RankCardConfig `json:"rank_card"`
+}
+
+// LevelUpMsg is the rich level-up announcement authored in the dashboard
+// composer. Content and every embed string are rendered as templates (Go {{ }}
+// logic plus the {token} shorthands the rank-card picker documents) against the
+// leveling scope at announce time. The embeds reuse the custom-command EmbedSpec
+// so the shared MessageEditor edits them in place.
+type LevelUpMsg struct {
+	Content string         `json:"content"`
+	Embeds  []cc.EmbedSpec `json:"embeds,omitempty"`
 }
 
 // RankCardConfig describes the generated /rank image.
@@ -57,8 +76,11 @@ func Default() Config {
 		Multiplier:      1.0,
 		AnnounceLevelUp: true,
 		AnnounceChannel: "",
-		LevelUpMessage:  "GG {user.mention}, you reached **level {level}**!",
-		StackRewards:    true,
+		LevelUp: LevelUpMsg{
+			Content: "GG {user.mention}, you reached **level {level}**!",
+		},
+		LevelUpMessage: "GG {user.mention}, you reached **level {level}**!",
+		StackRewards:   true,
 		RankCard: RankCardConfig{
 			Background: imaging.Background{
 				From:  imaging.BrandPink,
