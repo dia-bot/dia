@@ -11,11 +11,18 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/dia-bot/dia/internal/discord"
 	"github.com/dia-bot/dia/internal/event"
 	"github.com/dia-bot/dia/internal/interactions"
 	"github.com/dia-bot/dia/internal/plugin"
 	"github.com/dia-bot/dia/internal/store"
 	"github.com/dia-bot/dia/pkg/discordgo"
+)
+
+// Sentinel errors PostMenu returns so callers can map them to the right response.
+var (
+	ErrMenuWrongGuild = errors.New("menu belongs to another server")
+	ErrMenuNoOptions  = errors.New("menu has no options")
 )
 
 // Plugin implements the roles feature.
@@ -349,44 +356,49 @@ func handlePost(c *interactions.Context, d plugin.Deps) error {
 		return c.RespondEphemeral("Please choose a channel to post the menu in.")
 	}
 
-	menu, menuOpts, err := loadMenu(c.Ctx, d, menuID)
-	if err != nil {
-		return c.RespondEphemeral("No menu found with ID " + strconv.FormatInt(menuID, 10) + ".")
-	}
-	gid, _ := event.ParseID(c.GuildID)
-	if menu.GuildID != gid {
+	_, err := PostMenu(c.Ctx, d.Discord, d.Store, c.GuildID, channelID, menuID)
+	switch {
+	case errors.Is(err, ErrMenuWrongGuild):
 		return c.RespondEphemeral("That menu belongs to another server.")
-	}
-	if len(menuOpts) == 0 {
+	case errors.Is(err, ErrMenuNoOptions):
 		return c.RespondEphemeral("That menu has no options yet — add some on the dashboard first.")
-	}
-
-	send := &discordgo.MessageSend{
-		Components: buildComponents(menu, menuOpts),
-	}
-	if menu.Title != "" {
-		send.Embeds = []*discordgo.MessageEmbed{{
-			Title:       menu.Title,
-			Description: menuDescription(menuOpts),
-			Color:       0xB244FC,
-		}}
-	} else {
-		send.Content = "Pick your roles:"
-	}
-
-	msg, err := d.Discord.SendMessage(channelID, send)
-	if err != nil {
+	case errors.Is(err, store.ErrNotFound):
+		return c.RespondEphemeral("No menu found with ID " + strconv.FormatInt(menuID, 10) + ".")
+	case err != nil:
 		return c.RespondEphemeral("Failed to post the menu: " + err.Error())
+	}
+	return c.RespondEphemeral(fmt.Sprintf("Posted menu #%d to <#%s>.", menuID, channelID))
+}
+
+// PostMenu builds and sends a reaction-role menu to channelID, then records the
+// posted message id. It is guild-scoped: a menu owned by another guild is refused
+// (ErrMenuWrongGuild) before anything is sent. Shared by the /reactionroles post
+// command and the dashboard post endpoint.
+func PostMenu(ctx context.Context, dc *discord.Client, st *store.Store, guildID, channelID string, menuID int64) (string, error) {
+	menu, opts, err := loadMenuFromStore(ctx, st, menuID)
+	if err != nil {
+		return "", err
+	}
+	gid, _ := event.ParseID(guildID)
+	if menu.GuildID != gid {
+		return "", ErrMenuWrongGuild
+	}
+	if len(opts) == 0 {
+		return "", ErrMenuNoOptions
+	}
+	msg, err := dc.SendMessage(channelID, buildMenuMessage(menu, opts))
+	if err != nil {
+		return "", err
 	}
 	chID, _ := event.ParseID(msg.ChannelID)
 	if chID == 0 {
 		chID, _ = event.ParseID(channelID)
 	}
 	msgID, _ := event.ParseID(msg.ID)
-	if err := d.Store.ReactionRoles.SetMessage(c.Ctx, menu.ID, chID, msgID); err != nil {
-		return err
+	if err := st.ReactionRoles.SetMessage(ctx, menu.ID, chID, msgID); err != nil {
+		return "", err
 	}
-	return c.RespondEphemeral(fmt.Sprintf("Posted menu #%d to <#%s>.", menu.ID, channelID))
+	return msg.ID, nil
 }
 
 func handleDelete(c *interactions.Context, d plugin.Deps) error {
@@ -402,7 +414,13 @@ func handleDelete(c *interactions.Context, d plugin.Deps) error {
 
 // loadMenu fetches a menu and decodes its options.
 func loadMenu(ctx context.Context, d plugin.Deps, id int64) (store.ReactionRoleMenu, []Option, error) {
-	menu, err := d.Store.ReactionRoles.Get(ctx, id)
+	return loadMenuFromStore(ctx, d.Store, id)
+}
+
+// loadMenuFromStore is the store-only variant of loadMenu, so callers without
+// plugin.Deps (the dashboard API) can reuse the same load + decode path.
+func loadMenuFromStore(ctx context.Context, st *store.Store, id int64) (store.ReactionRoleMenu, []Option, error) {
+	menu, err := st.ReactionRoles.Get(ctx, id)
 	if err != nil {
 		return store.ReactionRoleMenu{}, nil, err
 	}

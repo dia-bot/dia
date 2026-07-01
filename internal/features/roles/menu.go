@@ -70,6 +70,23 @@ func componentEmoji(s string) *discordgo.ComponentEmoji {
 	return &discordgo.ComponentEmoji{Name: s}
 }
 
+// buildMenuMessage assembles a menu's channel message: an embed when the menu
+// has a title, otherwise a plain prompt, plus the option components. Shared by
+// the /reactionroles post command and the dashboard post endpoint.
+func buildMenuMessage(menu store.ReactionRoleMenu, opts []Option) *discordgo.MessageSend {
+	send := &discordgo.MessageSend{Components: buildComponents(menu, opts)}
+	if menu.Title != "" {
+		send.Embeds = []*discordgo.MessageEmbed{{
+			Title:       menu.Title,
+			Description: menuDescription(opts),
+			Color:       0xB244FC,
+		}}
+	} else {
+		send.Content = "Pick your roles:"
+	}
+	return send
+}
+
 // buildComponents renders a menu's options into message components: buttons for
 // small menus (<=5 options) and a string select for larger ones. The custom_ids
 // follow the "rr:" routing convention handled by this package.
