@@ -38,6 +38,9 @@
 		if (gid !== loadedFor) {
 			loadedFor = gid;
 			store.id = gid;
+			// Drop the previous server's snapshot so switching shows the loading
+			// skeleton for the new server, not stale data under the new URL.
+			store.detail = null;
 			store.load();
 			store.connect();
 		}
@@ -91,11 +94,28 @@
 	const pageTitle = $derived(flatPages.find((p) => p.path === currentSeg)?.label ?? 'Overview');
 
 	// A few builder pages want the whole content width (no centered column).
-	const fullWidthPages = ['welcome', 'editor', 'commands', 'automations'];
+	const fullWidthPages = [
+		'welcome',
+		'editor',
+		'commands',
+		'automations',
+		'moderation',
+		'automod',
+		'verification',
+		'logging'
+	];
 	const fullWidth = $derived(fullWidthPages.includes(currentSeg));
 	// And a few want to paint edge-to-edge — no outer px/py wrapper at all.
 	// Used by the dashboard surfaces that draw their own slab topbar / rows.
-	const flushPages = ['welcome', 'commands', 'automations'];
+	const flushPages = [
+		'welcome',
+		'commands',
+		'automations',
+		'moderation',
+		'automod',
+		'verification',
+		'logging'
+	];
 	const flush = $derived(flushPages.includes(currentSeg));
 
 	let paletteOpen = $state(false);
@@ -273,16 +293,30 @@
 					</div>
 				</div>
 			{:else if store.loading && !store.detail}
-				<div class="mx-auto flex max-w-md flex-col items-center gap-3 px-6 py-16 text-center">
-					<div class="flex items-center gap-2">
-						<span class="size-2 animate-pulse rounded-full bg-accent"></span>
-						<span class="font-mono text-[11px] uppercase tracking-[0.14em] text-faint">
-							Loading server…
-						</span>
+				<!-- Instant, structured skeleton: the work surface paints immediately and
+				     shimmers in place of a blocking spinner, so opening / switching a
+				     server always feels immediate rather than a "loading" wait. -->
+				<div class="flex h-full flex-col" aria-busy="true" aria-label="Loading server">
+					<div class="flex h-12 shrink-0 items-center gap-2.5 border-b border-line px-5">
+						<div class="skeleton size-6 rounded"></div>
+						<div class="skeleton h-3 w-24 rounded"></div>
+						<div class="h-3.5 w-px bg-line"></div>
+						<div class="skeleton h-3 w-1/3 max-w-64 rounded"></div>
 					</div>
-					<p class="font-mono text-[11px] text-muted">
-						If this takes more than a few seconds, the API may be down.
-					</p>
+					<div class="flex h-9 shrink-0 items-center gap-5 border-b border-line px-4">
+						{#each Array(4) as _, i (i)}
+							<div class="skeleton h-3 w-16 rounded"></div>
+						{/each}
+					</div>
+					<div class="min-h-0 flex-1 overflow-hidden">
+						{#each Array(3) as _, i (i)}
+							<div class="border-b border-line px-5 py-5">
+								<div class="skeleton h-3 w-28 rounded"></div>
+								<div class="skeleton mt-4 h-10 w-full max-w-xl rounded-lg"></div>
+								<div class="skeleton mt-3 h-10 w-full max-w-md rounded-lg"></div>
+							</div>
+						{/each}
+					</div>
 				</div>
 			{:else}
 				<div

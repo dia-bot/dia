@@ -11,6 +11,7 @@
 	import ChannelPicker from '$lib/components/ChannelPicker.svelte';
 	import ChipInput from './ChipInput.svelte';
 	import DurationField from './DurationField.svelte';
+	import AutomationPicker from '$lib/components/commands/AutomationPicker.svelte';
 
 	let { spec, obj }: { spec: FieldSpec; obj: Record<string, unknown> } = $props();
 
@@ -70,6 +71,8 @@
 				onChange={(v) => setStr(v as string)}
 				placeholder="Select a channel…"
 			/>
+		{:else if spec.type === 'automation'}
+			<AutomationPicker value={str()} onChange={(v) => setStr(v)} />
 		{/if}
 
 		{#if spec.hint}<p class="hint !mt-0">{spec.hint}</p>{/if}

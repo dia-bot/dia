@@ -16,12 +16,17 @@
 	import RolePicker from '$lib/components/RolePicker.svelte';
 	import ChannelPicker from '$lib/components/ChannelPicker.svelte';
 	import ChannelSelect from '$lib/components/ChannelSelect.svelte';
-	import SaveBar from '$lib/components/SaveBar.svelte';
+	import Field from '$lib/components/Field.svelte';
+	import ModerationShell, { type ModTab } from '$lib/components/moderation/ModerationShell.svelte';
+	import ModSection from '$lib/components/moderation/ModSection.svelte';
+	import ModToggleRow from '$lib/components/moderation/ModToggleRow.svelte';
+	import ModLinkRow from '$lib/components/moderation/ModLinkRow.svelte';
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 	import RuleCard from '$lib/components/automod/RuleCard.svelte';
 	import RuleEditor from '$lib/components/automod/RuleEditor.svelte';
 	import TriggerPicker from '$lib/components/automod/TriggerPicker.svelte';
-	import { Plus, ShieldAlert, Zap, ArrowRight, Trash2, Users, Server, Lock } from 'lucide-svelte';
+	import AutomationPicker from '$lib/components/commands/AutomationPicker.svelte';
+	import { Plus, Zap, Trash2, Lock, ShieldAlert, Users, Server, SlidersHorizontal } from 'lucide-svelte';
 
 	const store = getContext<GuildStore>(GUILD_CTX);
 	const FEATURE = 'automod';
@@ -29,33 +34,45 @@
 	let enabled = $state(false);
 	let cfg = $state<AutomodConfig>(defaultConfig());
 	let loaded = $state(false);
+	let loadError = $state('');
 	let saving = $state(false);
 	let baseline = $state('');
 
+	let tab = $state('rules');
 	let editingId = $state<string | null>(null);
 	let pickerOpen = $state(false);
 	let pendingDelete = $state<string | null>(null);
 
 	const dirty = $derived(loaded && JSON.stringify({ enabled, cfg }) !== baseline);
 
-	onMount(async () => {
-		const f = await api.feature(store.id, FEATURE);
-		const d = defaultConfig();
-		const c = (f.config ?? {}) as Partial<AutomodConfig>;
-		cfg = {
-			...d,
-			...c,
-			rules: c.rules ?? d.rules,
-			escalation: { ...d.escalation, ...(c.escalation ?? {}) },
-			raid: { ...d.raid, ...(c.raid ?? {}) },
-			exempt_roles: c.exempt_roles ?? d.exempt_roles,
-			exempt_channels: c.exempt_channels ?? d.exempt_channels
-		};
-		enabled = f.enabled;
-		loaded = true;
-		baseline = JSON.stringify({ enabled, cfg });
-		loadNativeRules();
-	});
+	// Load is retryable: the feature call surfaces real failures (the shell shows a
+	// retry panel). Native Discord AutoMod loads best-effort afterwards and owns its
+	// own error state, so it never blocks the page.
+	async function load() {
+		loadError = '';
+		loaded = false;
+		try {
+			const f = await api.feature(store.id, FEATURE);
+			const d = defaultConfig();
+			const c = (f.config ?? {}) as Partial<AutomodConfig>;
+			cfg = {
+				...d,
+				...c,
+				rules: c.rules ?? d.rules,
+				escalation: { ...d.escalation, ...(c.escalation ?? {}) },
+				raid: { ...d.raid, ...(c.raid ?? {}) },
+				exempt_roles: c.exempt_roles ?? d.exempt_roles,
+				exempt_channels: c.exempt_channels ?? d.exempt_channels
+			};
+			enabled = f.enabled;
+			baseline = JSON.stringify({ enabled, cfg });
+			loaded = true;
+			loadNativeRules();
+		} catch (e) {
+			loadError = e instanceof Error ? e.message : 'Could not load automod.';
+		}
+	}
+	onMount(load);
 
 	// ── Anti-raid ───────────────────────────────────────────────────────────────
 	const raidActionOpts = [
@@ -189,7 +206,8 @@
 	const tierActionOpts = [
 		{ value: 'timeout', label: 'Timeout' },
 		{ value: 'kick', label: 'Kick' },
-		{ value: 'ban', label: 'Ban' }
+		{ value: 'ban', label: 'Ban' },
+		{ value: 'run_automation', label: 'Run automation' }
 	];
 	function addTier() {
 		const last = cfg.escalation.tiers.at(-1);
@@ -202,6 +220,7 @@
 	function setTierAction(t: EscalationTier, v: string) {
 		t.action = v as EscalationTier['action'];
 		if (t.action === 'timeout' && !t.duration) t.duration = 600;
+		if (t.action === 'run_automation' && t.automation === undefined) t.automation = '';
 	}
 
 	// ── Save / reset ────────────────────────────────────────────────────────────
@@ -241,120 +260,67 @@
 		{ token: '{{ .Event.channel_id }}', desc: 'Where it happened' },
 		{ token: '{{ .Event.content }}', desc: 'Offending message (truncated)' }
 	];
+
+	// Subtabs are this page's own sections. Counts and status pips ride along so the
+	// strip doubles as an at-a-glance summary.
+	const tabs = $derived<ModTab[]>([
+		{ key: 'rules', label: 'Rules', icon: ShieldAlert, badge: cfg.rules.length || '' },
+		{ key: 'escalation', label: 'Escalation', icon: Zap, dot: cfg.escalation.enabled },
+		{ key: 'raid', label: 'Anti-raid', icon: Users, dot: cfg.raid.enabled },
+		{ key: 'native', label: 'Discord native', icon: Server, badge: nativeRules.length || '' },
+		{ key: 'settings', label: 'Settings', icon: SlidersHorizontal }
+	]);
 </script>
 
 <svelte:head><title>Automod · {store.name} · Dia</title></svelte:head>
 
-<header class="mb-6 flex items-start justify-between gap-4">
-	<div class="flex items-start gap-3">
-		<span class="mt-0.5 grid size-9 shrink-0 place-items-center rounded-xl border border-line bg-ink-2 text-accent-ink">
-			<ShieldAlert size={18} />
-		</span>
-		<div>
-			<h1 class="text-xl font-semibold tracking-tight text-ink">Automod</h1>
-			<p class="mt-1 max-w-xl text-sm text-muted">
-				Build rule-based filters for content, spam, mentions and members. Each rule pairs a trigger
-				with the actions it should take, and feeds an escalation ladder.
-			</p>
-		</div>
-	</div>
-	<label class="flex shrink-0 items-center gap-2.5 text-sm">
-		<span class="text-muted">{enabled ? 'Enabled' : 'Disabled'}</span>
-		<Toggle bind:checked={enabled} />
-	</label>
-</header>
+<ModerationShell
+	icon={ShieldAlert}
+	title="Automod"
+	blurb="Rule filters, an escalation ladder and anti-raid."
+	bind:enabled
+	ready={loaded}
+	error={loadError}
+	onretry={load}
+	toggleLabel="Automod"
+	{tabs}
+	bind:active={tab}
+	{dirty}
+	{saving}
+	onsave={save}
+	onreset={reset}
+>
+	{#snippet actions()}
+		<a
+			href="/servers/{store.id}/automations"
+			class="hidden items-center gap-1.5 rounded-lg border border-line-strong bg-surface px-2.5 py-1.5 text-[12px] font-medium text-muted transition-colors hover:text-ink sm:inline-flex"
+		>
+			<Zap size={13} class="text-faint" /> Build an automation
+		</a>
+	{/snippet}
 
-{#if !loaded}
-	<div class="space-y-4">
-		<div class="skeleton h-40 w-full rounded-card"></div>
-		<div class="skeleton h-64 w-full rounded-card"></div>
-	</div>
-{:else}
-	<div class="space-y-5">
-		<!-- Global settings -->
-		<section class="card p-5">
-			<div class="eyebrow mb-4">Global settings</div>
-			<div class="grid gap-5 md:grid-cols-2">
-				<div class="flex items-center justify-between gap-4">
-					<div>
-						<div class="text-sm font-medium text-ink">Ignore bots</div>
-						<p class="text-xs text-muted">Never moderate messages from bots.</p>
-					</div>
-					<Toggle bind:checked={cfg.ignore_bots} label="Ignore bots" />
-				</div>
-				<div class="flex items-center justify-between gap-4">
-					<div>
-						<div class="text-sm font-medium text-ink">Ignore moderators</div>
-						<p class="text-xs text-muted">Skip members who can manage messages.</p>
-					</div>
-					<Toggle bind:checked={cfg.ignore_mods} label="Ignore moderators" />
-				</div>
-				<div>
-					<span class="label">Exempt roles</span>
-					<RolePicker
-						multiple
-						value={cfg.exempt_roles}
-						onChange={(v) => (cfg.exempt_roles = v as string[])}
-						placeholder="Add a role…"
-					/>
-					<p class="hint">Members with any of these roles are never moderated.</p>
-				</div>
-				<div>
-					<span class="label">Exempt channels</span>
-					<ChannelPicker
-						multiple
-						value={cfg.exempt_channels}
-						onChange={(v) => (cfg.exempt_channels = v as string[])}
-						placeholder="Add a channel…"
-					/>
-					<p class="hint">Automod stays out of these channels entirely.</p>
-				</div>
-				<div class="md:col-span-2 md:max-w-sm">
-					<span class="label">Alert channel</span>
-					<ChannelSelect bind:value={cfg.alert_channel} />
-					<p class="hint">Optional. A log of every automod hit is posted here.</p>
-				</div>
-			</div>
-		</section>
-
+	{#if tab === 'rules'}
 		<!-- Rules -->
-		<section class="card p-5">
-			<div class="mb-4 flex items-center justify-between gap-4">
-				<div>
-					<div class="eyebrow">Rules</div>
-					<p class="mt-0.5 text-xs text-muted">
-						{cfg.rules.length === 0
-							? 'No rules yet.'
-							: `${cfg.rules.length} rule${cfg.rules.length === 1 ? '' : 's'}, checked top to bottom.`}
-					</p>
-				</div>
+		<ModSection
+			label="Rules"
+			desc={cfg.rules.length === 0 ? 'No rules yet.' : `Checked top to bottom.`}
+			count={cfg.rules.length}
+		>
+			{#snippet actions()}
 				<button
 					type="button"
 					onclick={() => (pickerOpen = true)}
-					class="btn btn-accent h-9 px-3 text-sm"
+					class="inline-flex h-8 items-center gap-1.5 rounded-md border border-line-strong px-2.5 text-[12px] font-medium text-ink transition-colors hover:bg-ink-2"
 				>
-					<Plus size={15} /> Add rule
+					<Plus size={13} /> Add rule
 				</button>
-			</div>
+			{/snippet}
 
 			{#if cfg.rules.length === 0}
-				<div class="rounded-2xl border border-dashed border-line px-6 py-12 text-center">
-					<span class="mx-auto mb-3 grid size-11 place-items-center rounded-xl border border-line bg-ink-2 text-accent-ink">
-						<ShieldAlert size={20} />
-					</span>
-					<h3 class="text-sm font-semibold text-ink">No rules yet</h3>
-					<p class="mx-auto mt-1 max-w-sm text-xs text-muted">
-						Add your first rule to start filtering. Pick a trigger (blocked words, spam, invites,
-						mention floods and more), then choose what happens when it trips.
-					</p>
-					<button
-						type="button"
-						onclick={() => (pickerOpen = true)}
-						class="btn btn-accent mx-auto mt-4 h-9 px-3 text-sm"
-					>
-						<Plus size={15} /> Add a rule
-					</button>
-				</div>
+				<p class="py-10 text-center text-sm text-faint">
+					No rules yet. Add your first rule to start filtering: pick a trigger (blocked words, spam,
+					invites, mention floods and more), then choose what happens when it trips.
+				</p>
 			{:else}
 				<div class="space-y-3">
 					{#each cfg.rules as rule (rule.id)}
@@ -375,23 +341,22 @@
 					{/each}
 				</div>
 			{/if}
-		</section>
-
-		<!-- Escalation -->
-		<section class="card p-5">
-			<div class="mb-4 flex items-center justify-between gap-4">
-				<div>
-					<div class="eyebrow">Escalation ladder</div>
-					<p class="mt-0.5 max-w-lg text-xs text-muted">
-						Rules that add infraction points feed this ladder. As a member's active points cross a
-						tier, the matching punishment fires automatically.
-					</p>
-				</div>
+		</ModSection>
+	{:else if tab === 'escalation'}
+		<!-- Escalation ladder -->
+		<ModSection label="Escalation ladder" desc="Repeat offenders climb a points ladder.">
+			{#snippet actions()}
 				<Toggle bind:checked={cfg.escalation.enabled} label="Escalation enabled" />
-			</div>
+			{/snippet}
+
+			<p class="max-w-2xl text-xs text-muted">
+				Rules that add infraction points feed this ladder. As a member's active points cross a
+				tier, the matching action fires automatically: a timeout, kick, ban, or a full automation
+				flow you build (DM, log, custom branching, and more).
+			</p>
 
 			{#if cfg.escalation.enabled}
-				<div class="mb-5 max-w-xs">
+				<div class="mt-4 max-w-xs">
 					<span class="label">Points decay</span>
 					<div class="flex items-center gap-2">
 						<div class="w-32">
@@ -401,9 +366,9 @@
 					</div>
 				</div>
 
-				<div class="space-y-2">
+				<div class="mt-4">
 					{#each cfg.escalation.tiers as tier, i (i)}
-						<div class="flex flex-wrap items-end gap-3 rounded-xl border border-line bg-ink-2/30 p-3">
+						<div class="flex flex-wrap items-end gap-3 border-b border-line py-3 last:border-b-0">
 							<div>
 								<span class="label !mb-1 text-xs">At points</span>
 								<div class="w-24">
@@ -429,11 +394,24 @@
 										<span class="text-xs text-muted">seconds</span>
 									</div>
 								</div>
+							{:else if tier.action === 'run_automation'}
+								<div class="min-w-[13rem] flex-1">
+									<span class="label !mb-1 text-xs">Automation</span>
+									<AutomationPicker
+										value={tier.automation ?? ''}
+										onChange={(id) => (tier.automation = id)}
+									/>
+									{#if !tier.automation}
+										<p class="mt-1 text-[11px] text-accent-ink">
+											Pick an automation to run at this threshold.
+										</p>
+									{/if}
+								</div>
 							{/if}
 							<button
 								type="button"
 								onclick={() => removeTier(i)}
-								class="ml-auto grid size-9 place-items-center rounded-lg text-faint transition-colors hover:bg-blush hover:text-accent-ink"
+								class="ml-auto grid size-9 place-items-center rounded-lg text-faint transition-colors hover:text-danger"
 								aria-label="Remove tier"
 							>
 								<Trash2 size={15} />
@@ -445,130 +423,115 @@
 				<button
 					type="button"
 					onclick={addTier}
-					class="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-line-strong px-2.5 py-1.5 text-xs font-medium text-ink transition-colors hover:bg-ink-2"
+					class="mt-3 inline-flex items-center gap-1.5 rounded-md border border-line-strong px-2.5 py-1.5 text-xs font-medium text-ink transition-colors hover:bg-ink-2"
 				>
 					<Plus size={13} /> Add tier
 				</button>
 			{:else}
-				<p class="text-xs text-faint">
-					Escalation is off. Rules still run their own actions, but repeat offenders are not punished
-					on a points ladder.
+				<p class="mt-3 text-xs text-faint">
+					Escalation is off. Rules still run their own actions, but repeat offenders are not
+					punished on a points ladder.
 				</p>
 			{/if}
-		</section>
-
+		</ModSection>
+	{:else if tab === 'raid'}
 		<!-- Anti-raid -->
-		<section class="card p-5">
-			<div class="mb-4 flex items-center justify-between gap-4">
-				<div class="flex items-start gap-3">
-					<span class="mt-0.5 grid size-8 shrink-0 place-items-center rounded-lg border border-line bg-ink-2 text-accent-ink">
-						<Users size={16} />
-					</span>
-					<div>
-						<div class="eyebrow">Anti-raid</div>
-						<p class="mt-0.5 max-w-lg text-xs text-muted">
-							Join-velocity guard. When a burst of members arrives faster than your threshold, the
-							server enters raid mode and new joiners are actioned until it calms.
-						</p>
-					</div>
-				</div>
+		<ModSection label="Anti-raid" desc="Clamp down on join floods.">
+			{#snippet actions()}
 				<Toggle bind:checked={cfg.raid.enabled} label="Anti-raid enabled" />
-			</div>
+			{/snippet}
+
+			<p class="max-w-2xl text-xs text-muted">
+				Join-velocity guard. When a burst of members arrives faster than your threshold, the server
+				enters raid mode and new joiners are actioned until it calms.
+			</p>
 
 			{#if cfg.raid.enabled}
-				<div class="space-y-5">
-					<div class="flex flex-wrap items-end gap-2 rounded-xl border border-line bg-ink-2/30 p-3.5 text-sm text-muted">
-						<div>
-							<span class="label !mb-1 text-xs">Trips at</span>
-							<div class="w-24">
-								<NumberField bind:value={cfg.raid.threshold} min={2} max={500} />
-							</div>
+				<div class="mt-4 flex flex-wrap items-end gap-2 text-sm text-muted">
+					<div>
+						<span class="label !mb-1 text-xs">Trips at</span>
+						<div class="w-24">
+							<NumberField bind:value={cfg.raid.threshold} min={2} max={500} />
 						</div>
-						<span class="pb-2.5">joins within</span>
-						<div>
-							<span class="label !mb-1 text-xs">Window</span>
-							<div class="w-24">
-								<NumberField bind:value={cfg.raid.window} min={1} max={600} />
-							</div>
-						</div>
-						<span class="pb-2.5">seconds.</span>
 					</div>
+					<span class="pb-2.5">joins within</span>
+					<div>
+						<span class="label !mb-1 text-xs">Window</span>
+						<div class="w-24">
+							<NumberField bind:value={cfg.raid.window} min={1} max={600} />
+						</div>
+					</div>
+					<span class="pb-2.5">seconds.</span>
+				</div>
 
-					<div class="grid gap-5 md:grid-cols-2">
-						<div>
-							<span class="label">Action on joiners</span>
-							<Select
-								bind:value={() => cfg.raid.action, setRaidAction}
-								options={raidActionOpts}
-							/>
-							<p class="hint">Applied to members who join while raid mode is active.</p>
-						</div>
-						{#if cfg.raid.action === 'timeout'}
-							<div>
-								<span class="label">Timeout duration</span>
-								<div class="flex items-center gap-2">
-									<div class="w-28">
-										<NumberField bind:value={cfg.raid.timeout_seconds} min={1} max={2419200} />
-									</div>
-									<span class="text-xs text-muted">seconds</span>
-								</div>
-							</div>
-						{/if}
-					</div>
-
-					<div class="flex items-start justify-between gap-4 border-t border-line pt-4">
-						<div>
-							<div class="text-sm font-medium text-ink">Only action new accounts</div>
-							<p class="text-xs text-muted">During a raid, spare established accounts and only catch fresh ones.</p>
-						</div>
-						<Toggle bind:checked={cfg.raid.only_new_accounts} label="Only new accounts" />
-					</div>
-					{#if cfg.raid.only_new_accounts}
-						<div class="max-w-xs">
-							<span class="label">New account threshold</span>
+				<div class="mt-5 grid max-w-2xl gap-x-6 sm:grid-cols-2">
+					<Field label="Action on joiners" hint="Applied to members who join while raid mode is active.">
+						<Select
+							bind:value={() => cfg.raid.action, setRaidAction}
+							options={raidActionOpts}
+						/>
+					</Field>
+					{#if cfg.raid.action === 'timeout'}
+						<div class="mb-5">
+							<span class="label">Timeout duration</span>
 							<div class="flex items-center gap-2">
 								<div class="w-28">
-									<NumberField bind:value={cfg.raid.new_account_hours} min={1} max={8760} />
+									<NumberField bind:value={cfg.raid.timeout_seconds} min={1} max={2419200} />
 								</div>
-								<span class="text-xs text-muted">hours old or younger</span>
+								<span class="text-xs text-muted">seconds</span>
 							</div>
 						</div>
 					{/if}
+				</div>
 
-					<div class="md:max-w-sm">
-						<span class="label">Alert channel</span>
-						<ChannelSelect bind:value={cfg.raid.alert_channel} />
-						<p class="hint">Optional. A heads-up is posted here when raid mode trips and lifts.</p>
+				<div class="max-w-2xl border-t border-line">
+					<ModToggleRow
+						title="Only action new accounts"
+						desc="During a raid, spare established accounts and only catch fresh ones."
+						bind:checked={cfg.raid.only_new_accounts}
+						label="Only new accounts"
+					/>
+				</div>
+				{#if cfg.raid.only_new_accounts}
+					<div class="max-w-xs">
+						<span class="label">New account threshold</span>
+						<div class="flex items-center gap-2">
+							<div class="w-28">
+								<NumberField bind:value={cfg.raid.new_account_hours} min={1} max={8760} />
+							</div>
+							<span class="text-xs text-muted">hours old or younger</span>
+						</div>
 					</div>
+				{/if}
+
+				<div class="mt-4 max-w-sm">
+					<Field label="Alert channel" hint="Optional. A heads-up is posted here when raid mode trips and lifts.">
+						<ChannelSelect bind:value={cfg.raid.alert_channel} />
+					</Field>
 				</div>
 			{:else}
-				<p class="text-xs text-faint">
+				<p class="mt-3 text-xs text-faint">
 					Anti-raid is off. Turn it on to automatically clamp down when a flood of accounts joins at
 					once.
 				</p>
 			{/if}
-		</section>
-
+		</ModSection>
+	{:else if tab === 'native'}
 		<!-- Native Discord AutoMod -->
-		<section class="card p-5">
-			<div class="mb-4 flex items-start gap-3">
-				<span class="mt-0.5 grid size-8 shrink-0 place-items-center rounded-lg border border-line bg-ink-2 text-accent-ink">
-					<Server size={16} />
-				</span>
-				<div>
-					<div class="eyebrow">Discord AutoMod (native)</div>
-					<p class="mt-0.5 max-w-xl text-xs text-muted">
-						These rules run on Discord's own servers at zero latency, before a message even reaches
-						the bot. They are separate from Dia's rules above. Use them for the heaviest, always-on
-						blocks; use Dia's rules for everything richer.
-					</p>
-				</div>
-			</div>
+		<ModSection
+			label="Discord AutoMod (native)"
+			desc="Runs on Discord's servers, before the bot sees a message."
+		>
+			<p class="max-w-2xl text-xs text-muted">
+				These rules run on Discord's own servers at zero latency, before a message even reaches the
+				bot. They are separate from Dia's rules above. Use them for the heaviest, always-on blocks;
+				use Dia's rules for everything richer.
+			</p>
 
 			{#if !nativeLoaded}
-				<div class="skeleton h-20 w-full rounded-xl"></div>
+				<div class="skeleton mt-4 h-20 w-full rounded-lg"></div>
 			{:else if nativeError}
-				<div class="flex items-start gap-2.5 rounded-xl border border-line bg-ink-2/40 px-3.5 py-3 text-xs text-muted">
+				<div class="mt-4 flex items-start gap-2.5 text-xs text-muted">
 					<Lock size={14} class="mt-0.5 shrink-0 text-faint" />
 					<div>
 						<span class="font-medium text-ink">Native AutoMod isn't available right now.</span>
@@ -579,9 +542,9 @@
 			{:else}
 				<!-- Existing native rules -->
 				{#if nativeRules.length}
-					<ul class="mb-4 space-y-2">
+					<ul class="mt-4">
 						{#each nativeRules as r (r.id ?? r.name)}
-							<li class="flex items-center justify-between gap-3 rounded-xl border border-line bg-ink-2/30 px-3.5 py-2.5">
+							<li class="flex items-center justify-between gap-3 border-b border-line py-2.5 last:border-b-0">
 								<div class="min-w-0">
 									<div class="flex items-center gap-2">
 										<span class="truncate text-sm font-medium text-ink">{r.name}</span>
@@ -599,7 +562,7 @@
 										type="button"
 										onclick={() => removeNative(r)}
 										disabled={nativeBusy}
-										class="grid size-8 place-items-center rounded-lg text-faint transition-colors hover:bg-blush hover:text-accent-ink disabled:opacity-40"
+										class="grid size-8 place-items-center rounded-lg text-faint transition-colors hover:text-danger disabled:opacity-40"
 										aria-label="Delete native rule"
 									>
 										<Trash2 size={14} />
@@ -609,13 +572,13 @@
 						{/each}
 					</ul>
 				{:else}
-					<p class="mb-4 text-xs text-faint">No native rules yet. Add a preset below.</p>
+					<p class="mt-4 text-xs text-faint">No native rules yet. Add a preset below.</p>
 				{/if}
 
 				<!-- Quick-add presets -->
-				<div class="space-y-3 border-t border-line pt-4">
+				<div class="mt-4 border-t border-line pt-4">
 					<div class="eyebrow">Quick add</div>
-					<div class="flex flex-wrap items-end gap-3 rounded-xl border border-line bg-ink-2/30 p-3.5">
+					<div class="mt-3 flex flex-wrap items-end gap-3">
 						<div>
 							<span class="label !mb-1 text-xs">Max mentions per message</span>
 							<div class="w-24">
@@ -626,60 +589,101 @@
 							type="button"
 							onclick={addMentionSpam}
 							disabled={nativeBusy || !!findNative(5)}
-							class="inline-flex items-center gap-1.5 rounded-lg border border-line-strong px-2.5 py-2 text-xs font-medium text-ink transition-colors hover:bg-ink-2 disabled:opacity-40"
+							class="inline-flex items-center gap-1.5 rounded-md border border-line-strong px-2.5 py-2 text-xs font-medium text-ink transition-colors hover:bg-ink-2 disabled:opacity-40"
 						>
 							<Plus size={13} /> {findNative(5) ? 'Mention block added' : 'Block mention spam'}
 						</button>
+						<button
+							type="button"
+							onclick={addKeywordPreset}
+							disabled={nativeBusy || !!findNative(4)}
+							class="inline-flex items-center gap-1.5 rounded-md border border-line-strong px-2.5 py-2 text-xs font-medium text-ink transition-colors hover:bg-ink-2 disabled:opacity-40"
+						>
+							<Plus size={13} /> {findNative(4) ? 'Profanity preset added' : 'Block profanity & slurs (preset)'}
+						</button>
 					</div>
-					<button
-						type="button"
-						onclick={addKeywordPreset}
-						disabled={nativeBusy || !!findNative(4)}
-						class="inline-flex items-center gap-1.5 rounded-lg border border-line-strong px-2.5 py-2 text-xs font-medium text-ink transition-colors hover:bg-ink-2 disabled:opacity-40"
-					>
-						<Plus size={13} /> {findNative(4) ? 'Profanity preset added' : 'Block profanity & slurs (preset)'}
-					</button>
 				</div>
 			{/if}
-		</section>
-
-		<!-- Automations integration callout -->
-		<section class="rounded-card border border-line bg-ink-2 p-5">
-			<div class="flex items-start gap-3.5">
-				<span class="grid size-9 shrink-0 place-items-center rounded-xl border border-line-strong bg-surface text-accent-ink">
-					<Zap size={18} />
-				</span>
-				<div class="min-w-0 flex-1">
-					<div class="eyebrow">Automations</div>
-					<h3 class="mt-1 text-sm font-semibold text-ink">Every automod hit emits an event</h3>
-					<p class="mt-1 max-w-2xl text-xs leading-relaxed text-muted">
-						Each time a rule trips, automod publishes an event your Automations can react to. Use it
-						to post to a mod channel, notify a role, open a ticket, or anything else, all without
-						touching code. These fields are in scope:
-					</p>
-					<div class="mt-3 flex flex-wrap gap-1.5">
-						{#each eventFields as f (f.token)}
-							<span
-								title={f.desc}
-								class="rounded-md border border-line bg-surface px-1.5 py-1 font-mono text-[11px] text-muted"
-							>
-								{f.token}
-							</span>
-						{/each}
-					</div>
-					<a
-						href="/servers/{store.id}/automations"
-						class="mt-4 inline-flex items-center gap-1.5 rounded-lg border border-line-strong bg-surface px-3 py-2 text-xs font-medium text-ink transition-colors hover:border-faint"
-					>
-						Build an automation <ArrowRight size={14} class="text-accent-ink" />
-					</a>
+		</ModSection>
+	{:else if tab === 'settings'}
+		<!-- Global settings -->
+		<ModSection
+			label="Global settings"
+			desc="Who and where automod skips, plus where hits are logged."
+		>
+			<div class="max-w-2xl">
+				<div class="mb-4">
+					<ModToggleRow
+						title="Ignore bots"
+						desc="Never moderate messages from bots."
+						bind:checked={cfg.ignore_bots}
+						label="Ignore bots"
+						divided
+					/>
+					<ModToggleRow
+						title="Ignore moderators"
+						desc="Skip members who can manage messages."
+						bind:checked={cfg.ignore_mods}
+						label="Ignore moderators"
+						divided
+					/>
+				</div>
+				<div class="grid gap-x-6 sm:grid-cols-2">
+					<Field label="Exempt roles" hint="Members with any of these roles are never moderated.">
+						<RolePicker
+							multiple
+							value={cfg.exempt_roles}
+							onChange={(v) => (cfg.exempt_roles = v as string[])}
+							placeholder="Add a role…"
+						/>
+					</Field>
+					<Field label="Exempt channels" hint="Automod stays out of these channels entirely.">
+						<ChannelPicker
+							multiple
+							value={cfg.exempt_channels}
+							onChange={(v) => (cfg.exempt_channels = v as string[])}
+							placeholder="Add a channel…"
+						/>
+					</Field>
+				</div>
+				<div class="max-w-sm">
+					<Field label="Alert channel" hint="Optional. A log of every automod hit is posted here.">
+						<ChannelSelect bind:value={cfg.alert_channel} />
+					</Field>
 				</div>
 			</div>
+		</ModSection>
+
+		<!-- Automations integration -->
+		<ModSection label="Automations" desc="Every automod hit emits an event you can react to.">
+			<p class="max-w-2xl text-xs text-muted">
+				Each time a rule trips, automod publishes an event your Automations can react to. Use it to
+				post to a mod channel, notify a role, open a ticket, or anything else, all without touching
+				code.
+			</p>
+			<div class="mt-4 flex flex-wrap gap-1.5">
+				{#each eventFields as f (f.token)}
+					<span
+						title={f.desc}
+						class="rounded-md border border-line bg-surface px-1.5 py-1 font-mono text-[11px] text-muted"
+					>
+						{f.token}
+					</span>
+				{/each}
+			</div>
+		</ModSection>
+
+		<section class="border-b border-line">
+			<ModLinkRow
+				href={`/servers/${store.id}/automations`}
+				icon={Zap}
+				title="Build an automation"
+				desc="React to every automod hit on the canvas."
+			/>
 		</section>
-	</div>
+	{/if}
 
-	<SaveBar {dirty} {saving} onsave={save} onreset={reset} />
-
+	<!-- Pickers and dialogs stay mounted across subtabs. -->
 	<TriggerPicker bind:open={pickerOpen} onpick={pickTrigger} />
 
 	<ConfirmDialog
@@ -691,4 +695,4 @@
 		onconfirm={confirmDelete}
 		oncancel={() => (pendingDelete = null)}
 	/>
-{/if}
+</ModerationShell>

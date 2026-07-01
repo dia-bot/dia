@@ -50,7 +50,7 @@
 									class="group flex items-start gap-3 rounded-xl border border-line bg-ink-2/40 p-3 text-left transition-colors hover:border-line-strong hover:bg-ink-2"
 								>
 									<span
-										class="grid size-8 shrink-0 place-items-center rounded-lg border border-line bg-surface text-muted transition-colors group-hover:text-accent-ink"
+										class="grid size-8 shrink-0 place-items-center rounded-lg border border-line bg-surface text-muted transition-colors group-hover:text-ink"
 									>
 										<Icon size={16} />
 									</span>

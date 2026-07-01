@@ -31,11 +31,11 @@
 </script>
 
 <div
-	class="flex items-center gap-3.5 rounded-2xl border bg-surface px-4 py-3.5 transition-colors {editing
-		? 'border-accent/50'
+	class="flex items-center gap-3.5 rounded-xl border bg-surface px-4 py-3.5 transition-colors {editing
+		? 'border-line-strong'
 		: 'border-line hover:border-line-strong'} {rule.enabled ? '' : 'opacity-60'}"
 >
-	<span class="grid size-10 shrink-0 place-items-center rounded-xl border border-line bg-ink-2 text-accent-ink">
+	<span class="grid size-10 shrink-0 place-items-center rounded-lg border border-line bg-ink-2 text-muted">
 		<TIcon size={18} />
 	</span>
 
@@ -88,7 +88,7 @@
 		<button
 			type="button"
 			onclick={ondelete}
-			class="grid size-8 place-items-center rounded-lg text-muted transition-colors hover:bg-blush hover:text-accent-ink"
+			class="grid size-8 place-items-center rounded-lg text-muted transition-colors hover:bg-ink-2 hover:text-danger"
 			aria-label="Delete rule"
 		>
 			<Trash2 size={15} />

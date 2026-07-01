@@ -39,7 +39,7 @@
 >
 	{#each value as w (w)}
 		<span
-			class="inline-flex items-center gap-1 rounded-full bg-blush py-1 pl-2.5 pr-1 text-xs font-medium text-accent-ink"
+			class="inline-flex items-center gap-1 rounded-full border border-line bg-ink-2 py-1 pl-2.5 pr-1 text-xs font-medium text-ink"
 		>
 			<span class="max-w-[14rem] truncate font-mono">{w}</span>
 			<button

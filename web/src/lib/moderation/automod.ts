@@ -40,6 +40,8 @@ export interface RuleAction {
 	channel?: string;
 	delete_after?: number;
 	points?: number;
+	// id of the saved automation launched when type == 'run_automation'.
+	automation_id?: string;
 	reason?: string;
 }
 
@@ -54,8 +56,10 @@ export interface AutomodRule {
 
 export interface EscalationTier {
 	points: number;
-	action: 'timeout' | 'kick' | 'ban';
+	action: 'timeout' | 'kick' | 'ban' | 'run_automation';
 	duration?: number;
+	// id of the saved automation launched when action == 'run_automation'.
+	automation?: string;
 }
 
 export interface Escalation {
@@ -120,7 +124,8 @@ export type ActionKey =
 	| 'remove_role'
 	| 'send_message'
 	| 'dm'
-	| 'add_points';
+	| 'add_points'
+	| 'run_automation';
 
 // A field descriptor drives a generic form control in the rule editor.
 export type FieldType =
@@ -132,7 +137,8 @@ export type FieldType =
 	| 'toggle'
 	| 'role'
 	| 'channel'
-	| 'duration'; // seconds, rendered as a friendly duration control
+	| 'duration' // seconds, rendered as a friendly duration control
+	| 'automation'; // pick a saved automation flow
 
 export interface FieldSpec {
 	key: string; // matches a RuleTrigger / RuleAction json field
@@ -544,6 +550,23 @@ export const ACTIONS: ActionSpec[] = [
 		surface: 'any',
 		fields: [{ key: 'points', label: 'Points', type: 'number', min: 1, max: 20, suffix: 'points' }],
 		defaults: { points: 1 }
+	},
+	{
+		key: 'run_automation',
+		label: 'Run automation',
+		short: 'Launch an automation flow',
+		icon: 'Zap',
+		tone: 'neutral',
+		surface: 'any',
+		fields: [
+			{
+				key: 'automation_id',
+				label: 'Automation',
+				type: 'automation',
+				hint: 'The flow to launch when this rule fires. It gets the offending member as .User and the rule details as .Event.*'
+			}
+		],
+		defaults: {}
 	}
 ];
 

@@ -39,6 +39,8 @@ export function defaultLogging(): LoggingConfig {
 		member_unban: true,
 		role_changes: false,
 		mod_actions: true,
+		message_channel: '',
+		member_channel: '',
 		ignored_channels: []
 	};
 }

@@ -58,10 +58,10 @@
 	}
 </script>
 
-<div class="rounded-2xl border border-line-strong bg-surface">
+<div class="rounded-xl border border-line-strong bg-surface">
 	<!-- header: name + enabled + close -->
 	<div class="flex items-center gap-3 border-b border-line px-4 py-3">
-		<span class="grid size-9 shrink-0 place-items-center rounded-lg border border-line bg-ink-2 text-accent-ink">
+		<span class="grid size-9 shrink-0 place-items-center rounded-lg border border-line bg-ink-2 text-muted">
 			<TIcon size={17} />
 		</span>
 		<div class="min-w-0 flex-1">
@@ -176,7 +176,7 @@
 									<button
 										type="button"
 										onclick={() => removeAction(i)}
-										class="grid size-7 place-items-center rounded-md text-faint transition-colors hover:bg-blush hover:text-accent-ink"
+										class="grid size-7 place-items-center rounded-md text-faint transition-colors hover:bg-ink-2 hover:text-danger"
 										aria-label="Remove action"
 									>
 										<Trash2 size={14} />
