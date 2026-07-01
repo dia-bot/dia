@@ -12,6 +12,7 @@
 	import Toggle from '$lib/components/Toggle.svelte';
 	import ChannelSelect from '$lib/components/ChannelSelect.svelte';
 	import PageTopbar from '$lib/components/page/PageTopbar.svelte';
+	import ReleaseDock from '$lib/components/page/ReleaseDock.svelte';
 	import MessageEditor from '$lib/components/commands/MessageEditor.svelte';
 	import CardStudioModal from '$lib/components/editor/CardStudioModal.svelte';
 	import {
@@ -22,10 +23,7 @@
 		Zap,
 		ExternalLink,
 		Hash,
-		Mail,
-		Loader2,
-		Check,
-		CircleAlert
+		Mail
 	} from 'lucide-svelte';
 
 	const store = getContext<GuildStore>(GUILD_CTX);
@@ -250,7 +248,6 @@
 		return JSON.stringify({ enabled, cfg });
 	}
 	const dirty = $derived(loaded && serialize() !== baseline);
-	const dockVisible = $derived(dirty || savePhase !== 'idle');
 
 	// The two triggers this built-in automation listens on (member_join / member_leave).
 	const TRIGGERS = {
@@ -400,7 +397,7 @@
 <svelte:head><title>Welcome · {store.name} · Dia</title></svelte:head>
 <svelte:window onkeydown={onKeydown} />
 
-<div class="flex h-full flex-col bg-bg text-ink">
+<div class="relative flex h-full flex-col bg-bg text-ink">
 	<!-- ── Slab topbar ──────────────────────────────────────────────────── -->
 	<PageTopbar eyebrow="Welcome" subtitle="Greet members the moment they join, and bid them farewell when they leave.">
 		{#snippet leading()}
@@ -461,7 +458,7 @@
 	</div>
 
 	<!-- ── Body: one live message you edit in place ─────────────────────── -->
-	<div class="relative min-h-0 flex-1 overflow-y-auto bg-bg">
+	<div class="relative min-h-0 flex-1 overflow-y-auto bg-bg pb-20">
 		{#if !loaded}
 			<div class="p-6">
 				<div class="skeleton mb-3 h-6 w-40 rounded"></div>
@@ -547,41 +544,12 @@
 				</div>
 			{/key}
 		{/if}
-
-		<!-- Release dock — the saving experience -->
-		{#if loaded && dockVisible}
-			<div class="pointer-events-none sticky inset-x-0 bottom-4 z-40 flex justify-center px-4" transition:fly={{ y: 14, duration: 180, easing: cubicOut }}>
-				<div
-					class="pointer-events-auto relative flex h-11 items-center gap-2.5 overflow-hidden rounded-[14px] border bg-surface/95 px-3.5 shadow-[0_16px_40px_-12px_rgba(0,0,0,0.7)] backdrop-blur-md {savePhase ===
-					'error'
-						? 'dock-shake border-danger/40'
-						: 'border-line'}"
-				>
-					{#if savePhase === 'saving'}
-						<span class="dock-beam-sweep pointer-events-none absolute inset-y-0 left-0 w-1/3 bg-gradient-to-r from-transparent via-accent/30 to-transparent"></span>
-						<Loader2 size={15} class="animate-spin text-muted" />
-						<span class="text-[12.5px] text-muted">Saving…</span>
-					{:else if savePhase === 'saved'}
-						<span class="grid size-4 place-items-center rounded-full bg-success/15 text-success"><Check size={11} /></span>
-						<span class="text-[12.5px] text-ink">Saved</span>
-					{:else if savePhase === 'error'}
-						<CircleAlert size={15} class="text-danger" />
-						<span class="max-w-[16rem] truncate text-[12.5px] text-ink" title={saveErr}>{saveErr || "Couldn't save"}</span>
-						<button type="button" onclick={save} class="ml-1 inline-flex h-7 items-center rounded-md bg-ink px-2.5 text-[12px] font-medium text-bg transition-opacity hover:opacity-90">Retry</button>
-					{:else}
-						<span class="size-1.5 animate-pulse rounded-full bg-accent"></span>
-						<span class="text-[12.5px] text-muted">Unsaved changes</span>
-						<div class="ml-1 flex items-center gap-1.5">
-							<button type="button" onclick={reset} class="inline-flex h-7 items-center rounded-md border border-line-strong px-2.5 text-[12px] font-medium text-muted transition-colors hover:text-ink">Discard</button>
-							<button type="button" onclick={save} class="inline-flex h-7 items-center gap-1.5 rounded-md bg-ink px-3 text-[12px] font-medium text-bg transition-opacity hover:opacity-90">
-								Save <kbd class="hidden font-mono text-[10px] text-bg/60 sm:inline">⌘S</kbd>
-							</button>
-						</div>
-					{/if}
-				</div>
-			</div>
-		{/if}
 	</div>
+
+	<!-- Release dock — the saving experience -->
+	{#if loaded}
+		<ReleaseDock {dirty} phase={savePhase} error={saveErr} onsave={save} onreset={reset} />
+	{/if}
 
 	{#if studioOpen}
 		<CardStudioModal

@@ -29,7 +29,7 @@
 
 {#if visible}
 	<div
-		class="pointer-events-none sticky inset-x-0 bottom-4 z-40 flex justify-center px-4"
+		class="pointer-events-none absolute inset-x-0 bottom-4 z-40 flex justify-center px-4"
 		transition:fly={{ y: 14, duration: 180, easing: cubicOut }}
 	>
 		<div

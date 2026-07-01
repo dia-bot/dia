@@ -381,7 +381,7 @@
 <svelte:head><title>Leveling · {store.name} · Dia</title></svelte:head>
 <svelte:window onkeydown={onKeydown} />
 
-<div class="flex h-full flex-col bg-bg text-ink">
+<div class="relative flex h-full flex-col bg-bg text-ink">
 	<!-- ── Slab topbar ──────────────────────────────────────────────────── -->
 	<PageTopbar
 		eyebrow="Leveling"
@@ -428,7 +428,7 @@
 	</div>
 
 	<!-- ── Body ─────────────────────────────────────────────────────────── -->
-	<div class="relative min-h-0 flex-1 overflow-y-auto bg-bg">
+	<div class="relative min-h-0 flex-1 overflow-y-auto bg-bg pb-20">
 		{#if !loaded}
 			<div class="p-6">
 				<div class="skeleton mb-3 h-6 w-40 rounded"></div>
@@ -770,12 +770,12 @@
 				</div>
 			{/key}
 		{/if}
-
-		<!-- Release dock — the saving experience -->
-		{#if loaded}
-			<ReleaseDock {dirty} phase={savePhase} error={saveErr} onsave={save} onreset={reset} />
-		{/if}
 	</div>
+
+	<!-- Release dock — the saving experience -->
+	{#if loaded}
+		<ReleaseDock {dirty} phase={savePhase} error={saveErr} onsave={save} onreset={reset} />
+	{/if}
 
 	{#if studioOpen && studioLayout}
 		<CardStudioModal
