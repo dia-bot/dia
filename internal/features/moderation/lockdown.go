@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/dia-bot/dia/internal/cache"
+	"github.com/dia-bot/dia/internal/event"
 	"github.com/dia-bot/dia/internal/interactions"
 	"github.com/dia-bot/dia/internal/plugin"
 	"github.com/dia-bot/dia/pkg/discordgo"
@@ -84,7 +85,11 @@ func handleUnlock(c *interactions.Context, d plugin.Deps) error {
 	gidStr := c.GuildID
 	reason := lockReason(c.Options().String("reason"))
 
-	// Always clear any anti-raid raid mode on unlock.
+	// Always clear any anti-raid raid mode on unlock, announcing the lift to
+	// automations if a raid was actually active.
+	if raidModeActive(c.Ctx, d.Cache, gidStr) {
+		publishEvent(c.Ctx, d, event.TypeRaidAlert, gidStr, event.RaidAlert{GuildID: gidStr, Active: false})
+	}
 	clearRaidMode(c.Ctx, d.Cache, gidStr)
 
 	var snapshot map[string]channelOverwriteSnapshot

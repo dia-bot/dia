@@ -31,16 +31,17 @@ const (
 
 // Action* are the effects a rule can apply when it fires.
 const (
-	ActionDelete      = "delete"
-	ActionWarn        = "warn"
-	ActionTimeout     = "timeout"
-	ActionKick        = "kick"
-	ActionBan         = "ban"
-	ActionAddRole     = "add_role"
-	ActionRemoveRole  = "remove_role"
-	ActionSendMessage = "send_message"
-	ActionDM          = "dm"
-	ActionAddPoints   = "add_points"
+	ActionDelete        = "delete"
+	ActionWarn          = "warn"
+	ActionTimeout       = "timeout"
+	ActionKick          = "kick"
+	ActionBan           = "ban"
+	ActionAddRole       = "add_role"
+	ActionRemoveRole    = "remove_role"
+	ActionSendMessage   = "send_message"
+	ActionDM            = "dm"
+	ActionAddPoints     = "add_points"
+	ActionRunAutomation = "run_automation"
 )
 
 // messageTriggers are screened against message content/metadata.
@@ -60,7 +61,7 @@ var memberTriggers = map[string]bool{
 var knownActions = map[string]bool{
 	ActionDelete: true, ActionWarn: true, ActionTimeout: true, ActionKick: true,
 	ActionBan: true, ActionAddRole: true, ActionRemoveRole: true, ActionSendMessage: true,
-	ActionDM: true, ActionAddPoints: true,
+	ActionDM: true, ActionAddPoints: true, ActionRunAutomation: true,
 }
 
 // IsMessageTrigger reports whether a trigger type screens message content.
@@ -161,8 +162,12 @@ func ValidateAutomod(cfg AutomodConfig) []string {
 		}
 		switch tier.Action {
 		case "timeout", "kick", "ban":
+		case "run_automation":
+			// An empty automation is allowed: the engine simply skips an
+			// unconfigured tier and the editor shows a "pick an automation"
+			// prompt, so a half-set tier never blocks saving the whole config.
 		default:
-			errs = append(errs, fmt.Sprintf("escalation tier %d: action must be timeout, kick or ban", i+1))
+			errs = append(errs, fmt.Sprintf("escalation tier %d: action must be timeout, kick, ban or run automation", i+1))
 		}
 	}
 	return errs

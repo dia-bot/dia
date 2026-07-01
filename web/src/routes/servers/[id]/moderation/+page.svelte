@@ -4,17 +4,21 @@
 	import { GuildStore, GUILD_CTX } from '$lib/guild.svelte';
 	import { api } from '$lib/api';
 	import Field from '$lib/components/Field.svelte';
-	import Toggle from '$lib/components/Toggle.svelte';
 	import ChannelSelect from '$lib/components/ChannelSelect.svelte';
-	import SaveBar from '$lib/components/SaveBar.svelte';
 	import ChipInput from '$lib/components/automod/ChipInput.svelte';
+	import ModerationShell, { type ModTab } from '$lib/components/moderation/ModerationShell.svelte';
+	import ModSection from '$lib/components/moderation/ModSection.svelte';
+	import ModToggleRow from '$lib/components/moderation/ModToggleRow.svelte';
+	import ModLinkRow from '$lib/components/moderation/ModLinkRow.svelte';
 	import { TRIGGERS_BY_KEY, type TriggerKey } from '$lib/moderation/automod';
 
 	import Folder from 'lucide-svelte/icons/folder';
 	import Activity from 'lucide-svelte/icons/activity';
+	import ShieldCheck from 'lucide-svelte/icons/shield-check';
 	import ShieldAlert from 'lucide-svelte/icons/shield-alert';
 	import Flame from 'lucide-svelte/icons/flame';
 	import Search from 'lucide-svelte/icons/search';
+	import SlidersHorizontal from 'lucide-svelte/icons/sliders-horizontal';
 
 	const store = getContext<GuildStore>(GUILD_CTX);
 	const FEATURE = 'moderation';
@@ -72,15 +76,15 @@
 	let enabled = $state(false);
 	let cfg = $state<Cfg>(defaults());
 	let loaded = $state(false);
+	let loadError = $state('');
 	let saving = $state(false);
 	let baseline = $state('');
 
 	let cases = $state<Case[]>([]);
-	let casesLoading = $state(true);
 	let stats = $state<Stats>({ hits_24h: 0, hits_7d: 0, rules: 0, offenders: [] });
 	let infractions = $state<Infraction[]>([]);
 
-	let tab = $state<'cases' | 'heat'>('cases');
+	let tab = $state<'cases' | 'heat' | 'settings'>('cases');
 	let userFilter = $state('');
 
 	const dirty = $derived(loaded && JSON.stringify({ enabled, cfg }) !== baseline);
@@ -94,24 +98,32 @@
 		userFilter.trim() ? cases.filter((c) => c.user_id.includes(userFilter.trim())) : cases
 	);
 
-	onMount(async () => {
-		const [f, c, s, inf] = await Promise.all([
-			api.feature(store.id, FEATURE),
-			api.cases(store.id).catch(() => ({ cases: [] })),
-			api
-				.automodStats(store.id)
-				.catch(() => ({ hits_24h: 0, hits_7d: 0, rules: 0, offenders: [] })),
-			api.infractions(store.id).catch(() => ({ infractions: [] }))
-		]);
-		cfg = { ...defaults(), ...((f.config ?? {}) as Partial<Cfg>) };
-		enabled = f.enabled;
-		cases = (c.cases ?? []) as Case[];
-		stats = s as Stats;
-		infractions = (inf.infractions ?? []) as Infraction[];
-		casesLoading = false;
-		loaded = true;
-		baseline = JSON.stringify({ enabled, cfg });
-	});
+	// Load is retryable: the feature call surfaces real failures (the shell shows a
+	// retry panel), while the dashboard extras degrade to empty rather than block.
+	async function load() {
+		loadError = '';
+		loaded = false;
+		try {
+			const [f, c, s, inf] = await Promise.all([
+				api.feature(store.id, FEATURE),
+				api.cases(store.id).catch(() => ({ cases: [] })),
+				api
+					.automodStats(store.id)
+					.catch(() => ({ hits_24h: 0, hits_7d: 0, rules: 0, offenders: [] })),
+				api.infractions(store.id).catch(() => ({ infractions: [] }))
+			]);
+			cfg = { ...defaults(), ...((f.config ?? {}) as Partial<Cfg>) };
+			enabled = f.enabled;
+			cases = (c.cases ?? []) as Case[];
+			stats = s as Stats;
+			infractions = (inf.infractions ?? []) as Infraction[];
+			baseline = JSON.stringify({ enabled, cfg });
+			loaded = true;
+		} catch (e) {
+			loadError = e instanceof Error ? e.message : 'Could not load moderation data.';
+		}
+	}
+	onMount(load);
 
 	async function save() {
 		saving = true;
@@ -130,22 +142,17 @@
 		cfg = b.cfg;
 	}
 
-	// Action chip styling per type. Single rose/charcoal palette; danger reserved
-	// for destructive actions.
+	// Action chip styling. Near-monochrome: only destructive actions (ban / unban)
+	// carry the rose; everything else is a neutral ink chip. Shares the two tones
+	// the automod rule chips use (see automod/tone.ts) so chips read the same
+	// everywhere.
 	function chipClass(action: string): string {
 		switch ((action ?? '').toLowerCase()) {
 			case 'ban':
 			case 'unban':
-				return 'border-[color-mix(in_srgb,var(--color-danger)_35%,transparent)] bg-[color-mix(in_srgb,var(--color-danger)_18%,transparent)] text-[var(--color-danger)]';
-			case 'kick':
-				return 'border-[color-mix(in_srgb,var(--color-pink)_35%,transparent)] bg-[color-mix(in_srgb,var(--color-pink)_15%,transparent)] text-[var(--color-pink)]';
-			case 'timeout':
-			case 'mute':
-				return 'border-line-strong bg-blush text-accent-ink';
-			case 'warn':
-				return 'border-line-strong bg-ink-2 text-ink';
+				return 'border-accent/30 bg-blush text-accent-ink';
 			default:
-				return 'border-line-strong bg-surface text-muted';
+				return 'border-line bg-ink-2 text-muted';
 		}
 	}
 
@@ -182,265 +189,289 @@
 	}
 
 	const numFmt = new Intl.NumberFormat();
+
+	const stat = $derived([
+		{
+			icon: Folder,
+			label: 'Total cases',
+			value: numFmt.format(totalCases),
+			sub: `${numFmt.format(activeCases)} still active`
+		},
+		{
+			icon: Activity,
+			label: 'Automod · 24h',
+			value: numFmt.format(stats.hits_24h),
+			sub: `${numFmt.format(stats.hits_7d)} in the last 7 days`
+		},
+		{
+			icon: ShieldAlert,
+			label: 'Active rules',
+			value: numFmt.format(stats.rules),
+			sub: 'filtering content'
+		},
+		{
+			icon: Flame,
+			label: 'Offenders',
+			value: numFmt.format(stats.offenders.length),
+			sub: 'carrying active heat'
+		}
+	]);
+
+	// Subtabs are this page's own sections (not the sidebar's modules). Counts ride
+	// along so the strip doubles as an at-a-glance summary.
+	const tabs = $derived<ModTab[]>([
+		{ key: 'cases', label: 'Cases', icon: Folder, badge: totalCases || '' },
+		{ key: 'heat', label: 'Automod heat', icon: Flame, badge: stats.offenders.length || '' },
+		{ key: 'settings', label: 'Settings', icon: SlidersHorizontal }
+	]);
 </script>
 
 <svelte:head><title>Moderation · {store.name} · Dia</title></svelte:head>
 
-<header class="mb-6 flex items-start justify-between gap-4">
-	<div>
-		<h1 class="text-2xl font-bold tracking-tight">Moderation</h1>
-		<p class="mt-1 text-muted">
-			Log moderation actions, review your case history, and watch automod heat.
-		</p>
-	</div>
-	<Toggle bind:checked={enabled} />
-</header>
+<ModerationShell
+	icon={ShieldCheck}
+	title="Moderation"
+	blurb="Cases, mod-action logging and live automod heat."
+	bind:enabled
+	ready={loaded}
+	error={loadError}
+	onretry={load}
+	toggleLabel="Moderation logging"
+	{tabs}
+	bind:active={tab}
+	{dirty}
+	{saving}
+	onsave={save}
+	onreset={reset}
+>
+	{#snippet skeleton()}
+		<div class="grid grid-cols-2 gap-px border-b border-line bg-line lg:grid-cols-4">
+			{#each Array(4) as _, i (i)}
+				<div class="bg-bg px-4 py-4 sm:px-5">
+					<div class="skeleton h-3 w-20 rounded"></div>
+					<div class="skeleton mt-3 h-7 w-16 rounded"></div>
+					<div class="skeleton mt-2.5 h-3 w-24 rounded"></div>
+				</div>
+			{/each}
+		</div>
+		<div class="px-4 py-5 sm:px-5">
+			<div class="skeleton h-9 w-52 rounded-lg"></div>
+			<div class="skeleton mt-4 h-64 w-full rounded-lg"></div>
+		</div>
+	{/snippet}
 
-{#if !loaded}
-	<div class="text-muted">Loading…</div>
-{:else}
-	<div class="space-y-5">
-		<!-- Stats row -->
-		<section class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-			<div class="card p-4">
-				<div class="flex items-center gap-2 font-mono text-[11px] uppercase tracking-wide text-muted">
-					<Folder size={13} class="text-accent-ink" /> Total cases
-				</div>
-				<div class="mt-2 text-2xl font-bold tabular-nums">{numFmt.format(totalCases)}</div>
-				<div class="mt-0.5 text-xs text-faint">{numFmt.format(activeCases)} still active</div>
-			</div>
-			<div class="card p-4">
-				<div class="flex items-center gap-2 font-mono text-[11px] uppercase tracking-wide text-muted">
-					<Activity size={13} class="text-accent-ink" /> Automod · 24h
-				</div>
-				<div class="mt-2 text-2xl font-bold tabular-nums">{numFmt.format(stats.hits_24h)}</div>
-				<div class="mt-0.5 text-xs text-faint">{numFmt.format(stats.hits_7d)} in the last 7 days</div>
-			</div>
-			<div class="card p-4">
-				<div class="flex items-center gap-2 font-mono text-[11px] uppercase tracking-wide text-muted">
-					<ShieldAlert size={13} class="text-accent-ink" /> Active rules
-				</div>
-				<div class="mt-2 text-2xl font-bold tabular-nums">{numFmt.format(stats.rules)}</div>
-				<div class="mt-0.5 text-xs text-faint">
-					<a class="text-accent-ink hover:underline" href={`/servers/${store.id}/automod`}>Edit automod</a>
-				</div>
-			</div>
-			<div class="card p-4">
-				<div class="flex items-center gap-2 font-mono text-[11px] uppercase tracking-wide text-muted">
-					<Flame size={13} class="text-accent-ink" /> Offenders
-				</div>
-				<div class="mt-2 text-2xl font-bold tabular-nums">{numFmt.format(stats.offenders.length)}</div>
-				<div class="mt-0.5 text-xs text-faint">carrying active heat</div>
-			</div>
-		</section>
-
-		<!-- Settings -->
-		<section class="card p-4 sm:p-6">
-			<h2 class="mb-4 text-base font-semibold">Settings</h2>
-			<Field
-				label="Moderation log channel"
-				hint="Use /ban /kick /timeout /warn in your server — actions are logged here."
-			>
-				<ChannelSelect bind:value={cfg.log_channel} />
-			</Field>
-			<label class="flex items-center gap-3">
-				<Toggle bind:checked={cfg.dm_on_action} />
-				<span class="text-sm">DM users when they're actioned</span>
-			</label>
-
-			<div class="mt-6 border-t border-line pt-5">
-				<Field
-					label="Reason templates"
-					hint="These power the reason autocomplete on /ban, /kick, /timeout and /warn. Type a reason and press Enter to add it."
+	<!-- ── Persistent stat strip: a summary that rides above every subtab ── -->
+	<section class="grid grid-cols-2 gap-px border-b border-line bg-line lg:grid-cols-4">
+		{#each stat as s (s.label)}
+			{@const Icon = s.icon}
+			<div class="bg-bg px-4 py-4 sm:px-5">
+				<div
+					class="flex items-center gap-1.5 font-mono text-[10px] font-medium uppercase tracking-[0.12em] text-faint"
 				>
-					<ChipInput bind:value={cfg.reason_templates} placeholder="e.g. Spamming in chat" />
-				</Field>
+					<Icon size={12} class="text-faint" />
+					{s.label}
+				</div>
+				<div class="mt-2 text-[26px] font-semibold leading-none tabular-nums text-ink">
+					{s.value}
+				</div>
+				<div class="mt-1.5 text-[11.5px] text-muted">{s.sub}</div>
 			</div>
-		</section>
+		{/each}
+	</section>
 
-		<!-- Tabs: cases / heat -->
-		<section class="card overflow-hidden">
-			<div class="flex items-center gap-1 border-b border-line px-4 pt-3">
-				<button
-					class="-mb-px border-b-2 px-3 py-2 text-sm font-medium transition {tab === 'cases'
-						? 'border-accent text-ink'
-						: 'border-transparent text-muted hover:text-ink'}"
-					onclick={() => (tab = 'cases')}
-				>
-					Cases
-				</button>
-				<button
-					class="-mb-px border-b-2 px-3 py-2 text-sm font-medium transition {tab === 'heat'
-						? 'border-accent text-ink'
-						: 'border-transparent text-muted hover:text-ink'}"
-					onclick={() => (tab = 'heat')}
-				>
-					Automod heat
-				</button>
+	{#if tab === 'cases'}
+		<!-- ── Cases ── -->
+		<section class="border-b border-line">
+			<div class="flex flex-wrap items-center gap-x-3 gap-y-2 px-4 pt-3.5 sm:px-5">
+				<span class="font-mono text-[10px] font-medium uppercase tracking-[0.14em] text-faint">
+					Recent cases
+				</span>
+				<label class="relative ml-auto inline-flex items-center">
+					<Search size={14} class="pointer-events-none absolute left-2.5 text-faint" />
+					<input
+						type="text"
+						inputmode="numeric"
+						bind:value={userFilter}
+						placeholder="Filter by user ID"
+						class="w-44 rounded-lg border border-line bg-ink-2 py-1.5 pl-8 pr-3 text-[13px] text-ink placeholder:text-faint focus:border-line-strong focus:outline-none sm:w-52"
+					/>
+				</label>
 			</div>
 
-			{#if tab === 'cases'}
-				<div class="p-4 sm:p-6">
-					<div class="mb-4 flex flex-wrap items-center justify-between gap-3">
-						<h3 class="text-sm font-semibold">Recent cases</h3>
-						<label class="relative inline-flex items-center">
-							<Search size={14} class="pointer-events-none absolute left-2.5 text-faint" />
-							<input
-								type="text"
-								inputmode="numeric"
-								bind:value={userFilter}
-								placeholder="Filter by user ID"
-								class="w-52 rounded-lg border border-line bg-surface py-1.5 pl-8 pr-3 text-sm text-ink placeholder:text-faint focus:border-line-strong focus:outline-none"
-							/>
-						</label>
+			<div class="pt-3">
+				{#if cases.length === 0}
+					<div class="px-4 py-12 text-center text-sm text-faint sm:px-5">
+						No cases yet. Moderation actions taken in your server will appear here.
 					</div>
-
-					{#if casesLoading}
-						<div class="text-sm text-muted">Loading cases…</div>
-					{:else if cases.length === 0}
-						<div
-							class="rounded-xl border border-dashed border-line-strong px-4 py-10 text-center text-sm text-faint"
-						>
-							No cases yet. Moderation actions taken in your server will appear here.
-						</div>
-					{:else if filteredCases.length === 0}
-						<div
-							class="rounded-xl border border-dashed border-line-strong px-4 py-10 text-center text-sm text-faint"
-						>
-							No cases for user <code class="text-accent-ink">{userFilter}</code>.
-						</div>
-					{:else}
-						<div class="overflow-x-auto rounded-xl border border-line">
-							<table class="w-full text-sm">
-								<thead>
-									<tr
-										class="border-b border-line bg-ink-2 text-left text-xs uppercase tracking-wide text-muted"
-									>
-										<th class="px-3 py-2 font-medium">Case</th>
-										<th class="px-3 py-2 font-medium">Action</th>
-										<th class="px-3 py-2 font-medium">User</th>
-										<th class="px-3 py-2 font-medium">Moderator</th>
-										<th class="px-3 py-2 font-medium">Reason</th>
-										<th class="px-3 py-2 font-medium">When</th>
-									</tr>
-								</thead>
-								<tbody>
-									{#each filteredCases as c (c.case)}
-										<tr class="border-b border-line align-top last:border-b-0">
-											<td class="px-3 py-2.5 font-medium tabular-nums text-muted">#{c.case}</td>
-											<td class="px-3 py-2.5">
-												<span
-													class="inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs font-medium capitalize {chipClass(
-														c.action
-													)}"
-												>
-													{c.action}
-													{#if c.active}
-														<span
-															class="inline-block h-1.5 w-1.5 rounded-full bg-current opacity-70"
-															title="Active"
-														></span>
-													{/if}
-												</span>
-											</td>
-											<td class="px-3 py-2.5"><code class="text-accent-ink">&lt;@{c.user_id}&gt;</code></td>
-											<td class="px-3 py-2.5"><code class="text-muted">&lt;@{c.moderator_id}&gt;</code></td>
-											<td class="max-w-[18rem] px-3 py-2.5">
-												<span class="text-ink">{c.reason || '—'}</span>
-											</td>
-											<td class="whitespace-nowrap px-3 py-2.5 text-faint">
-												{relTime(c.created_at)}
-												{#if c.active && c.expires_at}
-													<div class="text-[11px] text-faint">expires {fmtDate(c.expires_at)}</div>
+				{:else if filteredCases.length === 0}
+					<div class="px-4 py-12 text-center text-sm text-faint sm:px-5">
+						No cases for user <code class="text-accent-ink">{userFilter}</code>.
+					</div>
+				{:else}
+					<div class="overflow-x-auto">
+						<table class="w-full text-[13px]">
+							<thead>
+								<tr
+									class="border-y border-line bg-ink-2 text-left font-mono text-[10px] uppercase tracking-wide text-faint"
+								>
+									<th class="px-4 py-2 font-medium sm:px-5">Case</th>
+									<th class="px-3 py-2 font-medium">Action</th>
+									<th class="px-3 py-2 font-medium">User</th>
+									<th class="hidden px-3 py-2 font-medium md:table-cell">Moderator</th>
+									<th class="px-3 py-2 font-medium">Reason</th>
+									<th class="px-4 py-2 font-medium sm:px-5">When</th>
+								</tr>
+							</thead>
+							<tbody>
+								{#each filteredCases as c (c.case)}
+									<tr class="border-b border-line align-top last:border-b-0 hover:bg-ink-2/40">
+										<td class="px-4 py-2.5 font-medium tabular-nums text-muted sm:px-5">#{c.case}</td>
+										<td class="px-3 py-2.5">
+											<span
+												class="inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-[11px] font-medium capitalize {chipClass(
+													c.action
+												)}"
+											>
+												{c.action}
+												{#if c.active}
+													<span
+														class="inline-block size-1.5 rounded-full bg-current opacity-70"
+														title="Active"
+													></span>
 												{/if}
-											</td>
-										</tr>
-									{/each}
-								</tbody>
-							</table>
-						</div>
+											</span>
+										</td>
+										<td class="px-3 py-2.5"
+											><code class="text-accent-ink">&lt;@{c.user_id}&gt;</code></td
+										>
+										<td class="hidden px-3 py-2.5 md:table-cell"
+											><code class="text-muted">&lt;@{c.moderator_id}&gt;</code></td
+										>
+										<td class="max-w-[22rem] px-3 py-2.5">
+											<span class="text-ink">{c.reason || '—'}</span>
+										</td>
+										<td class="whitespace-nowrap px-4 py-2.5 text-faint sm:px-5">
+											{relTime(c.created_at)}
+											{#if c.active && c.expires_at}
+												<div class="text-[11px] text-faint">expires {fmtDate(c.expires_at)}</div>
+											{/if}
+										</td>
+									</tr>
+								{/each}
+							</tbody>
+						</table>
+					</div>
+				{/if}
+			</div>
+		</section>
+	{:else if tab === 'heat'}
+		<!-- ── Automod heat ── -->
+		<section class="border-b border-line">
+			<div class="grid lg:grid-cols-2 lg:divide-x lg:divide-line">
+				<!-- Leaderboard -->
+				<div class="px-4 py-4 sm:px-5">
+					<div class="eyebrow mb-3">Top offenders</div>
+					{#if stats.offenders.length === 0}
+						<p class="py-6 text-sm text-faint">
+							No active automod heat. Repeat offenders climb the escalation ladder here.
+						</p>
+					{:else}
+						<ol>
+							{#each stats.offenders as o, i (o.user_id)}
+								<li class="flex items-center gap-3 border-b border-line py-2.5 last:border-b-0">
+									<span
+										class="grid size-6 shrink-0 place-items-center rounded-full bg-ink-2 font-mono text-xs font-semibold text-muted"
+									>
+										{i + 1}
+									</span>
+									<div class="min-w-0 flex-1">
+										<code class="text-accent-ink">&lt;@{o.user_id}&gt;</code>
+										<div class="text-[11px] text-faint">
+											{o.hits} hit{o.hits === 1 ? '' : 's'} · last {relTime(o.last_at)}
+										</div>
+									</div>
+									<span
+										class="shrink-0 rounded-md border border-line-strong bg-ink-2 px-2 py-0.5 font-mono text-xs font-semibold tabular-nums text-muted"
+									>
+										{numFmt.format(o.total_points)} pts
+									</span>
+								</li>
+							{/each}
+						</ol>
 					{/if}
 				</div>
-			{:else}
-				<div class="grid gap-6 p-4 sm:p-6 lg:grid-cols-2">
-					<!-- Leaderboard -->
-					<div>
-						<h3 class="mb-3 text-sm font-semibold">Top offenders</h3>
-						{#if stats.offenders.length === 0}
-							<div
-								class="rounded-xl border border-dashed border-line-strong px-4 py-10 text-center text-sm text-faint"
-							>
-								No active automod heat. Repeat offenders climb the escalation ladder here.
-							</div>
-						{:else}
-							<ol class="overflow-hidden rounded-xl border border-line">
-								{#each stats.offenders as o, i (o.user_id)}
-									<li class="flex items-center gap-3 border-b border-line px-3 py-2.5 last:border-b-0">
-										<span
-											class="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-ink-2 font-mono text-xs font-semibold text-muted"
-										>
-											{i + 1}
-										</span>
-										<div class="min-w-0 flex-1">
-											<code class="text-accent-ink">&lt;@{o.user_id}&gt;</code>
-											<div class="text-[11px] text-faint">
-												{o.hits} hit{o.hits === 1 ? '' : 's'} · last {relTime(o.last_at)}
-											</div>
-										</div>
-										<span
-											class="shrink-0 rounded-full border border-line-strong bg-blush px-2 py-0.5 font-mono text-xs font-semibold text-accent-ink"
-										>
-											{numFmt.format(o.total_points)} pts
-										</span>
-									</li>
-								{/each}
-							</ol>
-						{/if}
-					</div>
 
-					<!-- Recent automod actions -->
-					<div>
-						<h3 class="mb-3 text-sm font-semibold">Recent automod actions</h3>
-						{#if infractions.length === 0}
-							<div
-								class="rounded-xl border border-dashed border-line-strong px-4 py-10 text-center text-sm text-faint"
-							>
-								No automod actions recorded yet.
-							</div>
-						{:else}
-							<ul class="overflow-hidden rounded-xl border border-line">
-								{#each infractions as inf, i (inf.created_at + i)}
-									<li class="border-b border-line px-3 py-2.5 last:border-b-0">
-										<div class="flex items-center justify-between gap-2">
-											<span
-												class="inline-flex items-center gap-1.5 rounded-full border border-line-strong bg-ink-2 px-2 py-0.5 text-xs font-medium text-ink"
-											>
-												{triggerLabel(inf.trigger_type)}
-											</span>
-											<span class="whitespace-nowrap font-mono text-[11px] text-faint">
-												{relTime(inf.created_at)}
-											</span>
-										</div>
-										<div class="mt-1.5 flex items-center justify-between gap-2 text-sm">
-											<code class="text-accent-ink">&lt;@{inf.user_id}&gt;</code>
-											{#if inf.points > 0}
-												<span class="font-mono text-[11px] text-muted">+{inf.points} pts</span>
-											{/if}
-										</div>
-										{#if inf.reason || inf.rule_name}
-											<div class="mt-0.5 text-xs text-muted">
-												{inf.reason || inf.rule_name}
-											</div>
+				<!-- Recent automod actions -->
+				<div class="border-t border-line px-4 py-4 sm:px-5 lg:border-t-0">
+					<div class="eyebrow mb-3">Recent automod actions</div>
+					{#if infractions.length === 0}
+						<p class="py-6 text-sm text-faint">No automod actions recorded yet.</p>
+					{:else}
+						<ul>
+							{#each infractions as inf, i (inf.created_at + i)}
+								<li class="border-b border-line py-2.5 last:border-b-0">
+									<div class="flex items-center justify-between gap-2">
+										<span
+											class="inline-flex items-center gap-1.5 rounded-md border border-line-strong bg-ink-2 px-2 py-0.5 text-[11px] font-medium text-ink"
+										>
+											{triggerLabel(inf.trigger_type)}
+										</span>
+										<span class="whitespace-nowrap font-mono text-[11px] text-faint">
+											{relTime(inf.created_at)}
+										</span>
+									</div>
+									<div class="mt-1.5 flex items-center justify-between gap-2 text-sm">
+										<code class="text-accent-ink">&lt;@{inf.user_id}&gt;</code>
+										{#if inf.points > 0}
+											<span class="font-mono text-[11px] text-muted">+{inf.points} pts</span>
 										{/if}
-									</li>
-								{/each}
-							</ul>
-						{/if}
-					</div>
+									</div>
+									{#if inf.reason || inf.rule_name}
+										<div class="mt-0.5 text-xs text-muted">
+											{inf.reason || inf.rule_name}
+										</div>
+									{/if}
+								</li>
+							{/each}
+						</ul>
+					{/if}
 				</div>
-			{/if}
+			</div>
 		</section>
-	</div>
+	{:else}
+		<!-- ── Settings ── -->
+		<ModSection label="Settings" desc="Logging and reason autocomplete for /ban, /kick, /timeout, /warn.">
+			<div class="max-w-xl">
+				<Field
+					label="Moderation log channel"
+					hint="Use /ban /kick /timeout /warn in your server — actions are logged here."
+				>
+					<ChannelSelect bind:value={cfg.log_channel} />
+				</Field>
+				<ModToggleRow
+					title="DM users when they're actioned"
+					desc="Send the member a copy of the reason when a case is opened against them."
+					bind:checked={cfg.dm_on_action}
+					label="DM on action"
+				/>
+				<div class="mt-4 border-t border-line pt-5">
+					<Field
+						label="Reason templates"
+						hint="Power the reason autocomplete on /ban, /kick, /timeout and /warn. Type a reason and press Enter to add it."
+					>
+						<ChipInput bind:value={cfg.reason_templates} placeholder="e.g. Spamming in chat" />
+					</Field>
+				</div>
+			</div>
+		</ModSection>
 
-	<SaveBar {dirty} {saving} onsave={save} onreset={reset} />
-{/if}
+		<section class="border-b border-line">
+			<ModLinkRow
+				href={`/servers/${store.id}/automod`}
+				icon={ShieldAlert}
+				title="Tune automod rules"
+				desc="Filters, the escalation ladder and anti-raid."
+			/>
+		</section>
+	{/if}
+</ModerationShell>

@@ -165,6 +165,21 @@ func applyActions(ctx context.Context, d plugin.Deps, h hitContext) (applied []s
 				points += a.Points
 				applied = append(applied, ActionAddPoints)
 			}
+
+		case ActionRunAutomation:
+			// Launch a flow by id, with the same .Event scope the "automod_action"
+			// trigger exposes, so a rule can hand off to any automation.
+			if runAutomationByID(ctx, d, h, a.AutomationID, "automod_rule", map[string]any{
+				"rule_id":      h.Rule.ID,
+				"rule_name":    h.Rule.Name,
+				"trigger_type": h.Trigger.Type,
+				"reason":       h.Reason,
+				"content":      truncate(h.Content, 300),
+				"message_id":   h.MessageID,
+				"channel_id":   h.ChannelID,
+			}) {
+				applied = append(applied, ActionRunAutomation)
+			}
 		}
 	}
 	return applied, points

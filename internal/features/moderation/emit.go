@@ -71,6 +71,28 @@ func publishAutomodEvent(ctx context.Context, d plugin.Deps, h hitContext, res e
 	}
 }
 
+// publishEvent marshals payload into an Envelope and publishes it on the worker
+// event stream (the same path as AUTOMOD_ACTION) so the automations runtime can
+// trigger flows off it. gid is the decimal guild id string. Best-effort.
+func publishEvent(ctx context.Context, d plugin.Deps, t event.Type, gid string, payload any) {
+	if d.Bus == nil {
+		return
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		d.Log.Warn("moderation: marshal event payload failed", "type", t, "err", err)
+		return
+	}
+	envBytes, err := json.Marshal(event.Envelope{Type: t, GuildID: gid, TS: time.Now().UnixMilli(), Data: data})
+	if err != nil {
+		d.Log.Warn("moderation: marshal envelope failed", "type", t, "err", err)
+		return
+	}
+	if err := d.Bus.Publish(ctx, event.Subject(t, gid), envBytes, ""); err != nil {
+		d.Log.Warn("moderation: publish failed", "type", t, "err", err)
+	}
+}
+
 // postAutomodLog posts the automod embed: to AlertChannel if configured, else to
 // the moderation log channel.
 func postAutomodLog(d plugin.Deps, h hitContext, automodCfg AutomodConfig, res emitResult) {

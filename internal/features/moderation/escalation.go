@@ -2,10 +2,14 @@ package moderation
 
 import (
 	"context"
+	"encoding/json"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/dia-bot/dia/internal/event"
+	runner "github.com/dia-bot/dia/internal/features/automations/runner"
+	cc "github.com/dia-bot/dia/internal/features/customcommands"
 	"github.com/dia-bot/dia/internal/plugin"
 	"github.com/dia-bot/dia/internal/store"
 )
@@ -79,16 +83,19 @@ func escalate(ctx context.Context, d plugin.Deps, h hitContext, esc Escalation, 
 		return "", totalAfter
 	}
 
-	applyEscalationTier(ctx, d, h, *crossed)
+	applyEscalationTier(ctx, d, h, *crossed, totalAfter, pointsThisHit)
 	return crossed.Action, totalAfter
 }
 
 // applyEscalationTier performs the heavier cross-rule action and records its
-// case (moderator_id 0 = automod escalation).
-func applyEscalationTier(ctx context.Context, d plugin.Deps, h hitContext, tier EscalationTier) {
+// case (moderator_id 0 = automod escalation). total/pointsThisHit are the user's
+// active total and this hit's points, exposed to a run_automation tier's flow.
+func applyEscalationTier(ctx context.Context, d plugin.Deps, h hitContext, tier EscalationTier, total, pointsThisHit int) {
 	guildID := event.FormatID(h.GuildID)
 	reason := "[Automod] Escalation threshold reached (" + h.Rule.Name + ")"
 	switch tier.Action {
+	case "run_automation":
+		runEscalationAutomation(ctx, d, h, tier, total, pointsThisHit)
 	case "timeout":
 		secs := tier.Duration
 		if secs <= 0 {
@@ -113,4 +120,83 @@ func applyEscalationTier(ctx context.Context, d plugin.Deps, h hitContext, tier 
 		}
 		recordCase(ctx, d, h, "ban", reason, 0, nil)
 	}
+}
+
+// runEscalationAutomation launches the tier's chosen automation flow as a durable
+// run when a member crosses a run_automation tier. The scope mirrors the
+// automod_action automation trigger (same .User / .Member / .Event vars) so a flow
+// authored for "Automod action taken" behaves identically when wired to a tier.
+// The flow itself owns whatever it does (DM, log, role, even a punishment step),
+// so no moderation case is recorded here.
+func runEscalationAutomation(ctx context.Context, d plugin.Deps, h hitContext, tier EscalationTier, total, pointsThisHit int) {
+	runAutomationByID(ctx, d, h, tier.Automation, "automod_escalation", map[string]any{
+		"rule_id":      h.Rule.ID,
+		"rule_name":    h.Rule.Name,
+		"trigger_type": h.Trigger.Type,
+		"reason":       h.Reason,
+		"points":       pointsThisHit,
+		"total_points": total,
+		"tier_points":  tier.Points,
+		"escalated":    tier.Action,
+		"content":      truncate(h.Content, 300),
+		"message_id":   h.MessageID,
+		"channel_id":   h.ChannelID,
+	})
+}
+
+// runAutomationByID launches a saved automation as a durable run, building the
+// scope (.User / .Member / .Guild / .Channel + the given .Event map) exactly as
+// the automations runtime does so a flow behaves identically whether it's wired
+// to a trigger or launched here. Shared by escalation tiers and the rule
+// "run_automation" action. Returns true if a run was started.
+func runAutomationByID(ctx context.Context, d plugin.Deps, h hitContext, automationID, triggerKind string, eventMap map[string]any) bool {
+	id := strings.TrimSpace(automationID)
+	if id == "" {
+		return false
+	}
+	auto, err := d.Store.Automations.Get(ctx, h.GuildID, id)
+	if err != nil {
+		d.Log.Warn("automod: automation lookup failed", "automation", id, "err", err)
+		return false
+	}
+	if !auto.Enabled {
+		return false
+	}
+	var def cc.Definition
+	if err := json.Unmarshal(auto.Definition, &def); err != nil {
+		d.Log.Warn("automod: automation decode failed", "automation", id, "err", err)
+		return false
+	}
+
+	guildID := event.FormatID(h.GuildID)
+	guildCtx := cc.ContextGuild{ID: guildID, Name: h.GuildName}
+	ctxVars := cc.BuildContext(guildID, h.ChannelID, h.User, h.Member, guildCtx, time.Now().UnixMilli())
+	scope := cc.NewScope(d.GuildState, guildID, ctxVars, nil, automationVarDefaults(&def))
+	scope.SetEvent(eventMap)
+	runner.New(d).Start(ctx, runner.Meta{
+		AutomationID: auto.ID,
+		Version:      auto.Version,
+		GuildID:      guildID,
+		InvokerID:    h.User.ID,
+		ActorID:      h.User.ID,
+		ChannelID:    h.ChannelID,
+		TriggerKind:  triggerKind,
+	}, def, scope)
+	return true
+}
+
+// automationVarDefaults seeds the flow's declared-variable defaults into the run,
+// mirroring the automations runtime (runtime.defaultVars) so a flow launched from
+// a tier behaves exactly as it would under a real "Automod action taken" trigger.
+func automationVarDefaults(def *cc.Definition) map[string]any {
+	out := map[string]any{}
+	for _, v := range def.Variables {
+		if len(v.Default) == 0 {
+			continue
+		}
+		var val any
+		_ = json.Unmarshal(v.Default, &val)
+		out[v.Name] = val
+	}
+	return out
 }

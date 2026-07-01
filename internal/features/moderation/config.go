@@ -204,6 +204,8 @@ type RuleAction struct {
 
 	Points int `json:"points,omitempty"` // add_points
 
+	AutomationID string `json:"automation_id,omitempty"` // run_automation: flow to launch
+
 	Reason string `json:"reason,omitempty"` // optional reason override
 }
 
@@ -222,8 +224,11 @@ type Escalation struct {
 // EscalationTier is one rung of the ladder.
 type EscalationTier struct {
 	Points   int    `json:"points"`             // active total at/above which it fires
-	Action   string `json:"action"`             // timeout | kick | ban
+	Action   string `json:"action"`             // timeout | kick | ban | run_automation
 	Duration int    `json:"duration,omitempty"` // seconds (timeout action)
+	// Automation is the id of the saved automation flow launched when a member
+	// crosses this tier and Action == "run_automation".
+	Automation string `json:"automation,omitempty"`
 }
 
 // DefaultAutomod returns a useful starter configuration: a handful of common

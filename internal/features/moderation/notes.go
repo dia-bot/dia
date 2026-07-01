@@ -43,6 +43,14 @@ func handleNote(c *interactions.Context, d plugin.Deps) error {
 	if err != nil {
 		return c.RespondEphemeral("Failed to record note: " + err.Error())
 	}
+	publishEvent(c.Ctx, d, event.TypeModerationAction, c.GuildID, event.ModerationAction{
+		GuildID:    c.GuildID,
+		Action:     "note",
+		Reason:     text,
+		User:       target,
+		Moderator:  c.User,
+		CaseNumber: created.CaseNumber,
+	})
 	return c.RespondEphemeral(fmt.Sprintf("Note added — case #%d.", created.CaseNumber))
 }
 

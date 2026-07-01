@@ -322,6 +322,17 @@ func finishAction(c *interactions.Context, d plugin.Deps, target event.User, act
 		return c.RespondEphemeral("Action applied but failed to record case: " + err.Error())
 	}
 
+	// Let automations react to the manual action ("moderation_action" trigger).
+	publishEvent(c.Ctx, d, event.TypeModerationAction, c.GuildID, event.ModerationAction{
+		GuildID:         c.GuildID,
+		Action:          action,
+		Reason:          reason,
+		User:            target,
+		Moderator:       c.User,
+		CaseNumber:      created.CaseNumber,
+		DurationSeconds: durSecs,
+	})
+
 	if cfg.DMOnAction && target.ID != "" {
 		notice := dmNotice(action, reason)
 		if notice != "" {
@@ -429,6 +440,8 @@ func actionTitle(action string) string {
 		return "Warn"
 	case "note":
 		return "Note"
+	case "run_automation":
+		return "Automation"
 	default:
 		if action == "" {
 			return "Action"

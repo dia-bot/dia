@@ -76,9 +76,21 @@ func raidCheck(ctx context.Context, d plugin.Deps, automodCfg AutomodConfig, gid
 		if err := d.Cache.SetJSON(ctx, raidModeKey(gidStr), "1", ttl); err == nil {
 			active = true
 		}
-		// Fire the alert exactly once per raid spell.
+		// Fire the alert + automation event exactly once per raid spell.
 		if first, _ := d.Cache.Reserve(ctx, raidAlertKey(gidStr), 5*time.Minute); first {
 			postRaidAlert(d, automodCfg, gidStr, rc, int(n), window)
+			act := rc.Action
+			if act == "" {
+				act = "kick"
+			}
+			publishEvent(ctx, d, event.TypeRaidAlert, gidStr, event.RaidAlert{
+				GuildID:   gidStr,
+				Active:    true,
+				Joins:     int(n),
+				Threshold: threshold,
+				Window:    window,
+				Action:    act,
+			})
 		}
 	} else if active {
 		// Keep raid mode alive while joins keep arriving.
