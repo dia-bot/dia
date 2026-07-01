@@ -91,7 +91,7 @@
 	<!-- ── Slab topbar ──────────────────────────────────────────────────── -->
 	<PageTopbar eyebrow="Auto Roles" subtitle="Give every new member a set of roles automatically.">
 		{#snippet leading()}
-			<div class="grid size-6 place-items-center rounded border border-line bg-surface text-accent-ink">
+			<div class="grid size-6 place-items-center rounded border border-line bg-surface text-muted">
 				<UserPlus size={13} />
 			</div>
 		{/snippet}
@@ -106,22 +106,21 @@
 	<!-- ── Body ─────────────────────────────────────────────────────────── -->
 	<div class="relative min-h-0 flex-1 overflow-y-auto bg-bg">
 		{#if !loaded}
-			<div class="mx-auto w-full max-w-2xl p-6">
+			<div class="p-6">
 				<div class="skeleton mb-3 h-6 w-40 rounded"></div>
-				<div class="skeleton h-40 w-full rounded-xl"></div>
+				<div class="skeleton h-40 w-full rounded"></div>
 			</div>
 		{:else}
-			<div class="mx-auto w-full max-w-2xl space-y-6 px-5 py-6">
+			<!-- ── Roles granted on join ──────────────────────────── -->
+			<SectionBar label="Roles granted on join" count={cfg.roles.length || undefined} />
+			<div class="px-5 py-5">
 				{#if !enabled}
-					<div class="flex items-center gap-2 rounded-lg border border-line bg-ink-2 px-3 py-2 text-[12px] text-muted">
+					<div class="mb-4 flex max-w-2xl items-center gap-2 border-b border-line/60 pb-4 text-[12px] text-muted">
 						<span class="size-1.5 shrink-0 rounded-full bg-faint/40"></span>
 						Auto roles is off. Turn it on, top-right, to start assigning roles.
 					</div>
 				{/if}
-
-				<!-- Roles granted on join -->
-				<section class="space-y-3">
-					<SectionBar label="Roles granted on join" class="-mx-5 border-t border-line/60" count={cfg.roles.length || undefined} />
+				<div class="max-w-2xl">
 					<Field hint="Every new member receives these roles the moment they join.">
 						<RolePicker
 							multiple
@@ -130,20 +129,33 @@
 							placeholder="Add a role…"
 						/>
 					</Field>
-				</section>
+				</div>
+			</div>
 
-				<!-- Options -->
-				<section class="space-y-3">
-					<SectionBar label="Options" class="-mx-5 border-t border-line/60" />
-					<label class="flex items-center justify-between gap-3 rounded-xl border border-line bg-surface px-3.5 py-3">
-						<span class="min-w-0 text-[12.5px] text-ink">Also assign these roles to bots</span>
+			<!-- ── Options ────────────────────────────────────────── -->
+			<SectionBar label="Options" />
+			<div class="px-5 py-5">
+				<!-- Flat hairline toggle rows (no box). -->
+				<div class="flex max-w-2xl items-center justify-between gap-4 border-b border-line/60 pb-4">
+					<div class="min-w-0">
+						<div class="text-[12.5px] font-medium text-ink">Assign to bots</div>
+						<div class="mt-0.5 text-[12px] text-muted">Also give these roles to bots when they join.</div>
+					</div>
+					<label class="flex shrink-0 items-center gap-2 text-[12px]">
+						<span class="hidden text-muted sm:inline">{cfg.include_bots ? 'On' : 'Off'}</span>
 						<Toggle bind:checked={cfg.include_bots} label="Assign to bots" />
 					</label>
-					<label class="flex items-center justify-between gap-3 rounded-xl border border-line bg-surface px-3.5 py-3">
-						<span class="min-w-0 text-[12.5px] text-ink">Wait until members pass membership screening before assigning</span>
+				</div>
+				<div class="mt-4 flex max-w-2xl items-center justify-between gap-4 border-b border-line/60 pb-4">
+					<div class="min-w-0">
+						<div class="text-[12.5px] font-medium text-ink">Wait for membership screening</div>
+						<div class="mt-0.5 text-[12px] text-muted">Hold roles until members pass membership screening before assigning.</div>
+					</div>
+					<label class="flex shrink-0 items-center gap-2 text-[12px]">
+						<span class="hidden text-muted sm:inline">{cfg.wait_for_screening ? 'On' : 'Off'}</span>
 						<Toggle bind:checked={cfg.wait_for_screening} label="Wait for screening" />
 					</label>
-				</section>
+				</div>
 			</div>
 		{/if}
 

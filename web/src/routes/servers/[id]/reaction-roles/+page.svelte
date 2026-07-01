@@ -254,7 +254,7 @@
 		subtitle="Let members self-assign roles from buttons or a menu you post."
 	>
 		{#snippet leading()}
-			<div class="grid size-6 place-items-center rounded border border-line bg-surface text-accent-ink">
+			<div class="grid size-6 place-items-center rounded border border-line bg-surface text-muted">
 				<ToggleRight size={13} />
 			</div>
 		{/snippet}
@@ -269,9 +269,9 @@
 	<!-- ── Body ─────────────────────────────────────────────────────────── -->
 	<div class="relative min-h-0 flex-1 overflow-y-auto bg-bg">
 		{#if !loaded}
-			<div class="mx-auto w-full max-w-2xl p-6">
+			<div class="p-6">
 				<div class="skeleton mb-3 h-6 w-40 rounded"></div>
-				<div class="skeleton h-40 w-full rounded-xl"></div>
+				<div class="skeleton h-72 w-full rounded"></div>
 			</div>
 		{:else}
 			<!-- ── Menu list ────────────────────────────────────────────────── -->
@@ -336,23 +336,22 @@
 
 			<!-- ── Editor ───────────────────────────────────────────────────── -->
 			{#if editing}
-				<div class="px-5 py-6" in:fly={{ y: 8, duration: 160, easing: cubicOut }}>
-					<div class="rounded-lg border border-line bg-surface p-5">
-						<div class="mb-4 flex items-center justify-between">
-							<span class="font-mono text-[10px] font-medium uppercase tracking-[0.14em] text-faint">
-								{editing.id != null ? 'Edit menu' : 'New menu'}
-							</span>
+				<div in:fly={{ y: 8, duration: 160, easing: cubicOut }}>
+					<SectionBar label={editing.id != null ? 'Edit menu' : 'New menu'}>
+						{#snippet children()}
 							<button
 								type="button"
-								class="text-muted transition-colors hover:text-ink"
+								class="inline-flex h-7 items-center gap-1.5 rounded-md border border-line px-2.5 text-[12px] font-medium text-muted transition-colors hover:border-line-strong hover:text-ink"
 								onclick={cancelEdit}
 								aria-label="Close editor"
 							>
-								<X size={16} />
+								<X size={13} /> Close
 							</button>
-						</div>
+						{/snippet}
+					</SectionBar>
 
-						<div class="grid gap-x-4 sm:grid-cols-2">
+					<div class="px-5 py-5">
+						<div class="grid max-w-2xl gap-x-3 sm:grid-cols-2">
 							<Field label="Title">
 								<input class="input" placeholder="Pick your roles" bind:value={editing.title} />
 							</Field>
@@ -362,9 +361,9 @@
 						</div>
 
 						<Field label="Roles">
-							<div class="space-y-3">
+							<div class="max-w-2xl space-y-4">
 								{#each editing.options as opt, i (i)}
-									<div class="rounded-lg border border-line-strong bg-bg p-3">
+									<div class="border-b border-line/60 pb-4">
 										<div class="mb-2 flex items-center justify-between">
 											<span class="font-mono text-[10px] font-medium uppercase tracking-[0.14em] text-faint">
 												Role {i + 1}
@@ -397,7 +396,7 @@
 							</div>
 						</Field>
 
-						<div class="flex items-center justify-end gap-2">
+						<div class="flex max-w-2xl items-center justify-end gap-2">
 							<button class="btn btn-ghost" onclick={cancelEdit} disabled={savingMenu}>Cancel</button>
 							<button
 								class="btn btn-accent"
@@ -407,21 +406,22 @@
 								{savingMenu ? 'Saving…' : 'Save menu'}
 							</button>
 						</div>
+					</div>
 
-						<!-- ── Post to a channel (saved menus only) ─────────────────── -->
+					<!-- ── Post to a channel (saved menus only) ─────────────────── -->
+					<SectionBar label="Post to channel">
+						{#snippet children()}
+							{#if editing && editing.id != null && isPosted(editing)}
+								<span class="rounded-full bg-blush px-2 py-0.5 text-[11px] font-medium text-accent-ink">
+									Posted
+								</span>
+							{/if}
+						{/snippet}
+					</SectionBar>
+					<div class="px-5 py-5">
 						{#if editing.id != null}
-							<div class="mt-5 border-t border-line/60 pt-5">
-								<div class="mb-2 flex items-center gap-2">
-									<span class="font-mono text-[10px] font-medium uppercase tracking-[0.14em] text-faint">
-										Post to channel
-									</span>
-									{#if isPosted(editing)}
-										<span class="rounded-full bg-blush px-2 py-0.5 text-[11px] font-medium text-accent-ink">
-											Posted
-										</span>
-									{/if}
-								</div>
-								<p class="mb-3 text-[12px] text-muted">
+							<div class="max-w-2xl">
+								<p class="mb-3 text-[12.5px] text-muted">
 									Post this menu to a channel. Re-posting sends a fresh message.
 								</p>
 								<div class="flex flex-wrap items-end gap-2">
@@ -442,14 +442,14 @@
 									</TopbarAction>
 								</div>
 								{#if postMsg}
-									<p class="mt-2 flex items-center gap-1.5 text-[12px] {postOk ? 'text-success' : 'text-danger'}">
+									<p class="mt-2 flex items-center gap-1.5 text-[12.5px] {postOk ? 'text-success' : 'text-danger'}">
 										{#if postOk}<Check size={13} />{/if}
 										{postMsg}
 									</p>
 								{/if}
 							</div>
 						{:else}
-							<p class="mt-4 border-t border-line/60 pt-4 text-[12px] text-faint">
+							<p class="max-w-2xl text-[12.5px] text-faint">
 								Save the menu to post it to a channel.
 							</p>
 						{/if}

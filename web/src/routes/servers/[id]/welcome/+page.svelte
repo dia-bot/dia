@@ -404,7 +404,7 @@
 	<!-- ── Slab topbar ──────────────────────────────────────────────────── -->
 	<PageTopbar eyebrow="Welcome" subtitle="Greet members the moment they join, and bid them farewell when they leave.">
 		{#snippet leading()}
-			<div class="grid size-6 place-items-center rounded border border-line bg-surface text-accent-ink">
+			<div class="grid size-6 place-items-center rounded border border-line bg-surface text-muted">
 				<ImageIcon size={13} />
 			</div>
 		{/snippet}
@@ -439,7 +439,7 @@
 						: 'text-muted hover:text-ink'}"
 				>
 					<span class="size-1.5 shrink-0 rounded-full {cfg[t.k].enabled ? 'bg-success' : 'bg-faint/40'}" title={cfg[t.k].enabled ? 'Active' : 'Off'}></span>
-					<Icon size={14} class={tab === t.k ? 'text-accent-ink' : ''} />
+					<Icon size={14} />
 					<span>{TRIGGERS[t.k].label}</span>
 				</button>
 			{/each}
@@ -463,30 +463,30 @@
 	<!-- ── Body: one live message you edit in place ─────────────────────── -->
 	<div class="relative min-h-0 flex-1 overflow-y-auto bg-bg">
 		{#if !loaded}
-			<div class="mx-auto w-full max-w-2xl p-6">
+			<div class="p-6">
 				<div class="skeleton mb-3 h-6 w-40 rounded"></div>
-				<div class="skeleton h-72 w-full rounded-xl"></div>
+				<div class="skeleton h-72 w-full max-w-2xl rounded"></div>
 			</div>
 		{:else}
 			{@const TIcon = trigger.icon}
 			{#key tab}
-				<div class="mx-auto w-full max-w-2xl space-y-6 px-5 py-6" in:fly={{ y: 8, duration: 160, easing: cubicOut }}>
+				<div class="max-w-2xl space-y-5 px-5 py-5" in:fly={{ y: 8, duration: 160, easing: cubicOut }}>
 					{#if !enabled}
-						<div class="flex items-center gap-2 rounded-lg border border-line bg-ink-2 px-3 py-2 text-[12px] text-muted">
+						<div class="flex items-center gap-2 border-b border-line/60 pb-4 text-[12px] text-muted">
 							<span class="size-1.5 shrink-0 rounded-full bg-faint/40"></span>
 							The welcome system is off. Turn it on, top-right, to send anything.
 						</div>
 					{/if}
 
-					<!-- Per-trigger enable + what fires this -->
-					<div class="flex items-center justify-between gap-3 rounded-xl border border-accent/25 bg-accent/[0.06] px-3.5 py-2.5">
+					<!-- Per-trigger enable + what fires this — flat hairline row (no rose box). -->
+					<div class="flex items-center justify-between gap-3 border-b border-line/60 pb-4">
 						<div class="flex min-w-0 items-center gap-2.5">
-							<span class="grid size-7 shrink-0 place-items-center rounded-lg border border-accent/30 bg-accent/10 text-accent-ink">
-								<TIcon size={15} />
+							<span class="grid size-6 shrink-0 place-items-center rounded border border-line bg-surface text-muted">
+								<TIcon size={13} />
 							</span>
 							<div class="min-w-0">
 								<div class="flex items-center gap-1.5">
-									<span class="font-mono text-[9px] uppercase tracking-[0.16em] text-accent-ink/80">When</span>
+									<span class="font-mono text-[10px] uppercase tracking-[0.14em] text-faint">When</span>
 									<span class="font-mono text-[9.5px] text-faint">{trigger.key}</span>
 								</div>
 								<div class="truncate text-[12.5px] font-medium text-ink">A member {trigger.verb}, send this</div>
@@ -522,7 +522,7 @@
 						/>
 
 						<!-- DM: a second, private message to the member -->
-						<div class="mt-6 border-t border-line/60 pt-5">
+						<div class="mt-5 border-t border-line/60 pt-5">
 							<div class="mb-2 flex items-center justify-between gap-3">
 								<div class="flex min-w-0 items-center gap-2">
 									<Mail size={14} class="text-faint" />
@@ -537,7 +537,7 @@
 								<button
 									type="button"
 									onclick={() => (cfg[tab].dm.enabled = true)}
-									class="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-line px-4 py-6 text-[12.5px] font-medium text-faint transition-colors hover:border-line-strong hover:text-muted"
+									class="flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-line px-4 py-4 text-[12.5px] font-medium text-faint transition-colors hover:border-line-strong hover:text-muted"
 								>
 									<Mail size={14} /> Add a private DM
 								</button>

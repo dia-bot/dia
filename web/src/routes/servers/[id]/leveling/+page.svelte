@@ -440,8 +440,8 @@
 					{#if tab === 'xp'}
 						<!-- ── XP earning ─────────────────────────────────────── -->
 						<SectionBar label="XP earning" />
-						<div class="px-5 py-6">
-							<div class="grid max-w-3xl gap-4 sm:grid-cols-2">
+						<div class="px-5 py-5">
+							<div class="grid max-w-3xl gap-3 sm:grid-cols-2">
 								<Field label="Min XP per message">
 									<NumberField min={0} bind:value={cfg.xp_min} />
 								</Field>
@@ -459,7 +459,7 @@
 
 						<!-- ── No-XP exclusions ───────────────────────────────── -->
 						<SectionBar label="No-XP exclusions" />
-						<div class="px-5 py-6">
+						<div class="px-5 py-5">
 							<div class="max-w-3xl">
 								<Field label="No-XP channels" hint="Messages in these channels earn no XP.">
 									<ChannelPicker
@@ -490,7 +490,7 @@
 								<Frame size={13} /> Edit in Card Studio
 							</button>
 						</SectionBar>
-						<div class="px-5 py-6">
+						<div class="px-5 py-5">
 							<!-- Live preview: full-width, flat (no box). -->
 							{#if previewUrl}
 								<img src={previewUrl} alt="Rank card preview" class="block w-full" />
@@ -563,12 +563,12 @@
 											{/if}
 										</Field>
 
-										<div class="grid gap-4 sm:grid-cols-3">
+										<div class="grid gap-3 sm:grid-cols-3">
 											<ColorField label="Accent" bind:value={cfg.rank_card.accent_color} />
 											<ColorField label="Text" bind:value={cfg.rank_card.text_color} />
 											<ColorField label="Subtext" bind:value={cfg.rank_card.sub_text_color} />
 										</div>
-										<div class="grid gap-4 sm:grid-cols-2">
+										<div class="grid gap-3 sm:grid-cols-2">
 											<ColorField label="Progress bar" bind:value={cfg.rank_card.bar_color} />
 											<ColorField label="Progress bar track" bind:value={cfg.rank_card.bar_bg_color} />
 										</div>
@@ -593,7 +593,7 @@
 									{/if}
 									<button
 										type="button"
-										class="ml-auto text-muted transition-colors hover:text-accent-ink disabled:opacity-50"
+										class="ml-auto text-muted transition-colors hover:text-danger disabled:opacity-50"
 										disabled={rewardBusy}
 										onclick={() => removeReward(r.level)}
 										aria-label="Remove reward"
@@ -603,11 +603,11 @@
 								</Row>
 							{/each}
 						{:else}
-							<div class="border-b border-line/60 px-5 py-6 text-[13px] text-muted">No level rewards yet.</div>
+							<div class="border-b border-line/60 px-5 py-5 text-[13px] text-muted">No level rewards yet.</div>
 						{/if}
 
 						<!-- Add-reward form: a flush row, no box. -->
-						<div class="px-5 py-6">
+						<div class="px-5 py-5">
 							<div class="grid max-w-3xl items-end gap-3 sm:grid-cols-[7rem_1fr_auto]">
 								<div>
 									<span class="label">Level</span>
@@ -654,19 +654,19 @@
 									</Row>
 								{/each}
 							{:else}
-								<div class="border-b border-line/60 px-5 py-6 text-[13px] text-muted">No leaderboard entries yet.</div>
+								<div class="border-b border-line/60 px-5 py-5 text-[13px] text-muted">No leaderboard entries yet.</div>
 							{/if}
 						{:else}
-							<div class="border-b border-line/60 px-5 py-6 text-[13px] text-muted">
+							<div class="border-b border-line/60 px-5 py-5 text-[13px] text-muted">
 								Load the leaderboard to see the top members by XP.
 							</div>
 						{/if}
 					{:else}
 						<!-- ── Level-up announcement ──────────────────────────── -->
 						<SectionBar label="Announce" />
-						<div class="px-5 py-6">
+						<div class="px-5 py-5">
 							<!-- Flat hairline toggle row (no rose accent box). -->
-							<div class="flex max-w-2xl items-center justify-between gap-4 border-b border-line/60 pb-4">
+							<div class="flex max-w-2xl items-center justify-between gap-3 border-b border-line/60 pb-4">
 								<div class="min-w-0">
 									<div class="text-[13px] font-medium text-ink">Announce level-ups</div>
 									<div class="mt-0.5 text-[12px] text-muted">Post a message when a member reaches a new level.</div>
@@ -745,7 +745,7 @@
 								<ExternalLink size={11} class="text-faint" />
 							</a>
 						</SectionBar>
-						<div class="px-5 py-6">
+						<div class="px-5 py-5">
 							<div class="max-w-2xl transition-opacity {cfg.announce_level_up ? '' : 'opacity-60'}">
 								<MessageEditor step={levelUpStep} embeds components clickPaths={false} />
 							</div>

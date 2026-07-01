@@ -14,7 +14,7 @@
 	const interactive = $derived(!!href || !!onclick);
 	const klass = $derived(
 		[
-			'group flex h-11 items-center gap-3 border-b border-line/60 px-5 transition-colors',
+			'group flex h-10 items-center gap-3 border-b border-line/60 px-5 transition-colors',
 			interactive ? 'hover:bg-ink-2/30 cursor-pointer' : '',
 			cls
 		].join(' ')
