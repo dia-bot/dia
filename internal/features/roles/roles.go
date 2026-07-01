@@ -6,13 +6,17 @@ package roles
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/dia-bot/dia/internal/discord"
 	"github.com/dia-bot/dia/internal/event"
+	"github.com/dia-bot/dia/internal/features/automations/runner"
+	cc "github.com/dia-bot/dia/internal/features/customcommands"
 	"github.com/dia-bot/dia/internal/interactions"
 	"github.com/dia-bot/dia/internal/plugin"
 	"github.com/dia-bot/dia/internal/store"
@@ -26,7 +30,15 @@ var (
 )
 
 // Plugin implements the roles feature.
-type Plugin struct{}
+type Plugin struct {
+	// runner runs the durable post-grant follow-up flow auto-roles owns
+	// (Config.Tail) on the shared automations machinery: it persists a parked run
+	// to automation_runs and emits "auto:" components, so any waits, modals and
+	// follow-up clicks resume through the automations plugin's handlers + the wait
+	// scheduler. Auto-roles sends no message of its own — it grants the configured
+	// roles, then hands off to this tail.
+	runner *runner.Runner
+}
 
 // New returns the roles plugin.
 func New() *Plugin { return &Plugin{} }
@@ -43,12 +55,14 @@ func (*Plugin) Info() plugin.Info {
 
 // Init wires the autorole join/update handlers, the reaction-role component
 // handlers and the /reactionroles admin command.
-func (*Plugin) Init(ctx context.Context, d plugin.Deps, reg *plugin.Registrar) error {
+func (p *Plugin) Init(ctx context.Context, d plugin.Deps, reg *plugin.Registrar) error {
+	p.runner = runner.New(d)
+
 	reg.OnEvent(event.TypeMemberAdd, func(ctx context.Context, env *event.Envelope) error {
-		return handleMemberAdd(ctx, d, env)
+		return p.handleMemberAdd(ctx, d, env)
 	})
 	reg.OnEvent(event.TypeMemberUpdate, func(ctx context.Context, env *event.Envelope) error {
-		return handleMemberUpdate(ctx, d, env)
+		return p.handleMemberUpdate(ctx, d, env)
 	})
 
 	// All reaction-role components share the "rr:" prefix; one handler routes
@@ -76,7 +90,7 @@ func (*Plugin) Init(ctx context.Context, d plugin.Deps, reg *plugin.Registrar) e
 
 // ── Autorole events ──────────────────────────────────────────
 
-func handleMemberAdd(ctx context.Context, d plugin.Deps, env *event.Envelope) error {
+func (p *Plugin) handleMemberAdd(ctx context.Context, d plugin.Deps, env *event.Envelope) error {
 	ma, err := plugin.DecodeData[event.MemberAdd](env)
 	if err != nil {
 		return err
@@ -96,10 +110,19 @@ func handleMemberAdd(ctx context.Context, d plugin.Deps, env *event.Envelope) er
 	if ma.Member.User.Bot && !cfg.IncludeBots {
 		return nil
 	}
-	return applyAutoroles(ctx, d, ma.GuildID, ma.Member.User.ID, cfg.Roles)
+	if err := applyAutoroles(ctx, d, ma.GuildID, ma.Member.User.ID, cfg.Roles); err != nil {
+		return err
+	}
+	// Run the post-grant follow-up flow once the roles are on. The scope mirrors
+	// an automations member_join run — same .User / .Member / .Guild / .Event
+	// vars (member_count + pending) — so a tail authored on the canvas behaves
+	// exactly like a hand-built member_join automation.
+	p.runTail(ctx, d, cfg, ma.GuildID, &ma.Member,
+		map[string]any{"member_count": ma.MemberCount, "pending": ma.Member.Pending})
+	return nil
 }
 
-func handleMemberUpdate(ctx context.Context, d plugin.Deps, env *event.Envelope) error {
+func (p *Plugin) handleMemberUpdate(ctx context.Context, d plugin.Deps, env *event.Envelope) error {
 	mu, err := plugin.DecodeData[event.MemberUpdate](env)
 	if err != nil {
 		return err
@@ -117,7 +140,78 @@ func handleMemberUpdate(ctx context.Context, d plugin.Deps, env *event.Envelope)
 	if mu.Member.User.Bot && !cfg.IncludeBots {
 		return nil
 	}
-	return applyAutoroles(ctx, d, mu.GuildID, mu.Member.User.ID, cfg.Roles)
+	if err := applyAutoroles(ctx, d, mu.GuildID, mu.Member.User.ID, cfg.Roles); err != nil {
+		return err
+	}
+	// Same member_join scope as the join path: screening has completed, so the
+	// member is no longer pending. MemberUpdate carries no member count, so it's
+	// filled from the guild store (0 when unavailable).
+	p.runTail(ctx, d, cfg, mu.GuildID, &mu.Member,
+		map[string]any{"member_count": guildMemberCount(ctx, d, gid), "pending": false})
+	return nil
+}
+
+// runTail runs the post-grant follow-up flow (cfg.Tail) as a durable automation
+// run once the configured roles have been granted. Labelled "autorole.join" with
+// TriggerKind "member_join" so it shares the flow's KV scope and Runs filter and
+// reads like the built-in automation the canvas shows. Nothing runs (and nothing
+// persists) when the tail is empty.
+func (p *Plugin) runTail(ctx context.Context, d plugin.Deps, cfg Config, guildID string, member *event.Member, eventMap map[string]any) {
+	if len(cfg.Tail) == 0 || p.runner == nil || member == nil {
+		return
+	}
+	gid, _ := event.ParseID(guildID)
+	guildCtx := cc.ContextGuild{ID: guildID, Name: "the server"}
+	if g, err := d.Store.Guilds.Get(ctx, gid); err == nil {
+		if g.Name != "" {
+			guildCtx.Name = g.Name
+		}
+		guildCtx.MemberCount = g.MemberCount
+	}
+	// Auto-roles posts no message, so there's no anchoring channel; the tail's
+	// .Channel.* falls back to the member's context. BuildContext tolerates an
+	// empty channel id.
+	ctxVars := cc.BuildContext(guildID, "", member.User, member, guildCtx, time.Now().UnixMilli())
+	scope := cc.NewScope(d.GuildState, guildID, ctxVars, nil, nil)
+	scope.SetEvent(eventMap)
+	p.runner.Start(ctx, runner.Meta{
+		AutomationID: "autorole.join",
+		Version:      1,
+		GuildID:      guildID,
+		InvokerID:    member.User.ID,
+		ActorID:      member.User.ID,
+		TriggerKind:  "member_join",
+	}, cc.Definition{Steps: cfg.Tail}, scope)
+}
+
+// guildMemberCount reads the guild's cached member count (0 when unavailable),
+// so the screening-completed member_update path can present the same
+// member_count .Event var as the join path.
+func guildMemberCount(ctx context.Context, d plugin.Deps, gid int64) int {
+	if g, err := d.Store.Guilds.Get(ctx, gid); err == nil {
+		return g.MemberCount
+	}
+	return 0
+}
+
+// MergeStoredActions returns the incoming auto-roles config JSON with the
+// canvas-owned field (the post-grant follow-up flow, Tail) replaced by the
+// stored config's. The auto-roles settings page owns the roles list and toggles;
+// the follow-up flow is owned by the automation canvas (saved via
+// /autorole/actions), so a settings save must not overwrite it with its
+// (possibly stale, or absent) copy. On any decode/encode error the incoming
+// config is returned unchanged.
+func MergeStoredActions(incoming, stored []byte) []byte {
+	var in, st Config
+	if json.Unmarshal(incoming, &in) != nil || json.Unmarshal(stored, &st) != nil {
+		return incoming
+	}
+	in.Tail = st.Tail
+	out, err := json.Marshal(in)
+	if err != nil {
+		return incoming
+	}
+	return out
 }
 
 // applyAutoroles grants each configured role, collecting (but not aborting on)

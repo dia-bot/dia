@@ -6,6 +6,7 @@ import (
 
 	cc "github.com/dia-bot/dia/internal/features/customcommands"
 	"github.com/dia-bot/dia/internal/features/leveling"
+	"github.com/dia-bot/dia/internal/features/roles"
 	"github.com/dia-bot/dia/internal/features/welcome"
 )
 
@@ -84,7 +85,64 @@ func BuildBuiltins(configs map[string]json.RawMessage, featureEnabled map[string
 		Definition:  levelingFlow(lcfg),
 	})
 
+	// ── Auto-roles ───────────────────────────────────────────────────────────
+	rcfg := roles.Default()
+	if raw := configs[roles.FeatureKey]; len(raw) > 0 {
+		_ = json.Unmarshal(raw, &rcfg)
+	}
+	rEnabled := featureEnabled[roles.FeatureKey]
+	out = append(out, Builtin{
+		Key:         "autorole.join",
+		Name:        "Grant roles on join",
+		Description: "Grants the configured roles when a member joins (after screening, if enabled). Managed on the Auto-roles tab.",
+		TriggerType: "member_join",
+		FeatureKey:  roles.FeatureKey,
+		FeatureName: "Roles",
+		FeatureTab:  "auto-roles",
+		Enabled:     rEnabled && len(rcfg.Roles) > 0,
+		Definition:  autoroleFlow(rcfg),
+	})
+
 	return out
+}
+
+// autoroleFlow renders the auto-roles grant as a read-only step spine (a
+// role_add step summarizing the configured roles) followed by the editable
+// post-grant tail. Mirrors welcomeFlow: the spine steps carry "builtin-" ids so
+// the canvas treats them as generated/read-only, while cfg.Tail is appended as
+// real, persisted steps (their own non-"builtin-" ids) that render as ordinary
+// draggable nodes off the spine's out handle.
+func autoroleFlow(cfg roles.Config) cc.Definition {
+	if len(cfg.Roles) == 0 {
+		// Keep the tail behind the disabled spine so an authored follow-up flow
+		// isn't dropped (and can't be silently wiped by a canvas round-trip) just
+		// because the grant list is momentarily empty.
+		return cc.Definition{Steps: append([]cc.Step{{
+			ID:   "builtin-disabled",
+			Kind: cc.KindNoop,
+		}}, cfg.Tail...)}
+	}
+
+	// A single illustrative role_add naming every configured role. Auto-roles
+	// grants each role to the joining member; the reason mirrors the runtime's
+	// "autorole" reason. Multiple roles collapse into one comma-joined,
+	// newline-separated summary rather than a per-role fan-out, so the spine reads
+	// as one honest "grant roles" node.
+	grant := cc.SpecRole{
+		User:   cc.Expr{Src: "{{ .User.ID }}"},
+		Role:   cc.Expr{Src: strings.Join(cfg.Roles, ", ")},
+		Reason: "autorole",
+	}
+	steps := []cc.Step{{
+		ID:   "builtin-grant",
+		Kind: cc.KindRoleAdd,
+		Spec: mustSpec(grant),
+	}}
+
+	// The editable post-grant tail, wired after the grant spine on the canvas.
+	steps = append(steps, cfg.Tail...)
+
+	return cc.Definition{Steps: steps}
 }
 
 // welcomeFlow renders one welcome/goodbye MessageConfig as an illustrative

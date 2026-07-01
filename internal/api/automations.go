@@ -9,6 +9,8 @@ import (
 	"github.com/dia-bot/dia/internal/event"
 	"github.com/dia-bot/dia/internal/features/automations"
 	cc "github.com/dia-bot/dia/internal/features/customcommands"
+	"github.com/dia-bot/dia/internal/features/leveling"
+	"github.com/dia-bot/dia/internal/features/roles"
 	"github.com/dia-bot/dia/internal/features/welcome"
 	"github.com/dia-bot/dia/internal/store"
 	"github.com/gin-gonic/gin"
@@ -326,9 +328,13 @@ func ensureJSON(raw json.RawMessage) json.RawMessage {
 func (s *Server) builtinList(c *gin.Context, gidInt int64) []automations.Builtin {
 	configs := map[string]json.RawMessage{}
 	enabled := map[string]bool{}
-	if fc, err := s.store.Features.Get(c.Request.Context(), gidInt, welcome.FeatureKey); err == nil {
-		configs[welcome.FeatureKey] = fc.Config
-		enabled[welcome.FeatureKey] = fc.Enabled
+	// Load every feature that owns a built-in so its flow renders from the live
+	// config (not defaults): welcome, leveling and auto-roles.
+	for _, key := range []string{welcome.FeatureKey, leveling.FeatureKey, roles.FeatureKey} {
+		if fc, err := s.store.Features.Get(c.Request.Context(), gidInt, key); err == nil {
+			configs[key] = fc.Config
+			enabled[key] = fc.Enabled
+		}
 	}
 	return automations.BuildBuiltins(configs, enabled)
 }

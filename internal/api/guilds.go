@@ -12,6 +12,7 @@ import (
 	"github.com/dia-bot/dia/internal/event"
 	"github.com/dia-bot/dia/internal/features/leveling"
 	"github.com/dia-bot/dia/internal/features/moderation"
+	"github.com/dia-bot/dia/internal/features/roles"
 	"github.com/dia-bot/dia/internal/features/welcome"
 	"github.com/dia-bot/dia/internal/imaging"
 	"github.com/dia-bot/dia/pkg/discordgo"
@@ -343,17 +344,20 @@ func (s *Server) handlePutFeature(c *gin.Context) {
 	}
 	gid := guildID(c)
 	gidInt, _ := event.ParseID(gid)
-	// Welcome's and leveling's button click actions (and follow-up flow) are
-	// owned by the automation flow (saved via /welcome/actions or
-	// /leveling/actions), not the composer. Keep the stored actions authoritative
-	// so a composer save can't clobber actions wired meanwhile on the flow.
-	if len(req.Config) > 0 && (key == welcome.FeatureKey || key == leveling.FeatureKey) {
+	// Welcome's, leveling's and auto-roles' canvas-owned programs (button click
+	// actions and/or the follow-up flow) are owned by the automation flow (saved
+	// via /welcome/actions, /leveling/actions or /autorole/actions), not the
+	// settings page. Keep the stored copy authoritative so a settings save can't
+	// clobber a flow wired meanwhile on the canvas.
+	if len(req.Config) > 0 && (key == welcome.FeatureKey || key == leveling.FeatureKey || key == roles.FeatureKey) {
 		if existing, err := s.store.Features.Get(c.Request.Context(), gidInt, key); err == nil && len(existing.Config) > 0 {
 			switch key {
 			case welcome.FeatureKey:
 				req.Config = welcome.MergeStoredActions(req.Config, existing.Config)
 			case leveling.FeatureKey:
 				req.Config = leveling.MergeStoredActions(req.Config, existing.Config)
+			case roles.FeatureKey:
+				req.Config = roles.MergeStoredActions(req.Config, existing.Config)
 			}
 		}
 	}

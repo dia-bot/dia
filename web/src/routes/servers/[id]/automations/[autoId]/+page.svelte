@@ -84,10 +84,15 @@
 	// back into the owning feature's config (the message, embeds and card stay
 	// managed on that feature's tab). Today Welcome (welcome/goodbye tabs, plus a
 	// DM router) and Leveling (a single channel surface, no DM) share this
-	// "editable spine" shape. featureEditable turns the shared canvas editing on;
-	// the save routes to the matching endpoint by feature_tab.
+	// "editable spine" shape; Auto-roles adds a third variant whose spine is a
+	// single grant-roles step (no message, so no click router) and whose only
+	// editable part is the post-grant tail. featureEditable turns the shared canvas
+	// editing on; the save routes to the matching endpoint by feature_tab.
 	const featureEditable = $derived(
-		!!auto?.builtin && (auto?.feature_tab === 'welcome' || auto?.feature_tab === 'leveling')
+		!!auto?.builtin &&
+			(auto?.feature_tab === 'welcome' ||
+				auto?.feature_tab === 'leveling' ||
+				auto?.feature_tab === 'auto-roles')
 	);
 	// Welcome distinguishes its two built-in ids (join vs leave) as config tabs;
 	// leveling has a single surface so this is only meaningful for welcome.
@@ -450,17 +455,34 @@
 	// dragged from (except their component dots), or deleted, so a spine edit that
 	// wouldn't persist can never be accepted-then-silently-discarded.
 	const isSpineNode = (id: string | null) => !!id && id.startsWith('builtin-');
+	// tailAnchorId is the spine node the editable tail hangs off. Welcome/leveling
+	// anchor on the channel message ('builtin-send'); auto-roles has no message, so
+	// its tail hangs off the last leading grant spine node instead.
+	const tailAnchorId = $derived.by(() => {
+		if (!auto) return '';
+		const steps = auto.definition.steps ?? [];
+		if (auto.feature_tab === 'auto-roles') {
+			let last = '';
+			for (const s of steps) {
+				if (!isSpineNode(s.id)) break;
+				last = s.id;
+			}
+			return last;
+		}
+		return steps.some((s) => s.id === 'builtin-send') ? 'builtin-send' : '';
+	});
 	function welcomeAddFromHandle(sourceNodeId: string, handle: string | null, kind: string) {
 		// Off a spine node two handles are live: a button dot ('component-…'),
-		// which wires that button's click action, and the channel message's main
-		// out handle, which anchors the post-message tail ("connect a new action
-		// after sending the message"). Block the rest (the spine's error / DM
-		// handles can't persist edits). Tail steps (their own non-builtin ids)
-		// stay fully chainable.
+		// which wires that button's click action, and the tail anchor's main out
+		// handle, which anchors the post-spine tail ("connect a new action after
+		// sending the message" / after granting roles). Block the rest (the spine's
+		// error / DM handles can't persist edits). Tail steps (their own non-builtin
+		// ids) stay fully chainable.
 		if (isSpineNode(sourceNodeId)) {
 			const h = handle ?? '';
 			const isButtonDot = h.startsWith('component-');
-			const isTailAnchor = sourceNodeId === 'builtin-send' && (h === 'out' || h === 'after' || h === '');
+			const isTailAnchor =
+				!!tailAnchorId && sourceNodeId === tailAnchorId && (h === 'out' || h === 'after' || h === '');
 			if (!isButtonDot && !isTailAnchor) return;
 		}
 		addFromHandle(sourceNodeId, handle, kind);
@@ -520,10 +542,24 @@
 		return steps.slice(insertionIndex(steps, sendIdx));
 	}
 
+	// extractAutoroleTail reads the post-grant follow-up flow back out of the
+	// generated definition. Auto-roles has no message and no buttons: its spine is
+	// just the read-only grant-roles step(s) at the head (all `builtin-*`), and the
+	// editable tail is everything after them (the flow the admin wired off the grant
+	// step's out handle). We skip the leading spine nodes rather than anchoring on a
+	// fixed id, so a tail step of its own never gets mistaken for the spine.
+	function extractAutoroleTail(def: Definition): Step[] {
+		const steps = def.steps ?? [];
+		let i = 0;
+		while (i < steps.length && isSpineNode(steps[i].id)) i++;
+		return steps.slice(i);
+	}
+
 	// saveFeatureActions writes the canvas-authored click actions + tail back into
 	// the owning feature's config, routing to the right endpoint by feature_tab:
 	// welcome takes a kind (welcome/goodbye) and a DM router; leveling is a single
-	// channel surface with no DM tab.
+	// channel surface with no DM tab; auto-roles has no message (so no click
+	// actions), only the post-grant tail.
 	async function saveFeatureActions() {
 		if (!auto || featureSaving === 'saving' || !featureDirty) return;
 		if (featureDockTimer) clearTimeout(featureDockTimer);
@@ -531,12 +567,20 @@
 		featureErr = '';
 		const gen = loadGen;
 		try {
-			const acts = extractWelcomeActions(auto.definition);
-			const tail = extractWelcomeTail(auto.definition);
-			if (auto.feature_tab === 'leveling') {
-				await api.saveLevelingActions(store.id, acts.channel, tail);
+			if (auto.feature_tab === 'auto-roles') {
+				await api.saveAutoroleActions(store.id, extractAutoroleTail(auto.definition));
+			} else if (auto.feature_tab === 'leveling') {
+				const acts = extractWelcomeActions(auto.definition);
+				await api.saveLevelingActions(store.id, acts.channel, extractWelcomeTail(auto.definition));
 			} else {
-				await api.saveWelcomeActions(store.id, welcomeKind, acts.channel, acts.dm, tail);
+				const acts = extractWelcomeActions(auto.definition);
+				await api.saveWelcomeActions(
+					store.id,
+					welcomeKind,
+					acts.channel,
+					acts.dm,
+					extractWelcomeTail(auto.definition)
+				);
 			}
 			if (gen !== loadGen) return;
 			const fresh = await fetchAuto();
@@ -1118,7 +1162,12 @@
 				<div
 					class="pointer-events-none absolute left-1/2 top-3 z-30 -translate-x-1/2 max-w-[92%] truncate rounded-full border border-line bg-surface/90 px-3 py-1 text-center font-mono text-[10px] uppercase tracking-[0.12em] text-muted backdrop-blur"
 				>
-					<MousePointerClick size={9} class="mr-1 inline" /> Drag off the message to add a follow-up action, or off a button's dot to set what it does. Message, embed &amp; card are managed in {auto.feature_name}.
+					<MousePointerClick size={9} class="mr-1 inline" />
+					{#if auto.feature_tab === 'auto-roles'}
+						Drag off the grant step to add a follow-up action. The roles granted on join are managed in {auto.feature_name}.
+					{:else}
+						Drag off the message to add a follow-up action, or off a button's dot to set what it does. Message, embed &amp; card are managed in {auto.feature_name}.
+					{/if}
 				</div>
 				<FlowCanvas
 					steps={auto.definition.steps as Step[]}

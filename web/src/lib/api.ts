@@ -234,6 +234,12 @@ export const api = {
 			actions,
 			tail
 		}),
+	// saveAutoroleActions persists the canvas-authored post-grant tail back into the
+	// auto-roles config. Auto-roles sends no message and has no buttons, so unlike
+	// welcome/leveling there are no click actions: only the follow-up flow wired
+	// after the read-only grant-roles step.
+	saveAutoroleActions: (id: string, tail: unknown) =>
+		req<{ ok: boolean }>('POST', `/api/guilds/${id}/autorole/actions`, { tail }),
 	levelingVariables: (id: string) =>
 		req<{ variables: { token: string; desc: string }[] }>('GET', `/api/guilds/${id}/leveling/variables`),
 	// templatingPreview renders one template string and returns the text + any error.

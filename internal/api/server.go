@@ -149,6 +149,7 @@ func (s *Server) Handler() http.Handler {
 	g.POST("/templating/preview", s.handleTemplatingPreview)
 	g.GET("/leveling/variables", s.handleLevelingVariables)
 	g.POST("/leveling/actions", s.handleLevelingActions)
+	g.POST("/autorole/actions", s.handleAutoroleActions)
 
 	g.GET("/leaderboard", s.handleLeaderboard)
 	g.GET("/level-rewards", s.handleListRewards)
