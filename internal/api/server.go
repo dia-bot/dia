@@ -148,6 +148,7 @@ func (s *Server) Handler() http.Handler {
 	g.POST("/layout/resolve", s.handleResolveCard)
 	g.POST("/templating/preview", s.handleTemplatingPreview)
 	g.GET("/leveling/variables", s.handleLevelingVariables)
+	g.POST("/leveling/actions", s.handleLevelingActions)
 
 	g.GET("/leaderboard", s.handleLeaderboard)
 	g.GET("/level-rewards", s.handleListRewards)

@@ -54,6 +54,12 @@ const (
 	TypeVerificationFailed Type = "VERIFICATION_FAILED"
 	TypeRaidAlert          Type = "RAID_ALERT"
 	TypeModerationAction   Type = "MODERATION_ACTION"
+
+	// TypeLevelUp is NOT a gateway event: the worker publishes it on the same
+	// stream when a member crosses into a new level, so the automations runtime
+	// can trigger flows off leveling activity. Like TypeAutomodAction it has no
+	// gateway/Elixir mapper.
+	TypeLevelUp Type = "LEVEL_UP"
 )
 
 // SubjectPrefix is the JetStream subject root for forwarded gateway events.
@@ -250,6 +256,21 @@ type AutomodAction struct {
 	ChannelID   string   `json:"channel_id,omitempty"`
 	MessageID   string   `json:"message_id,omitempty"`
 	Content     string   `json:"content,omitempty"` // offending message content (truncated)
+}
+
+// LevelUp is published by the worker (not the gateway) when a member crosses
+// into a new level, on subject discord.events.LEVEL_UP.<guild>. The automations
+// runtime consumes it as the "level_up" trigger, exposing these fields to flows
+// as .Event.* alongside the member as .User / .Member.
+type LevelUp struct {
+	GuildID   string  `json:"guild_id"`
+	User      User    `json:"user"`
+	Member    *Member `json:"member,omitempty"`
+	ChannelID string  `json:"channel_id,omitempty"` // where the leveling message was posted
+	Level     int     `json:"level"`                // the level just reached
+	NewLevel  int     `json:"new_level"`            // same as Level (mirrors the runtime var name)
+	XP        int64   `json:"xp"`                   // the member's total XP after the gain
+	Rank      int     `json:"rank"`                 // leaderboard position (1-based; 0 if unknown)
 }
 
 // VerificationPassed is published when a member clears verification (button or

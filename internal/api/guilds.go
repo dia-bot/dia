@@ -10,6 +10,7 @@ import (
 
 	"github.com/dia-bot/dia/internal/discord"
 	"github.com/dia-bot/dia/internal/event"
+	"github.com/dia-bot/dia/internal/features/leveling"
 	"github.com/dia-bot/dia/internal/features/moderation"
 	"github.com/dia-bot/dia/internal/features/welcome"
 	"github.com/dia-bot/dia/internal/imaging"
@@ -342,12 +343,18 @@ func (s *Server) handlePutFeature(c *gin.Context) {
 	}
 	gid := guildID(c)
 	gidInt, _ := event.ParseID(gid)
-	// Welcome's button click actions are owned by the automation flow (saved via
-	// /welcome/actions), not the composer. Keep the stored actions authoritative
+	// Welcome's and leveling's button click actions (and follow-up flow) are
+	// owned by the automation flow (saved via /welcome/actions or
+	// /leveling/actions), not the composer. Keep the stored actions authoritative
 	// so a composer save can't clobber actions wired meanwhile on the flow.
-	if key == welcome.FeatureKey && len(req.Config) > 0 {
+	if len(req.Config) > 0 && (key == welcome.FeatureKey || key == leveling.FeatureKey) {
 		if existing, err := s.store.Features.Get(c.Request.Context(), gidInt, key); err == nil && len(existing.Config) > 0 {
-			req.Config = welcome.MergeStoredActions(req.Config, existing.Config)
+			switch key {
+			case welcome.FeatureKey:
+				req.Config = welcome.MergeStoredActions(req.Config, existing.Config)
+			case leveling.FeatureKey:
+				req.Config = leveling.MergeStoredActions(req.Config, existing.Config)
+			}
 		}
 	}
 	if err := s.store.Features.Upsert(c.Request.Context(), gidInt, key, req.Enabled, req.Config); err != nil {

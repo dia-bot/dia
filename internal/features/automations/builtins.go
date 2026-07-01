@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	cc "github.com/dia-bot/dia/internal/features/customcommands"
+	"github.com/dia-bot/dia/internal/features/leveling"
 	"github.com/dia-bot/dia/internal/features/welcome"
 )
 
@@ -65,6 +66,24 @@ func BuildBuiltins(configs map[string]json.RawMessage, featureEnabled map[string
 		},
 	)
 
+	// ── Leveling ─────────────────────────────────────────────────────────────
+	lcfg := leveling.Default()
+	if raw := configs[leveling.FeatureKey]; len(raw) > 0 {
+		_ = json.Unmarshal(raw, &lcfg)
+	}
+	lEnabled := featureEnabled[leveling.FeatureKey]
+	out = append(out, Builtin{
+		Key:         "leveling.levelup",
+		Name:        "Announce level-ups",
+		Description: "Posts a message (and optional buttons) when a member reaches a new level. Managed on the Leveling tab.",
+		TriggerType: "level_up",
+		FeatureKey:  leveling.FeatureKey,
+		FeatureName: "Leveling",
+		FeatureTab:  "leveling",
+		Enabled:     lEnabled && lcfg.AnnounceLevelUp,
+		Definition:  levelingFlow(lcfg),
+	})
+
 	return out
 }
 
@@ -96,7 +115,7 @@ func welcomeFlow(mc welcome.MessageConfig) cc.Definition {
 		steps = append(steps, cc.Step{ID: "builtin-dm", Kind: cc.KindSendDM, Spec: mustSpec(dm)})
 		// The DM's own click-router, right after it, so the canvas fuses its
 		// button dots independently of the channel message's.
-		steps = append(steps, clickRouter("builtin-dm", mc.DM.Components, mc.DM.Actions)...)
+		steps = append(steps, clickRouter("builtin-dm", mc.DM.Components, welcomeClickActions(mc.DM.Actions))...)
 	}
 
 	if mc.Card.Enabled {
@@ -133,13 +152,72 @@ func welcomeFlow(mc welcome.MessageConfig) cc.Definition {
 		Spec: mustSpec(send),
 	})
 
-	steps = append(steps, clickRouter("builtin", mc.Components, mc.Actions)...)
+	steps = append(steps, clickRouter("builtin", mc.Components, welcomeClickActions(mc.Actions))...)
 
 	// The post-message tail: the editable steps the admin wired after the
 	// channel message ("connect a new action after sending a message"). Unlike
 	// the spine above (regenerated, read-only), these are real, persisted steps,
 	// so they render as ordinary draggable nodes off the message's out handle.
 	steps = append(steps, mc.Tail...)
+
+	return cc.Definition{Steps: steps}
+}
+
+// levelingFlow renders the leveling level-up announcement as a read-only step
+// tree mirroring welcomeFlow: the channel (or DM) post with content, embeds and
+// buttons, then the per-button click router and the editable post-message tail.
+// The read-only visualization uses the leveling token replacer so the extra
+// {level}/{rank}/{xp}/{progress} shorthands surface in canonical `{{ }}` form.
+func levelingFlow(cfg leveling.Config) cc.Definition {
+	if !cfg.AnnounceLevelUp {
+		return cc.Definition{Steps: []cc.Step{{
+			ID:   "builtin-disabled",
+			Kind: cc.KindNoop,
+		}}}
+	}
+
+	// The rich announcement body, falling back to the legacy single-line message
+	// when the composer content is empty (mirrors announce()'s hasLevelUp path).
+	content := cfg.LevelUp.Content
+	if content == "" {
+		content = cfg.LevelUpMessage
+	}
+
+	var steps []cc.Step
+
+	if cfg.AnnounceChannel == "dm" {
+		// DM announcements are content-only at runtime; components have no DM
+		// route for level-ups, so the visualization omits them too.
+		dm := cc.SpecSendDM{
+			User:    cc.Expr{Src: "{{ .User.ID }}"},
+			Content: levelingTokensToTmpl(content),
+		}
+		for _, e := range cfg.LevelUp.Embeds {
+			dm.Embeds = append(dm.Embeds, levelingEmbed(e))
+		}
+		steps = append(steps, cc.Step{ID: "builtin-send", Kind: cc.KindSendDM, Spec: mustSpec(dm)})
+		steps = append(steps, cfg.Tail...)
+		return cc.Definition{Steps: steps}
+	}
+
+	send := cc.SpecSendMessage{
+		Channel: cc.Expr{Src: channelExpr(cfg.AnnounceChannel)},
+		Content: levelingTokensToTmpl(content),
+	}
+	for _, e := range cfg.LevelUp.Embeds {
+		send.Embeds = append(send.Embeds, levelingEmbed(e))
+	}
+	send.Components = levelingComponents(cfg.LevelUp.Components)
+	steps = append(steps, cc.Step{
+		ID:   "builtin-send",
+		Kind: cc.KindSendMessage,
+		Spec: mustSpec(send),
+	})
+
+	steps = append(steps, clickRouter("builtin", cfg.LevelUp.Components, levelingClickActions(cfg.Actions))...)
+
+	// The editable post-announce tail, wired after the message on the canvas.
+	steps = append(steps, cfg.Tail...)
 
 	return cc.Definition{Steps: steps}
 }
@@ -167,6 +245,33 @@ func welcomeComponents(rows []cc.ComponentRow) []cc.ComponentRow {
 	return out
 }
 
+// clickAction is the feature-agnostic shape clickRouter consumes: a component's
+// custom_id suffix and the durable steps its click runs. Each owning feature's
+// local ButtonAction (welcome.ButtonAction, leveling.ButtonAction, …) maps onto
+// it so the same router serves every builtin flow.
+type clickAction struct {
+	Suffix string
+	Steps  []cc.Step
+}
+
+// welcomeClickActions adapts welcome's ButtonActions to the router shape.
+func welcomeClickActions(actions []welcome.ButtonAction) []clickAction {
+	out := make([]clickAction, len(actions))
+	for i, a := range actions {
+		out[i] = clickAction{Suffix: a.Suffix, Steps: a.Steps}
+	}
+	return out
+}
+
+// levelingClickActions adapts leveling's ButtonActions to the router shape.
+func levelingClickActions(actions []leveling.ButtonAction) []clickAction {
+	out := make([]clickAction, len(actions))
+	for i, a := range actions {
+		out[i] = clickAction{Suffix: a.Suffix, Steps: a.Steps}
+	}
+	return out
+}
+
 // clickRouter renders the per-component click programs (actions) for one surface
 // as the canvas's click-router plumbing: one any-component wait_for plus a switch
 // on the clicked id, with one case per wired (and still-live) suffix. idPrefix
@@ -177,7 +282,11 @@ func welcomeComponents(rows []cc.ComponentRow) []cc.ComponentRow {
 // Skipping cases for a since-deleted component keeps the canvas fusion intact
 // (the adapter requires every switch case to map to a live suffix on the
 // preceding message) instead of surfacing the raw wait_for/switch as nodes.
-func clickRouter(idPrefix string, comps []cc.ComponentRow, actions []welcome.ButtonAction) []cc.Step {
+//
+// The actions are passed as a feature-agnostic []clickAction so each owning
+// feature (welcome, leveling, …) can reuse the router with its own local
+// ButtonAction type.
+func clickRouter(idPrefix string, comps []cc.ComponentRow, actions []clickAction) []cc.Step {
 	live := make(map[string]bool)
 	for _, row := range comps {
 		for _, comp := range row.Components {
@@ -275,4 +384,82 @@ func tokensToTmpl(s string) string {
 		return ""
 	}
 	return welcomeTokenReplacer.Replace(s)
+}
+
+// levelingTokenReplacer extends the shared shorthands with the leveling-specific
+// {level}/{rank}/{xp}/{progress} tokens the level-up composer documents, so the
+// read-only builtin flow renders them in canonical `{{ }}` form.
+var levelingTokenReplacer = strings.NewReplacer(
+	"{user.mention}", "{{ .User.Mention }}",
+	"{user.id}", "{{ .User.ID }}",
+	"{user.name}", "{{ .User.Username }}",
+	"{user.username}", "{{ .User.Username }}",
+	"{user.global}", "{{ .User.GlobalName }}",
+	"{user.avatar}", "{{ .User.Avatar }}",
+	"{user}", "{{ .User.GlobalName }}",
+	"{server.name}", "{{ .Guild.Name }}",
+	"{server.id}", "{{ .Guild.ID }}",
+	"{server}", "{{ .Guild.Name }}",
+	"{count}", "{{ .Guild.MemberCount }}",
+	"{channel.id}", "{{ .Channel.ID }}",
+	"{channel}", "{{ mentionChannel .Channel.ID }}",
+	"{level}", "{{ .Event.level }}",
+	"{rank}", "{{ .Event.rank }}",
+	"{xp}", "{{ .Event.xp }}",
+	"{progress}", "{{ .Event.progress }}",
+)
+
+func levelingTokensToTmpl(s string) string {
+	if s == "" {
+		return ""
+	}
+	return levelingTokenReplacer.Replace(s)
+}
+
+// levelingComponents mirrors the level-up button / select rows into the
+// read-only flow (leveling token shorthands rendered to canonical form),
+// keeping non-link components routable so each shows a draggable click dot.
+func levelingComponents(rows []cc.ComponentRow) []cc.ComponentRow {
+	if len(rows) == 0 {
+		return nil
+	}
+	out := make([]cc.ComponentRow, 0, len(rows))
+	for _, row := range rows {
+		comps := make([]cc.Component, 0, len(row.Components))
+		for _, c := range row.Components {
+			c.Label = levelingTokensToTmpl(c.Label)
+			c.Placeholder = levelingTokensToTmpl(c.Placeholder)
+			c.URL = levelingTokensToTmpl(c.URL)
+			comps = append(comps, c)
+		}
+		out = append(out, cc.ComponentRow{Components: comps})
+	}
+	return out
+}
+
+// levelingEmbed token-maps one composer embed (already a cc.EmbedSpec) into the
+// read-only flow using the leveling replacer.
+func levelingEmbed(e cc.EmbedSpec) cc.EmbedSpec {
+	out := cc.EmbedSpec{
+		Title:       levelingTokensToTmpl(e.Title),
+		Description: levelingTokensToTmpl(e.Description),
+		URL:         e.URL,
+		Color:       e.Color,
+		AuthorName:  levelingTokensToTmpl(e.AuthorName),
+		AuthorIcon:  levelingTokensToTmpl(e.AuthorIcon),
+		AuthorURL:   e.AuthorURL,
+		Thumbnail:   levelingTokensToTmpl(e.Thumbnail),
+		ImageURL:    levelingTokensToTmpl(e.ImageURL),
+		FooterText:  levelingTokensToTmpl(e.FooterText),
+		FooterIcon:  levelingTokensToTmpl(e.FooterIcon),
+		Timestamp:   e.Timestamp,
+	}
+	for _, f := range e.Fields {
+		out.Fields = append(out.Fields, cc.EmbedField{
+			Name:   levelingTokensToTmpl(f.Name),
+			Value:  levelingTokensToTmpl(f.Value),
+			Inline: f.Inline,
+		})
+	}
+	return out
 }

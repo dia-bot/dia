@@ -29,6 +29,21 @@ var RankVariables = []RankVariable{
 	{"{progress}", "Progress to next level, like 64%"},
 }
 
+// levelEventMap is the .Event.* map a durable level-up flow (the tail and the
+// button click actions) is run with. It mirrors the runtime's decode of
+// event.LevelUp (runtime.prepare's TypeLevelUp case) so a tail authored on the
+// canvas sees the same .Event.level / .Event.xp / .Event.rank / .Event.new_level
+// / .Event.channel_id vars as a hand-built level_up automation.
+func levelEventMap(level, newLevel, rank int, xp int64, channelID string) map[string]any {
+	return map[string]any{
+		"level":      level,
+		"new_level":  newLevel,
+		"xp":         xp,
+		"rank":       rank,
+		"channel_id": channelID,
+	}
+}
+
 // rankVars builds the placeholder→value map a rank card is rendered with.
 func rankVars(user event.User, level, rank int, into, span, total int64) map[string]string {
 	pct := 0
