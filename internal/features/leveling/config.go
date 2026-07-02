@@ -19,6 +19,12 @@ type Config struct {
 	CooldownSeconds int     `json:"cooldown_seconds"`
 	Multiplier      float64 `json:"multiplier"`
 
+	// RoleBoosts are per-role XP multipliers: members holding a boosted role
+	// earn multiplied XP. When several boosts match the member's roles the
+	// highest multiplier wins (boosts never stack with each other), and the
+	// winner combines with the global Multiplier.
+	RoleBoosts []RoleBoost `json:"role_boosts,omitempty"`
+
 	// Level-up announcements
 	AnnounceLevelUp bool   `json:"announce_level_up"`
 	AnnounceChannel string `json:"announce_channel"` // "" = same channel, a channel id, or "dm"
@@ -56,6 +62,13 @@ type Config struct {
 
 	// Rank card appearance
 	RankCard RankCardConfig `json:"rank_card"`
+}
+
+// RoleBoost multiplies the XP a member earns while they hold RoleID. A
+// non-positive Multiplier is ignored (treated as 1.0).
+type RoleBoost struct {
+	RoleID     string  `json:"role_id"`
+	Multiplier float64 `json:"multiplier"`
 }
 
 // ButtonAction is the click-action program for one interactive component

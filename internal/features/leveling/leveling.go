@@ -156,7 +156,11 @@ func (p *Plugin) handleMessage(ctx context.Context, d plugin.Deps, env *event.En
 		return nil
 	}
 
-	delta := xpDelta(cfg)
+	var memberRoles []string
+	if msg.Member != nil {
+		memberRoles = msg.Member.Roles
+	}
+	delta := xpDelta(cfg, memberRoles)
 	updated, err := d.Store.Levels.AddXP(ctx, gid, uid, delta, time.Now())
 	if err != nil {
 		return err
@@ -226,8 +230,11 @@ func (p *Plugin) publishLevelUp(ctx context.Context, d plugin.Deps, msg event.Me
 	}
 }
 
-// xpDelta picks a random XP amount in [XPMin, XPMax] scaled by Multiplier.
-func xpDelta(cfg Config) int64 {
+// xpDelta picks a random XP amount in [XPMin, XPMax], scaled by the global
+// Multiplier and by the highest RoleBoost whose role the member holds. Boosts
+// never stack with each other (the highest matching multiplier wins) and a
+// non-positive boost is ignored; with no matching boost the factor is 1.0.
+func xpDelta(cfg Config, roles []string) int64 {
 	min, max := cfg.XPMin, cfg.XPMax
 	if min <= 0 {
 		min = 1
@@ -243,7 +250,16 @@ func xpDelta(cfg Config) int64 {
 	if mult <= 0 {
 		mult = 1
 	}
-	delta := int64(float64(base) * mult)
+	boost := 0.0
+	for _, b := range cfg.RoleBoosts {
+		if b.Multiplier > boost && contains(roles, b.RoleID) {
+			boost = b.Multiplier
+		}
+	}
+	if boost <= 0 {
+		boost = 1
+	}
+	delta := int64(float64(base) * mult * boost)
 	if delta < 1 {
 		delta = 1
 	}
