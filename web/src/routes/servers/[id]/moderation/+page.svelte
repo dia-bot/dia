@@ -10,6 +10,7 @@
 	import ModSection from '$lib/components/moderation/ModSection.svelte';
 	import ModToggleRow from '$lib/components/moderation/ModToggleRow.svelte';
 	import ModLinkRow from '$lib/components/moderation/ModLinkRow.svelte';
+	import TabSwipe from '$lib/components/page/TabSwipe.svelte';
 	import { TRIGGERS_BY_KEY, type TriggerKey } from '$lib/moderation/automod';
 
 	import Folder from 'lucide-svelte/icons/folder';
@@ -279,199 +280,201 @@
 		{/each}
 	</section>
 
-	{#if tab === 'cases'}
-		<!-- ── Cases ── -->
-		<section class="border-b border-line">
-			<div class="flex flex-wrap items-center gap-x-3 gap-y-2 px-4 pt-3.5 sm:px-5">
-				<span class="font-mono text-[10px] font-medium uppercase tracking-[0.14em] text-faint">
-					Recent cases
-				</span>
-				<label class="relative ml-auto inline-flex items-center">
-					<Search size={14} class="pointer-events-none absolute left-2.5 text-faint" />
-					<input
-						type="text"
-						inputmode="numeric"
-						bind:value={userFilter}
-						placeholder="Filter by user ID"
-						class="w-44 rounded-lg border border-line bg-ink-2 py-1.5 pl-8 pr-3 text-[13px] text-ink placeholder:text-faint focus:border-line-strong focus:outline-none sm:w-52"
-					/>
-				</label>
-			</div>
+	<TabSwipe key={tab} index={tabs.findIndex((t) => t.key === tab)}>
+		{#if tab === 'cases'}
+			<!-- ── Cases ── -->
+			<section class="border-b border-line">
+				<div class="flex flex-wrap items-center gap-x-3 gap-y-2 px-4 pt-3.5 sm:px-5">
+					<span class="font-mono text-[10px] font-medium uppercase tracking-[0.14em] text-faint">
+						Recent cases
+					</span>
+					<label class="relative ml-auto inline-flex items-center">
+						<Search size={14} class="pointer-events-none absolute left-2.5 text-faint" />
+						<input
+							type="text"
+							inputmode="numeric"
+							bind:value={userFilter}
+							placeholder="Filter by user ID"
+							class="w-44 rounded-lg border border-line bg-ink-2 py-1.5 pl-8 pr-3 text-[13px] text-ink placeholder:text-faint focus:border-line-strong focus:outline-none sm:w-52"
+						/>
+					</label>
+				</div>
 
-			<div class="pt-3">
-				{#if cases.length === 0}
-					<div class="px-4 py-12 text-center text-sm text-faint sm:px-5">
-						No cases yet. Moderation actions taken in your server will appear here.
-					</div>
-				{:else if filteredCases.length === 0}
-					<div class="px-4 py-12 text-center text-sm text-faint sm:px-5">
-						No cases for user <code class="text-accent-ink">{userFilter}</code>.
-					</div>
-				{:else}
-					<div class="overflow-x-auto">
-						<table class="w-full text-[13px]">
-							<thead>
-								<tr
-									class="border-y border-line bg-ink-2 text-left font-mono text-[10px] uppercase tracking-wide text-faint"
-								>
-									<th class="px-4 py-2 font-medium sm:px-5">Case</th>
-									<th class="px-3 py-2 font-medium">Action</th>
-									<th class="px-3 py-2 font-medium">User</th>
-									<th class="hidden px-3 py-2 font-medium md:table-cell">Moderator</th>
-									<th class="px-3 py-2 font-medium">Reason</th>
-									<th class="px-4 py-2 font-medium sm:px-5">When</th>
-								</tr>
-							</thead>
-							<tbody>
-								{#each filteredCases as c (c.case)}
-									<tr class="border-b border-line align-top last:border-b-0 hover:bg-ink-2/40">
-										<td class="px-4 py-2.5 font-medium tabular-nums text-muted sm:px-5">#{c.case}</td>
-										<td class="px-3 py-2.5">
-											<span
-												class="inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-[11px] font-medium capitalize {chipClass(
-													c.action
-												)}"
-											>
-												{c.action}
-												{#if c.active}
-													<span
-														class="inline-block size-1.5 rounded-full bg-current opacity-70"
-														title="Active"
-													></span>
-												{/if}
-											</span>
-										</td>
-										<td class="px-3 py-2.5"
-											><code class="text-accent-ink">&lt;@{c.user_id}&gt;</code></td
-										>
-										<td class="hidden px-3 py-2.5 md:table-cell"
-											><code class="text-muted">&lt;@{c.moderator_id}&gt;</code></td
-										>
-										<td class="max-w-[22rem] px-3 py-2.5">
-											<span class="text-ink">{c.reason || '—'}</span>
-										</td>
-										<td class="whitespace-nowrap px-4 py-2.5 text-faint sm:px-5">
-											{relTime(c.created_at)}
-											{#if c.active && c.expires_at}
-												<div class="text-[11px] text-faint">expires {fmtDate(c.expires_at)}</div>
-											{/if}
-										</td>
+				<div class="pt-3">
+					{#if cases.length === 0}
+						<div class="px-4 py-12 text-center text-sm text-faint sm:px-5">
+							No cases yet. Moderation actions taken in your server will appear here.
+						</div>
+					{:else if filteredCases.length === 0}
+						<div class="px-4 py-12 text-center text-sm text-faint sm:px-5">
+							No cases for user <code class="text-accent-ink">{userFilter}</code>.
+						</div>
+					{:else}
+						<div class="overflow-x-auto">
+							<table class="w-full text-[13px]">
+								<thead>
+									<tr
+										class="border-y border-line bg-ink-2 text-left font-mono text-[10px] uppercase tracking-wide text-faint"
+									>
+										<th class="px-4 py-2 font-medium sm:px-5">Case</th>
+										<th class="px-3 py-2 font-medium">Action</th>
+										<th class="px-3 py-2 font-medium">User</th>
+										<th class="hidden px-3 py-2 font-medium md:table-cell">Moderator</th>
+										<th class="px-3 py-2 font-medium">Reason</th>
+										<th class="px-4 py-2 font-medium sm:px-5">When</th>
 									</tr>
-								{/each}
-							</tbody>
-						</table>
-					</div>
-				{/if}
-			</div>
-		</section>
-	{:else if tab === 'heat'}
-		<!-- ── Automod heat ── -->
-		<section class="border-b border-line">
-			<div class="grid lg:grid-cols-2 lg:divide-x lg:divide-line">
-				<!-- Leaderboard -->
-				<div class="px-4 py-4 sm:px-5">
-					<div class="eyebrow mb-3">Top offenders</div>
-					{#if stats.offenders.length === 0}
-						<p class="py-6 text-sm text-faint">
-							No active automod heat. Repeat offenders climb the escalation ladder here.
-						</p>
-					{:else}
-						<ol>
-							{#each stats.offenders as o, i (o.user_id)}
-								<li class="flex items-center gap-3 border-b border-line py-2.5 last:border-b-0">
-									<span
-										class="grid size-6 shrink-0 place-items-center rounded-full bg-ink-2 font-mono text-xs font-semibold text-muted"
-									>
-										{i + 1}
-									</span>
-									<div class="min-w-0 flex-1">
-										<code class="text-accent-ink">&lt;@{o.user_id}&gt;</code>
-										<div class="text-[11px] text-faint">
-											{o.hits} hit{o.hits === 1 ? '' : 's'} · last {relTime(o.last_at)}
-										</div>
-									</div>
-									<span
-										class="shrink-0 rounded-md border border-line-strong bg-ink-2 px-2 py-0.5 font-mono text-xs font-semibold tabular-nums text-muted"
-									>
-										{numFmt.format(o.total_points)} pts
-									</span>
-								</li>
-							{/each}
-						</ol>
+								</thead>
+								<tbody>
+									{#each filteredCases as c (c.case)}
+										<tr class="border-b border-line align-top last:border-b-0 hover:bg-ink-2/40">
+											<td class="px-4 py-2.5 font-medium tabular-nums text-muted sm:px-5">#{c.case}</td>
+											<td class="px-3 py-2.5">
+												<span
+													class="inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-[11px] font-medium capitalize {chipClass(
+														c.action
+													)}"
+												>
+													{c.action}
+													{#if c.active}
+														<span
+															class="inline-block size-1.5 rounded-full bg-current opacity-70"
+															title="Active"
+														></span>
+													{/if}
+												</span>
+											</td>
+											<td class="px-3 py-2.5"
+												><code class="text-accent-ink">&lt;@{c.user_id}&gt;</code></td
+											>
+											<td class="hidden px-3 py-2.5 md:table-cell"
+												><code class="text-muted">&lt;@{c.moderator_id}&gt;</code></td
+											>
+											<td class="max-w-[22rem] px-3 py-2.5">
+												<span class="text-ink">{c.reason || '—'}</span>
+											</td>
+											<td class="whitespace-nowrap px-4 py-2.5 text-faint sm:px-5">
+												{relTime(c.created_at)}
+												{#if c.active && c.expires_at}
+													<div class="text-[11px] text-faint">expires {fmtDate(c.expires_at)}</div>
+												{/if}
+											</td>
+										</tr>
+									{/each}
+								</tbody>
+							</table>
+						</div>
 					{/if}
 				</div>
-
-				<!-- Recent automod actions -->
-				<div class="border-t border-line px-4 py-4 sm:px-5 lg:border-t-0">
-					<div class="eyebrow mb-3">Recent automod actions</div>
-					{#if infractions.length === 0}
-						<p class="py-6 text-sm text-faint">No automod actions recorded yet.</p>
-					{:else}
-						<ul>
-							{#each infractions as inf, i (inf.created_at + i)}
-								<li class="border-b border-line py-2.5 last:border-b-0">
-									<div class="flex items-center justify-between gap-2">
+			</section>
+		{:else if tab === 'heat'}
+			<!-- ── Automod heat ── -->
+			<section class="border-b border-line">
+				<div class="grid lg:grid-cols-2 lg:divide-x lg:divide-line">
+					<!-- Leaderboard -->
+					<div class="px-4 py-4 sm:px-5">
+						<div class="eyebrow mb-3">Top offenders</div>
+						{#if stats.offenders.length === 0}
+							<p class="py-6 text-sm text-faint">
+								No active automod heat. Repeat offenders climb the escalation ladder here.
+							</p>
+						{:else}
+							<ol>
+								{#each stats.offenders as o, i (o.user_id)}
+									<li class="flex items-center gap-3 border-b border-line py-2.5 last:border-b-0">
 										<span
-											class="inline-flex items-center gap-1.5 rounded-md border border-line-strong bg-ink-2 px-2 py-0.5 text-[11px] font-medium text-ink"
+											class="grid size-6 shrink-0 place-items-center rounded-full bg-ink-2 font-mono text-xs font-semibold text-muted"
 										>
-											{triggerLabel(inf.trigger_type)}
+											{i + 1}
 										</span>
-										<span class="whitespace-nowrap font-mono text-[11px] text-faint">
-											{relTime(inf.created_at)}
-										</span>
-									</div>
-									<div class="mt-1.5 flex items-center justify-between gap-2 text-sm">
-										<code class="text-accent-ink">&lt;@{inf.user_id}&gt;</code>
-										{#if inf.points > 0}
-											<span class="font-mono text-[11px] text-muted">+{inf.points} pts</span>
-										{/if}
-									</div>
-									{#if inf.reason || inf.rule_name}
-										<div class="mt-0.5 text-xs text-muted">
-											{inf.reason || inf.rule_name}
+										<div class="min-w-0 flex-1">
+											<code class="text-accent-ink">&lt;@{o.user_id}&gt;</code>
+											<div class="text-[11px] text-faint">
+												{o.hits} hit{o.hits === 1 ? '' : 's'} · last {relTime(o.last_at)}
+											</div>
 										</div>
-									{/if}
-								</li>
-							{/each}
-						</ul>
-					{/if}
-				</div>
-			</div>
-		</section>
-	{:else}
-		<!-- ── Settings ── -->
-		<ModSection label="Settings" desc="Logging and reason autocomplete for /ban, /kick, /timeout, /warn.">
-			<div class="max-w-xl">
-				<Field
-					label="Moderation log channel"
-					hint="Use /ban /kick /timeout /warn in your server — actions are logged here."
-				>
-					<ChannelSelect bind:value={cfg.log_channel} />
-				</Field>
-				<ModToggleRow
-					title="DM users when they're actioned"
-					desc="Send the member a copy of the reason when a case is opened against them."
-					bind:checked={cfg.dm_on_action}
-					label="DM on action"
-				/>
-				<div class="mt-4 border-t border-line pt-5">
-					<Field
-						label="Reason templates"
-						hint="Power the reason autocomplete on /ban, /kick, /timeout and /warn. Type a reason and press Enter to add it."
-					>
-						<ChipInput bind:value={cfg.reason_templates} placeholder="e.g. Spamming in chat" />
-					</Field>
-				</div>
-			</div>
-		</ModSection>
+										<span
+											class="shrink-0 rounded-md border border-line-strong bg-ink-2 px-2 py-0.5 font-mono text-xs font-semibold tabular-nums text-muted"
+										>
+											{numFmt.format(o.total_points)} pts
+										</span>
+									</li>
+								{/each}
+							</ol>
+						{/if}
+					</div>
 
-		<section class="border-b border-line">
-			<ModLinkRow
-				href={`/servers/${store.id}/automod`}
-				icon={ShieldAlert}
-				title="Tune automod rules"
-				desc="Filters, the escalation ladder and anti-raid."
-			/>
-		</section>
-	{/if}
+					<!-- Recent automod actions -->
+					<div class="border-t border-line px-4 py-4 sm:px-5 lg:border-t-0">
+						<div class="eyebrow mb-3">Recent automod actions</div>
+						{#if infractions.length === 0}
+							<p class="py-6 text-sm text-faint">No automod actions recorded yet.</p>
+						{:else}
+							<ul>
+								{#each infractions as inf, i (inf.created_at + i)}
+									<li class="border-b border-line py-2.5 last:border-b-0">
+										<div class="flex items-center justify-between gap-2">
+											<span
+												class="inline-flex items-center gap-1.5 rounded-md border border-line-strong bg-ink-2 px-2 py-0.5 text-[11px] font-medium text-ink"
+											>
+												{triggerLabel(inf.trigger_type)}
+											</span>
+											<span class="whitespace-nowrap font-mono text-[11px] text-faint">
+												{relTime(inf.created_at)}
+											</span>
+										</div>
+										<div class="mt-1.5 flex items-center justify-between gap-2 text-sm">
+											<code class="text-accent-ink">&lt;@{inf.user_id}&gt;</code>
+											{#if inf.points > 0}
+												<span class="font-mono text-[11px] text-muted">+{inf.points} pts</span>
+											{/if}
+										</div>
+										{#if inf.reason || inf.rule_name}
+											<div class="mt-0.5 text-xs text-muted">
+												{inf.reason || inf.rule_name}
+											</div>
+										{/if}
+									</li>
+								{/each}
+							</ul>
+						{/if}
+					</div>
+				</div>
+			</section>
+		{:else}
+			<!-- ── Settings ── -->
+			<ModSection label="Settings" desc="Logging and reason autocomplete for /ban, /kick, /timeout, /warn.">
+				<div class="max-w-xl">
+					<Field
+						label="Moderation log channel"
+						hint="Use /ban /kick /timeout /warn in your server — actions are logged here."
+					>
+						<ChannelSelect bind:value={cfg.log_channel} />
+					</Field>
+					<ModToggleRow
+						title="DM users when they're actioned"
+						desc="Send the member a copy of the reason when a case is opened against them."
+						bind:checked={cfg.dm_on_action}
+						label="DM on action"
+					/>
+					<div class="mt-4 border-t border-line pt-5">
+						<Field
+							label="Reason templates"
+							hint="Power the reason autocomplete on /ban, /kick, /timeout and /warn. Type a reason and press Enter to add it."
+						>
+							<ChipInput bind:value={cfg.reason_templates} placeholder="e.g. Spamming in chat" />
+						</Field>
+					</div>
+				</div>
+			</ModSection>
+
+			<section class="border-b border-line">
+				<ModLinkRow
+					href={`/servers/${store.id}/automod`}
+					icon={ShieldAlert}
+					title="Tune automod rules"
+					desc="Filters, the escalation ladder and anti-raid."
+				/>
+			</section>
+		{/if}
+	</TabSwipe>
 </ModerationShell>
