@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount, getContext } from 'svelte';
+	import { goto } from '$app/navigation';
 	import { GuildStore, GUILD_CTX } from '$lib/guild.svelte';
 	import { api } from '$lib/api';
 	import Toggle from '$lib/components/Toggle.svelte';
@@ -11,7 +12,7 @@
 	import TopbarAction from '$lib/components/page/TopbarAction.svelte';
 	import EmptyBlock from '$lib/components/page/EmptyBlock.svelte';
 	import ReleaseDock from '$lib/components/page/ReleaseDock.svelte';
-	import { ToggleRight, Plus, Trash2, Pencil } from 'lucide-svelte';
+	import { ToggleRight, Plus, Trash2, Pencil, Route } from 'lucide-svelte';
 
 	const store = getContext<GuildStore>(GUILD_CTX);
 	const FEATURE = 'reactionroles';
@@ -90,6 +91,11 @@
 
 	function modeLabel(mode: string): string {
 		return MODE_OPTS.find((m) => m.value === mode)?.label.split(',')[0] ?? mode;
+	}
+
+	function channelName(id?: string): string {
+		if (!id || id === '0') return '';
+		return store.channels.find((c) => c.id === id)?.name ?? '';
 	}
 
 	function startNew() {
@@ -205,11 +211,20 @@
 							<span class="min-w-0 flex-1 truncate text-[13px] font-medium text-ink">
 								{m.title || 'Untitled menu'}
 							</span>
+							<span class="shrink-0 text-[12px] text-muted">
+								{m.options.length === 1 ? '1 role' : `${m.options.length} roles`}
+							</span>
 							<span class="shrink-0 rounded border border-line px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-[0.1em] text-muted">
 								{modeLabel(m.mode)}
 							</span>
+							{#if isPosted(m) && channelName(m.channel_id)}
+								<span class="shrink-0 truncate font-mono text-[11px] text-muted">
+									#{channelName(m.channel_id)}
+								</span>
+							{/if}
 							{#if isPosted(m)}
-								<span class="shrink-0 rounded-full bg-blush px-2 py-0.5 text-[11px] font-medium text-accent-ink">
+								<span class="flex shrink-0 items-center gap-1.5 rounded-full border border-line px-2 py-0.5 text-[11px] font-medium text-muted">
+									<span class="size-1.5 rounded-full bg-success"></span>
 									Posted
 								</span>
 							{:else}
@@ -222,6 +237,17 @@
 									{#snippet icon()}<Pencil size={12} />{/snippet}
 									Edit
 								</TopbarAction>
+								{#if m.id != null}
+									<TopbarAction
+										variant="ghost"
+										onclick={() => goto('/servers/' + store.id + '/automations/reactionroles.menu.' + m.id)}
+										ariaLabel="Customize follow-up flow"
+										title="Customize follow-up flow"
+									>
+										{#snippet icon()}<Route size={12} />{/snippet}
+										Flow
+									</TopbarAction>
+								{/if}
 								<TopbarAction
 									variant="danger"
 									onclick={() => askDelete(m)}

@@ -25,10 +25,15 @@
 		<div class="mb-2 flex flex-wrap gap-1.5">
 			{#each value as v (v)}
 				<span
-					class="inline-flex items-center gap-1 rounded-full bg-blush px-2.5 py-1 text-xs font-medium text-accent-ink"
+					class="inline-flex items-center gap-1 rounded-full border border-line bg-surface py-1 pl-2 pr-1 text-xs font-medium text-ink"
 				>
 					{labelOf(v)}
-					<button type="button" onclick={() => remove(v)} aria-label="Remove"><X size={12} /></button>
+					<button
+						type="button"
+						class="grid size-4 place-items-center rounded-full opacity-70 transition hover:bg-ink-2 hover:opacity-100"
+						onclick={() => remove(v)}
+						aria-label="Remove"><X size={12} /></button
+					>
 				</span>
 			{/each}
 		</div>
