@@ -8,7 +8,7 @@
 	import PageTopbar from '$lib/components/page/PageTopbar.svelte';
 	import SectionBar from '$lib/components/page/SectionBar.svelte';
 	import ReleaseDock from '$lib/components/page/ReleaseDock.svelte';
-	import { UserPlus } from 'lucide-svelte';
+	import { UserPlus, ExternalLink } from 'lucide-svelte';
 
 	const store = getContext<GuildStore>(GUILD_CTX);
 	const FEATURE = 'autorole';
@@ -17,6 +17,10 @@
 		roles: string[];
 		include_bots: boolean;
 		wait_for_screening: boolean;
+		// The follow-up flow, authored on the automations canvas
+		// (/automations/autorole.join). This page never edits it; the onMount
+		// spread round-trips it untouched and we only read its length here.
+		tail?: unknown[];
 	};
 
 	function defaults(): Cfg {
@@ -39,6 +43,7 @@
 		return JSON.stringify({ enabled, cfg });
 	}
 	const dirty = $derived(loaded && serialize() !== baseline);
+	const tailSteps = $derived(Array.isArray(cfg.tail) ? cfg.tail.length : 0);
 
 	onMount(async () => {
 		const f = await api.feature(store.id, FEATURE);
@@ -111,50 +116,114 @@
 				<div class="skeleton h-40 w-full rounded"></div>
 			</div>
 		{:else}
-			<!-- ── Roles granted on join ──────────────────────────── -->
-			<SectionBar label="Roles granted on join" count={cfg.roles.length || undefined} />
-			<div class="px-5 py-5">
-				{#if !enabled}
-					<div class="mb-4 flex max-w-2xl items-center gap-2 border-b border-line/60 pb-4 text-[12px] text-muted">
-						<span class="size-1.5 shrink-0 rounded-full bg-faint/40"></span>
-						Auto roles is off. Turn it on, top-right, to start assigning roles.
+			<div class="grid border-b border-line/60 lg:grid-cols-2 lg:divide-x lg:divide-line/60">
+				<!-- ── Left column: Roles · Options ────────────────────── -->
+				<div class="min-w-0">
+					<!-- ── Roles granted on join ──────────────────────────── -->
+					<SectionBar label="Roles granted on join" count={cfg.roles.length || undefined} />
+					<div class="px-5 py-5">
+						{#if !enabled}
+							<div class="mb-4 flex items-center gap-2 border-b border-line/60 pb-4 text-[12px] text-muted">
+								<span class="size-1.5 shrink-0 rounded-full bg-faint/40"></span>
+								Auto roles is off. Turn it on, top-right, to start assigning roles.
+							</div>
+						{/if}
+						<Field hint="Every new member receives these roles the moment they join.">
+							<RolePicker
+								multiple
+								value={cfg.roles}
+								onChange={(v) => (cfg.roles = v as string[])}
+								placeholder="Add a role…"
+							/>
+						</Field>
 					</div>
-				{/if}
-				<div class="max-w-2xl">
-					<Field hint="Every new member receives these roles the moment they join.">
-						<RolePicker
-							multiple
-							value={cfg.roles}
-							onChange={(v) => (cfg.roles = v as string[])}
-							placeholder="Add a role…"
-						/>
-					</Field>
-				</div>
-			</div>
 
-			<!-- ── Options ────────────────────────────────────────── -->
-			<SectionBar label="Options" />
-			<div class="px-5 py-5">
-				<!-- Flat hairline toggle rows (no box). -->
-				<div class="flex max-w-2xl items-center justify-between gap-4 border-b border-line/60 pb-4">
-					<div class="min-w-0">
-						<div class="text-[12.5px] font-medium text-ink">Assign to bots</div>
-						<div class="mt-0.5 text-[12px] text-muted">Also give these roles to bots when they join.</div>
+					<!-- ── Options ────────────────────────────────────────── -->
+					<SectionBar label="Options" />
+					<div class="px-5 py-5">
+						<!-- Flat hairline toggle rows (no box). -->
+						<div class="flex items-center justify-between gap-4 border-b border-line/60 pb-4">
+							<div class="min-w-0">
+								<div class="text-[12.5px] font-medium text-ink">Assign to bots</div>
+								<div class="mt-0.5 text-[12px] text-muted">Also give these roles to bots when they join.</div>
+							</div>
+							<label class="flex shrink-0 items-center gap-2 text-[12px]">
+								<span class="hidden text-muted sm:inline">{cfg.include_bots ? 'On' : 'Off'}</span>
+								<Toggle bind:checked={cfg.include_bots} label="Assign to bots" />
+							</label>
+						</div>
+						<div class="mt-4 flex items-center justify-between gap-4 border-b border-line/60 pb-4">
+							<div class="min-w-0">
+								<div class="text-[12.5px] font-medium text-ink">Wait for membership screening</div>
+								<div class="mt-0.5 text-[12px] text-muted">Hold roles until members pass membership screening before assigning.</div>
+							</div>
+							<label class="flex shrink-0 items-center gap-2 text-[12px]">
+								<span class="hidden text-muted sm:inline">{cfg.wait_for_screening ? 'On' : 'Off'}</span>
+								<Toggle bind:checked={cfg.wait_for_screening} label="Wait for screening" />
+							</label>
+						</div>
 					</div>
-					<label class="flex shrink-0 items-center gap-2 text-[12px]">
-						<span class="hidden text-muted sm:inline">{cfg.include_bots ? 'On' : 'Off'}</span>
-						<Toggle bind:checked={cfg.include_bots} label="Assign to bots" />
-					</label>
 				</div>
-				<div class="mt-4 flex max-w-2xl items-center justify-between gap-4 border-b border-line/60 pb-4">
-					<div class="min-w-0">
-						<div class="text-[12.5px] font-medium text-ink">Wait for membership screening</div>
-						<div class="mt-0.5 text-[12px] text-muted">Hold roles until members pass membership screening before assigning.</div>
+
+				<!-- ── Right column: What happens on join ──────────────── -->
+				<div class="min-w-0">
+					<SectionBar label="What happens on join" />
+					<div class="px-5 py-5">
+						<!-- The live pipeline, as flat numbered rows (no boxes). -->
+						<ol>
+							<li class="flex items-start gap-3 border-b border-line/60 pb-4">
+								<span class="w-6 shrink-0 pt-px font-mono text-[11px] text-faint">01</span>
+								<div class="min-w-0">
+									<div class="text-[12.5px] font-medium text-ink">Member joins</div>
+									<div class="mt-0.5 text-[12px] text-muted">
+										{cfg.include_bots ? 'Members and bots trigger the flow.' : 'Members trigger the flow; bots are skipped.'}
+									</div>
+								</div>
+							</li>
+							<li class="flex items-start gap-3 border-b border-line/60 py-4 {cfg.wait_for_screening ? '' : 'opacity-50'}">
+								<span class="w-6 shrink-0 pt-px font-mono text-[11px] text-faint">02</span>
+								<div class="min-w-0">
+									<div class="text-[12.5px] font-medium text-ink">Waits for membership screening</div>
+									<div class="mt-0.5 text-[12px] text-muted">
+										{cfg.wait_for_screening
+											? 'Roles are held until the member passes screening.'
+											: 'Off. Roles are assigned the moment they join.'}
+									</div>
+								</div>
+							</li>
+							<li class="flex items-start gap-3 border-b border-line/60 py-4">
+								<span class="w-6 shrink-0 pt-px font-mono text-[11px] text-faint">03</span>
+								<div class="min-w-0">
+									<div class="text-[12.5px] font-medium text-ink">Roles granted</div>
+									<div class="mt-0.5 text-[12px] text-muted">
+										{cfg.roles.length
+											? `${cfg.roles.length} ${cfg.roles.length === 1 ? 'role' : 'roles'} assigned to the member.`
+											: 'No roles selected yet.'}
+									</div>
+								</div>
+							</li>
+							<li class="flex items-start gap-3 pt-4">
+								<span class="w-6 shrink-0 pt-px font-mono text-[11px] text-faint">04</span>
+								<div class="min-w-0">
+									<div class="text-[12.5px] font-medium text-ink">Follow-up flow</div>
+									<div class="mt-0.5 text-[12px] text-muted">
+										{tailSteps
+											? `${tailSteps} custom ${tailSteps === 1 ? 'step runs' : 'steps run'} after the roles.`
+											: 'No custom steps yet.'}
+									</div>
+									<p class="mt-2 text-[12px] text-muted">
+										Customize what runs after the roles are granted: send a DM, add a delay, grant more roles.
+									</p>
+									<a
+										href={`/servers/${store.id}/automations/autorole.join`}
+										class="mt-1.5 inline-flex items-center gap-1 text-[12px] font-medium text-accent-ink hover:underline"
+									>
+										Edit the flow <ExternalLink size={11} />
+									</a>
+								</div>
+							</li>
+						</ol>
 					</div>
-					<label class="flex shrink-0 items-center gap-2 text-[12px]">
-						<span class="hidden text-muted sm:inline">{cfg.wait_for_screening ? 'On' : 'Off'}</span>
-						<Toggle bind:checked={cfg.wait_for_screening} label="Wait for screening" />
-					</label>
 				</div>
 			</div>
 		{/if}

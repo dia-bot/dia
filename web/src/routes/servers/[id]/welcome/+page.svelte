@@ -12,6 +12,7 @@
 	import Toggle from '$lib/components/Toggle.svelte';
 	import ChannelSelect from '$lib/components/ChannelSelect.svelte';
 	import PageTopbar from '$lib/components/page/PageTopbar.svelte';
+	import SectionBar from '$lib/components/page/SectionBar.svelte';
 	import ReleaseDock from '$lib/components/page/ReleaseDock.svelte';
 	import MessageEditor from '$lib/components/commands/MessageEditor.svelte';
 	import CardStudioModal from '$lib/components/editor/CardStudioModal.svelte';
@@ -462,83 +463,99 @@
 		{#if !loaded}
 			<div class="p-6">
 				<div class="skeleton mb-3 h-6 w-40 rounded"></div>
-				<div class="skeleton h-72 w-full max-w-2xl rounded"></div>
+				<div class="skeleton h-72 w-full rounded"></div>
 			</div>
 		{:else}
 			{@const TIcon = trigger.icon}
 			{#key tab}
-				<div class="max-w-2xl space-y-5 px-5 py-5" in:fly={{ y: 8, duration: 160, easing: cubicOut }}>
-					{#if !enabled}
-						<div class="flex items-center gap-2 border-b border-line/60 pb-4 text-[12px] text-muted">
-							<span class="size-1.5 shrink-0 rounded-full bg-faint/40"></span>
-							The welcome system is off. Turn it on, top-right, to send anything.
-						</div>
-					{/if}
+				<div in:fly={{ y: 8, duration: 160, easing: cubicOut }}>
+					<div class="grid border-b border-line/60 lg:grid-cols-2 lg:divide-x lg:divide-line/60">
+						<!-- ── Left column: Delivery (trigger · channel · DM) ─── -->
+						<div class="min-w-0">
+							<SectionBar label="Delivery" />
+							<div class="px-5 py-5">
+								{#if !enabled}
+									<div class="mb-4 flex items-center gap-2 border-b border-line/60 pb-4 text-[12px] text-muted">
+										<span class="size-1.5 shrink-0 rounded-full bg-faint/40"></span>
+										The welcome system is off. Turn it on, top-right, to send anything.
+									</div>
+								{/if}
 
-					<!-- Per-trigger enable + what fires this — flat hairline row (no rose box). -->
-					<div class="flex items-center justify-between gap-3 border-b border-line/60 pb-4">
-						<div class="flex min-w-0 items-center gap-2.5">
-							<span class="grid size-6 shrink-0 place-items-center rounded border border-line bg-surface text-muted">
-								<TIcon size={13} />
-							</span>
-							<div class="min-w-0">
-								<div class="flex items-center gap-1.5">
-									<span class="font-mono text-[10px] uppercase tracking-[0.14em] text-faint">When</span>
-									<span class="font-mono text-[9.5px] text-faint">{trigger.key}</span>
+								<!-- Per-trigger enable + what fires this, a flat hairline row (no rose box). -->
+								<div class="flex items-center justify-between gap-3 border-b border-line/60 pb-4">
+									<div class="flex min-w-0 items-center gap-2.5">
+										<span class="grid size-6 shrink-0 place-items-center rounded border border-line bg-surface text-muted">
+											<TIcon size={13} />
+										</span>
+										<div class="min-w-0">
+											<div class="flex items-center gap-1.5">
+												<span class="font-mono text-[10px] uppercase tracking-[0.14em] text-faint">When</span>
+												<span class="font-mono text-[9.5px] text-faint">{trigger.key}</span>
+											</div>
+											<div class="truncate text-[12.5px] font-medium text-ink">A member {trigger.verb}, send this</div>
+										</div>
+									</div>
+									<label class="flex shrink-0 items-center gap-2 text-[12px]">
+										<span class="hidden text-muted sm:inline">{cfg[tab].enabled ? 'On' : 'Off'}</span>
+										<Toggle bind:checked={cfg[tab].enabled} label="Send on {trigger.key}" />
+									</label>
 								</div>
-								<div class="truncate text-[12.5px] font-medium text-ink">A member {trigger.verb}, send this</div>
+
+								<div class="transition-opacity {cfg[tab].enabled ? '' : 'opacity-60'}">
+									<!-- Channel: the message's destination -->
+									<div class="mt-4 flex flex-wrap items-center gap-2 text-[12.5px] text-muted">
+										<Hash size={14} class="text-faint" />
+										<span>Posts in</span>
+										<div class="min-w-[200px] max-w-xs flex-1"><ChannelSelect bind:value={cfg[tab].channel_id} placeholder="Channel to post the welcome in" /></div>
+									</div>
+
+									<!-- DM: a second, private message to the member -->
+									<div class="mt-5 border-t border-line/60 pt-5">
+										<div class="mb-2 flex items-center justify-between gap-3">
+											<div class="flex min-w-0 items-center gap-2">
+												<Mail size={14} class="text-faint" />
+												<span class="text-[12.5px] font-medium text-ink">Private DM</span>
+												<span class="hidden truncate text-[11.5px] text-muted sm:inline">also message the member directly</span>
+											</div>
+											<Toggle bind:checked={cfg[tab].dm.enabled} label="Send a DM" />
+										</div>
+										{#if cfg[tab].dm.enabled}
+											<MessageEditor step={cfg[tab].dm.step} embeds components clickPaths={false} />
+										{:else}
+											<button
+												type="button"
+												onclick={() => (cfg[tab].dm.enabled = true)}
+												class="flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-line px-4 py-4 text-[12.5px] font-medium text-faint transition-colors hover:border-line-strong hover:text-muted"
+											>
+												<Mail size={14} /> Add a private DM
+											</button>
+										{/if}
+									</div>
+								</div>
 							</div>
 						</div>
-						<label class="flex shrink-0 items-center gap-2 text-[12px]">
-							<span class="hidden text-muted sm:inline">{cfg[tab].enabled ? 'On' : 'Off'}</span>
-							<Toggle bind:checked={cfg[tab].enabled} label="Send on {trigger.key}" />
-						</label>
-					</div>
 
-					<div class="transition-opacity {cfg[tab].enabled ? '' : 'opacity-60'}">
-						<!-- Channel: the message's destination, shown as its header -->
-						<div class="mb-2 flex flex-wrap items-center gap-2 text-[12.5px] text-muted">
-							<Hash size={14} class="text-faint" />
-							<span>Posts in</span>
-							<div class="min-w-[200px] max-w-xs flex-1"><ChannelSelect bind:value={cfg[tab].channel_id} placeholder="Channel to post the welcome in" /></div>
-						</div>
-
-						<!-- The message itself: content, embeds, the card image, buttons /
-						     selects, all edited right on the Discord surface. -->
-						<MessageEditor
-							step={cfg[tab].step}
-							embeds
-							components
-							clickPaths={false}
-							card
-							cardEnabled={cfg[tab].card.enabled && !!cfg[tab].card.layout}
-							cardUrl={previewUrl}
-							cardAspect={cardAspect}
-							onCardToggle={toggleCard}
-							onCardEdit={openStudio}
-						/>
-
-						<!-- DM: a second, private message to the member -->
-						<div class="mt-5 border-t border-line/60 pt-5">
-							<div class="mb-2 flex items-center justify-between gap-3">
-								<div class="flex min-w-0 items-center gap-2">
-									<Mail size={14} class="text-faint" />
-									<span class="text-[12.5px] font-medium text-ink">Private DM</span>
-									<span class="hidden truncate text-[11.5px] text-muted sm:inline">also message the member directly</span>
+						<!-- ── Right column: Message ─────────────────────────── -->
+						<div class="min-w-0">
+							<SectionBar label="Message" />
+							<div class="px-5 py-5">
+								<div class="transition-opacity {cfg[tab].enabled ? '' : 'opacity-60'}">
+									<!-- The message itself: content, embeds, the card image, buttons /
+									     selects, all edited right on the Discord surface. -->
+									<MessageEditor
+										step={cfg[tab].step}
+										embeds
+										components
+										clickPaths={false}
+										card
+										cardEnabled={cfg[tab].card.enabled && !!cfg[tab].card.layout}
+										cardUrl={previewUrl}
+										cardAspect={cardAspect}
+										onCardToggle={toggleCard}
+										onCardEdit={openStudio}
+									/>
 								</div>
-								<Toggle bind:checked={cfg[tab].dm.enabled} label="Send a DM" />
 							</div>
-							{#if cfg[tab].dm.enabled}
-								<MessageEditor step={cfg[tab].dm.step} embeds components clickPaths={false} />
-							{:else}
-								<button
-									type="button"
-									onclick={() => (cfg[tab].dm.enabled = true)}
-									class="flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-line px-4 py-4 text-[12.5px] font-medium text-faint transition-colors hover:border-line-strong hover:text-muted"
-								>
-									<Mail size={14} /> Add a private DM
-								</button>
-							{/if}
 						</div>
 					</div>
 				</div>
