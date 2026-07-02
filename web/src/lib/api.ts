@@ -240,6 +240,11 @@ export const api = {
 	// after the read-only grant-roles step.
 	saveAutoroleActions: (id: string, tail: unknown) =>
 		req<{ ok: boolean }>('POST', `/api/guilds/${id}/autorole/actions`, { tail }),
+	// saveMenuTail persists the canvas-authored follow-up flow for one
+	// reaction-role menu. Like auto-roles the spine (the role-apply step) is
+	// read-only and there are no click actions, so only the post-pick tail saves.
+	saveMenuTail: (id: string, menuId: number, tail: unknown[]) =>
+		req<{ ok: boolean }>('POST', `/api/guilds/${id}/reaction-roles/${menuId}/actions`, { tail }),
 	levelingVariables: (id: string) =>
 		req<{ variables: { token: string; desc: string }[] }>('GET', `/api/guilds/${id}/leveling/variables`),
 	// templatingPreview renders one template string and returns the text + any error.

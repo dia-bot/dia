@@ -344,6 +344,26 @@
 									{postMsg}
 								</p>
 							{/if}
+							{#if draft.id != null}
+								<!-- Follow-up flow: deep link into the menu's built-in automation. -->
+								<div class="mt-4 border-t border-line/60 pt-4">
+									<span
+										class="mb-1.5 block font-mono text-[10px] font-medium uppercase tracking-[0.14em] text-faint"
+									>
+										After someone picks roles
+									</span>
+									<p class="mb-1.5 text-[12.5px] text-muted">
+										Run a custom flow when a member picks their roles: send a DM, grant bonus
+										roles, log it.
+									</p>
+									<a
+										href={'/servers/' + guildId + '/automations/reactionroles.menu.' + draft.id}
+										class="text-[12.5px] font-medium text-accent-ink hover:underline"
+									>
+										Customize the flow
+									</a>
+								</div>
+							{/if}
 						</div>
 					{/if}
 				</div>

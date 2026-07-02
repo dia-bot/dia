@@ -60,6 +60,12 @@ const (
 	// can trigger flows off leveling activity. Like TypeAutomodAction it has no
 	// gateway/Elixir mapper.
 	TypeLevelUp Type = "LEVEL_UP"
+
+	// TypeReactionRolePick is NOT a gateway event: the worker publishes it on
+	// the same stream when a member picks roles from a reaction-role menu, so
+	// the automations runtime can trigger flows off role picks. Like
+	// TypeAutomodAction it has no gateway/Elixir mapper.
+	TypeReactionRolePick Type = "REACTION_ROLE_PICK"
 )
 
 // SubjectPrefix is the JetStream subject root for forwarded gateway events.
@@ -271,6 +277,25 @@ type LevelUp struct {
 	NewLevel  int     `json:"new_level"`            // same as Level (mirrors the runtime var name)
 	XP        int64   `json:"xp"`                   // the member's total XP after the gain
 	Rank      int     `json:"rank"`                 // leaderboard position (1-based; 0 if unknown)
+}
+
+// ReactionRolePick is published by the worker (not the gateway) when a member
+// picks roles from a reaction-role menu (button or select), on subject
+// discord.events.REACTION_ROLE_PICK.<guild>. The automations runtime consumes
+// it as the "reaction_role_pick" trigger, exposing these fields to flows as
+// .Event.* alongside the picking member as .User / .Member. A no-op pick (the
+// member's roles already matched) still publishes, with empty Added/Removed.
+type ReactionRolePick struct {
+	GuildID   string   `json:"guild_id"`
+	ChannelID string   `json:"channel_id,omitempty"` // where the menu message lives
+	MessageID string   `json:"message_id,omitempty"` // the posted menu message
+	MenuID    string   `json:"menu_id"`              // reaction_role_menus.id, decimal string
+	MenuTitle string   `json:"menu_title,omitempty"`
+	Mode      string   `json:"mode"`    // toggle | unique | verify
+	Values    []string `json:"values"`  // role IDs the member chose
+	Added     []string `json:"added"`   // role IDs actually granted
+	Removed   []string `json:"removed"` // role IDs actually removed
+	Member    Member   `json:"member"`  // the picking member
 }
 
 // VerificationPassed is published when a member clears verification (button or

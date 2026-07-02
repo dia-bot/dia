@@ -78,6 +78,15 @@ const LEVELUP_EVENT_VARS: TmplVar[] = [
 	v('.Event.channel_id', 'snowflake', 'The channel they leveled up in')
 ];
 
+const RR_PICK_EVENT_VARS: TmplVar[] = [
+	v('.Event.menu_id', 'string', 'The reaction-role menu id (decimal string)'),
+	v('.Event.menu_title', 'string', "The menu's title"),
+	v('.Event.mode', 'string', 'The menu mode (toggle, unique or verify)'),
+	v('.Event.values', 'list', 'Role ids the member picked (before the mode was applied)'),
+	v('.Event.added', 'list', 'Role ids just granted by this pick'),
+	v('.Event.removed', 'list', 'Role ids just removed by this pick')
+];
+
 const MESSAGE_EVENT_VARS: TmplVar[] = [
 	v('.Event.content', 'string', 'The message content'),
 	v('.Event.message.id', 'snowflake', 'The message id'),
@@ -239,6 +248,17 @@ export const TRIGGERS: TriggerKindMeta[] = [
 		hasChannel: false,
 		filters: ['role', 'cooldown'],
 		eventVars: MEMBER_EVENT_VARS
+	},
+	{
+		key: 'reaction_role_pick',
+		label: 'Reaction role picked',
+		description: 'A member picks roles from a reaction-role menu.',
+		category: 'roles',
+		event: 'REACTION_ROLE_PICK',
+		actor: 'the member who picked',
+		hasChannel: true,
+		filters: ['channels', 'cooldown'],
+		eventVars: RR_PICK_EVENT_VARS
 	},
 	{
 		key: 'message_create',

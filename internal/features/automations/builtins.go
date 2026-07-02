@@ -2,12 +2,14 @@ package automations
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 
 	cc "github.com/dia-bot/dia/internal/features/customcommands"
 	"github.com/dia-bot/dia/internal/features/leveling"
 	"github.com/dia-bot/dia/internal/features/roles"
 	"github.com/dia-bot/dia/internal/features/welcome"
+	"github.com/dia-bot/dia/internal/store"
 )
 
 // Builtin is a read-only automation that Dia ships and a managed feature owns.
@@ -31,9 +33,10 @@ type Builtin struct {
 
 // BuildBuiltins renders the catalogue of built-in automations for a guild from
 // each owning feature's live config. configs maps a feature key to its raw
-// JSONB config (nil/missing → that feature's defaults), and featureEnabled maps
-// a feature key to its top-level toggle.
-func BuildBuiltins(configs map[string]json.RawMessage, featureEnabled map[string]bool) []Builtin {
+// JSONB config (nil/missing → that feature's defaults), featureEnabled maps a
+// feature key to its top-level toggle, and menus is the guild's reaction-role
+// menus (each posted menu contributes one built-in).
+func BuildBuiltins(configs map[string]json.RawMessage, featureEnabled map[string]bool, menus []store.ReactionRoleMenu) []Builtin {
 	var out []Builtin
 
 	// ── Welcome ──────────────────────────────────────────────────────────────
@@ -103,7 +106,80 @@ func BuildBuiltins(configs map[string]json.RawMessage, featureEnabled map[string
 		Definition:  autoroleFlow(rcfg),
 	})
 
+	// ── Reaction roles (one built-in per menu) ───────────────────────────────
+	rrEnabled := featureEnabled[roles.ReactionRolesKey]
+	for _, m := range menus {
+		name := m.Title
+		if name == "" {
+			name = "Untitled menu"
+		}
+		var opts []roles.Option
+		if len(m.Options) > 0 {
+			_ = json.Unmarshal(m.Options, &opts)
+		}
+		posted := m.MessageID != 0 && m.ChannelID != 0
+		out = append(out, Builtin{
+			Key:         fmt.Sprintf("reactionroles.menu.%d", m.ID),
+			Name:        "Reaction roles: " + name,
+			Description: "Applies the roles a member picks from this menu, then runs your follow-up flow. Managed on the Reaction Roles tab.",
+			TriggerType: "reaction_role_pick",
+			FeatureKey:  roles.ReactionRolesKey,
+			FeatureName: "Reaction Roles",
+			FeatureTab:  "reaction-roles",
+			Enabled:     rrEnabled && posted && len(opts) > 0,
+			Definition:  menuFlow(m, opts, posted),
+		})
+	}
+
 	return out
+}
+
+// menuFlow renders one reaction-role menu as a read-only step spine (a role_add
+// step summarizing the pickable roles) followed by the editable follow-up tail.
+// Mirrors autoroleFlow: the spine steps carry "builtin-" ids so the canvas
+// treats them as generated/read-only, while the menu's tail is appended as
+// real, persisted steps (their own non-"builtin-" ids) that render as ordinary
+// draggable nodes off the spine's out handle.
+func menuFlow(m store.ReactionRoleMenu, opts []roles.Option, posted bool) cc.Definition {
+	var tail []cc.Step
+	if len(m.Tail) > 0 {
+		_ = json.Unmarshal(m.Tail, &tail)
+	}
+
+	if !posted || len(opts) == 0 {
+		// Keep the tail behind the disabled spine so an authored follow-up flow
+		// isn't dropped (and can't be silently wiped by a canvas round-trip) just
+		// because the menu is momentarily unposted or empty.
+		return cc.Definition{Steps: append([]cc.Step{{
+			ID:   "builtin-disabled",
+			Kind: cc.KindNoop,
+		}}, tail...)}
+	}
+
+	// A single illustrative role_add naming every pickable role. The feature
+	// applies the picked roles per the menu's mode (toggle / unique / verify);
+	// the reason mirrors the runtime's "reaction role" reason. The options
+	// collapse into one comma-joined summary so the spine reads as one honest
+	// "apply picked roles" node.
+	roleIDs := make([]string, 0, len(opts))
+	for _, o := range opts {
+		roleIDs = append(roleIDs, o.RoleID)
+	}
+	apply := cc.SpecRole{
+		User:   cc.Expr{Src: "{{ .User.ID }}"},
+		Role:   cc.Expr{Src: strings.Join(roleIDs, ", ")},
+		Reason: "reaction role",
+	}
+	steps := []cc.Step{{
+		ID:   "builtin-apply",
+		Kind: cc.KindRoleAdd,
+		Spec: mustSpec(apply),
+	}}
+
+	// The editable follow-up tail, wired after the apply spine on the canvas.
+	steps = append(steps, tail...)
+
+	return cc.Definition{Steps: steps}
 }
 
 // autoroleFlow renders the auto-roles grant as a read-only step spine (a

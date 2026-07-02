@@ -10,6 +10,13 @@ import cc "github.com/dia-bot/dia/internal/features/customcommands"
 // autorole (roles automatically granted on join).
 const FeatureKey = "autorole"
 
+// ReactionRolesKey is the stable identifier for the reaction-roles feature
+// (matches guild_feature_configs.feature_key and the dashboard route). Menus
+// themselves live in the reaction_role_menus table; this key carries the
+// feature's enabled toggle and owns the per-menu built-in automations
+// ("reactionroles.menu.<id>").
+const ReactionRolesKey = "reactionroles"
+
 // Config is the autorole feature's per-guild configuration (stored as JSONB and
 // edited from the dashboard).
 type Config struct {

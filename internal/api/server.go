@@ -186,6 +186,7 @@ func (s *Server) Handler() http.Handler {
 	g.PUT("/reaction-roles", s.handleUpsertMenu)
 	g.DELETE("/reaction-roles/:mid", s.handleDeleteMenu)
 	g.POST("/reaction-roles/:mid/post", s.handlePostMenu)
+	g.POST("/reaction-roles/:mid/actions", s.handleMenuActions)
 
 	g.GET("/cases", s.handleListCases)
 	g.GET("/infractions", s.handleListInfractions)

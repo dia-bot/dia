@@ -68,7 +68,7 @@ func (p *Plugin) Init(ctx context.Context, d plugin.Deps, reg *plugin.Registrar)
 	// All reaction-role components share the "rr:" prefix; one handler routes
 	// buttons vs. selects by their custom_id.
 	reg.Component(componentPrefix, func(c *interactions.Context) error {
-		return handleComponent(c, d)
+		return p.handleComponent(c, d)
 	})
 
 	reg.Command(&interactions.Command{
@@ -231,19 +231,19 @@ func applyAutoroles(ctx context.Context, d plugin.Deps, guildID, userID string, 
 
 // ── Reaction-role components ─────────────────────────────────
 
-func handleComponent(c *interactions.Context, d plugin.Deps) error {
+func (p *Plugin) handleComponent(c *interactions.Context, d plugin.Deps) error {
 	customID := c.CustomID()
 	switch {
 	case strings.HasPrefix(customID, buttonPrefix):
-		return handleButton(c, d, customID)
+		return p.handleButton(c, d, customID)
 	case strings.HasPrefix(customID, selectPrefix):
-		return handleSelect(c, d, customID)
+		return p.handleSelect(c, d, customID)
 	default:
 		return nil // stale / unknown component
 	}
 }
 
-func handleButton(c *interactions.Context, d plugin.Deps, customID string) error {
+func (p *Plugin) handleButton(c *interactions.Context, d plugin.Deps, customID string) error {
 	menuID, roleID, ok := parseButtonID(customID)
 	if !ok {
 		return c.RespondEphemeral("That button is no longer valid.")
@@ -259,10 +259,14 @@ func handleButton(c *interactions.Context, d plugin.Deps, customID string) error
 	if err != nil {
 		return err
 	}
-	return c.RespondEphemeral(changeSummary(added, removed))
+	// The interaction ack stays feature-owned: reply first, then hand off to
+	// the pick event + follow-up flow (which must never break the role change).
+	respErr := c.RespondEphemeral(changeSummary(added, removed))
+	p.afterPick(c, d, menu, []string{roleID}, added, removed)
+	return respErr
 }
 
-func handleSelect(c *interactions.Context, d plugin.Deps, customID string) error {
+func (p *Plugin) handleSelect(c *interactions.Context, d plugin.Deps, customID string) error {
 	menuID, ok := parseSelectID(customID)
 	if !ok {
 		return c.RespondEphemeral("That menu is no longer valid.")
@@ -282,7 +286,146 @@ func handleSelect(c *interactions.Context, d plugin.Deps, customID string) error
 	if err != nil {
 		return err
 	}
-	return c.RespondEphemeral(changeSummary(added, removed))
+	// Same shape as the button path: ack first, then publish + tail.
+	respErr := c.RespondEphemeral(changeSummary(added, removed))
+	p.afterPick(c, d, menu, chosen, added, removed)
+	return respErr
+}
+
+// ── Pick event + follow-up flow ──────────────────────────────
+
+// afterPick runs once a valid pick has been applied and acked: it publishes the
+// REACTION_ROLE_PICK event (so user-built reaction_role_pick automations fire)
+// and starts the menu's canvas-authored follow-up flow (Tail) as a durable run.
+// Both are best-effort; a no-op toggle (nothing added or removed) still counts
+// as a pick and publishes with empty arrays.
+func (p *Plugin) afterPick(c *interactions.Context, d plugin.Deps, menu store.ReactionRoleMenu, values, added, removed []string) {
+	// Normalize nil slices so both the published payload and the tail's .Event
+	// vars carry empty arrays, never null.
+	if values == nil {
+		values = []string{}
+	}
+	if added == nil {
+		added = []string{}
+	}
+	if removed == nil {
+		removed = []string{}
+	}
+	p.publishPick(c, d, menu, values, added, removed)
+	p.runMenuTail(c, d, menu, values, added, removed)
+}
+
+// publishPick wraps an event.ReactionRolePick payload in an Envelope and
+// publishes it on the REACTION_ROLE_PICK subject for the guild, so the
+// automations runtime can trigger the reaction_role_pick flow. Worker-published
+// like LEVEL_UP: there is no gateway mapper. Best-effort; failures are logged.
+func (p *Plugin) publishPick(c *interactions.Context, d plugin.Deps, menu store.ReactionRoleMenu, values, added, removed []string) {
+	if d.Bus == nil {
+		return
+	}
+	messageID := ""
+	if c.I.Message != nil {
+		messageID = c.I.Message.ID
+	} else if menu.MessageID != 0 {
+		messageID = event.FormatID(menu.MessageID)
+	}
+	payload := event.ReactionRolePick{
+		GuildID:   c.GuildID,
+		ChannelID: c.I.ChannelID,
+		MessageID: messageID,
+		MenuID:    event.FormatID(menu.ID),
+		MenuTitle: menu.Title,
+		Mode:      menu.Mode,
+		Values:    values,
+		Added:     added,
+		Removed:   removed,
+		Member:    pickMember(c),
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		d.Log.Warn("reactionroles: marshal pick payload failed", "err", err)
+		return
+	}
+	envBytes, err := json.Marshal(event.Envelope{
+		Type:    event.TypeReactionRolePick,
+		GuildID: c.GuildID,
+		TS:      time.Now().UnixMilli(),
+		Data:    data,
+	})
+	if err != nil {
+		d.Log.Warn("reactionroles: marshal pick envelope failed", "err", err)
+		return
+	}
+	subject := event.Subject(event.TypeReactionRolePick, c.GuildID)
+	if err := d.Bus.Publish(c.Ctx, subject, envBytes, ""); err != nil {
+		d.Log.Warn("reactionroles: publish pick failed", "subject", subject, "err", err)
+	}
+}
+
+// runMenuTail runs the menu's follow-up flow (menu.Tail) as a durable automation
+// run once the pick has been applied and acked. Labelled with the menu's
+// built-in key ("reactionroles.menu.<id>") and TriggerKind "reaction_role_pick"
+// so it shares the flow's KV scope and Runs filter and reads like the built-in
+// automation the canvas shows. The run is detached from the interaction (no
+// Interaction* meta): the ephemeral summary above already answered the click,
+// so the tail's output posts fresh to the channel. Nothing runs (and nothing
+// persists) when the tail is empty.
+func (p *Plugin) runMenuTail(c *interactions.Context, d plugin.Deps, menu store.ReactionRoleMenu, values, added, removed []string) {
+	if p.runner == nil || len(menu.Tail) == 0 {
+		return
+	}
+	var tail []cc.Step
+	if err := json.Unmarshal(menu.Tail, &tail); err != nil {
+		d.Log.Warn("reactionroles: decode menu tail failed", "menu", menu.ID, "err", err)
+		return
+	}
+	if len(tail) == 0 {
+		return
+	}
+	gid, _ := event.ParseID(c.GuildID)
+	guildCtx := cc.ContextGuild{ID: c.GuildID, Name: "the server"}
+	if g, err := d.Store.Guilds.Get(c.Ctx, gid); err == nil {
+		if g.Name != "" {
+			guildCtx.Name = g.Name
+		}
+		guildCtx.MemberCount = g.MemberCount
+	}
+	member := pickMember(c)
+	ctxVars := cc.BuildContext(c.GuildID, c.I.ChannelID, member.User, &member, guildCtx, time.Now().UnixMilli())
+	scope := cc.NewScope(d.GuildState, c.GuildID, ctxVars, nil, nil)
+	// Exactly the .Event vars the reaction_role_pick trigger exposes, so a tail
+	// authored on the canvas behaves like a hand-built automation.
+	scope.SetEvent(map[string]any{
+		"menu_id":    event.FormatID(menu.ID),
+		"menu_title": menu.Title,
+		"mode":       menu.Mode,
+		"values":     values,
+		"added":      added,
+		"removed":    removed,
+	})
+	p.runner.Start(c.Ctx, runner.Meta{
+		AutomationID: fmt.Sprintf("reactionroles.menu.%d", menu.ID),
+		Version:      1,
+		GuildID:      c.GuildID,
+		InvokerID:    member.User.ID,
+		ActorID:      member.User.ID,
+		ChannelID:    c.I.ChannelID,
+		TriggerKind:  "reaction_role_pick",
+	}, cc.Definition{Steps: tail}, scope)
+}
+
+// pickMember builds the picking member for the pick event / tail scope from the
+// interaction, falling back to a user-only member when Discord sent no member
+// block (it always does for guild components; this is belt-and-braces).
+func pickMember(c *interactions.Context) event.Member {
+	if c.I.Member != nil {
+		m := *c.I.Member
+		if m.User.ID == "" {
+			m.User = c.User
+		}
+		return m
+	}
+	return event.Member{User: c.User}
 }
 
 // applyMode mutates the invoking member's roles according to the menu mode and

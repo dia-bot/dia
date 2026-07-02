@@ -329,14 +329,20 @@ func (s *Server) builtinList(c *gin.Context, gidInt int64) []automations.Builtin
 	configs := map[string]json.RawMessage{}
 	enabled := map[string]bool{}
 	// Load every feature that owns a built-in so its flow renders from the live
-	// config (not defaults): welcome, leveling and auto-roles.
-	for _, key := range []string{welcome.FeatureKey, leveling.FeatureKey, roles.FeatureKey} {
+	// config (not defaults): welcome, leveling, auto-roles and reaction roles.
+	for _, key := range []string{welcome.FeatureKey, leveling.FeatureKey, roles.FeatureKey, roles.ReactionRolesKey} {
 		if fc, err := s.store.Features.Get(c.Request.Context(), gidInt, key); err == nil {
 			configs[key] = fc.Config
 			enabled[key] = fc.Enabled
 		}
 	}
-	return automations.BuildBuiltins(configs, enabled)
+	// Each reaction-role menu contributes its own built-in; a load failure just
+	// drops those entries (the rest of the list still serves).
+	menus, err := s.store.ReactionRoles.List(c.Request.Context(), gidInt)
+	if err != nil {
+		s.log.Warn("builtin list: load reaction-role menus failed", "guild", gidInt, "err", err)
+	}
+	return automations.BuildBuiltins(configs, enabled, menus)
 }
 
 func (s *Server) builtinSummaries(c *gin.Context, gidInt int64) []gin.H {
