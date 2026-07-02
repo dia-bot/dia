@@ -21,9 +21,10 @@
 		ariaLabel?: string;
 	} = $props();
 
+	// 'primary' is deliberately ink-styled: filled CTAs are near-white pills, never accent fills.
 	const cls = $derived(
 		variant === 'primary'
-			? 'bg-accent text-ink hover:bg-accent/85'
+			? 'bg-ink text-bg hover:bg-ink/90'
 			: variant === 'ink'
 				? 'bg-ink text-bg hover:bg-ink/90'
 			: variant === 'danger'

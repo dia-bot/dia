@@ -374,11 +374,11 @@
 		<div class="flex h-12 shrink-0 items-center justify-end gap-2 border-t border-line px-4">
 			{#if phase === 'edit'}
 				<button class="btn btn-ghost" onclick={guardClose} disabled={savingMenu}>Cancel</button>
-				<button class="btn btn-accent" onclick={saveMenu} disabled={savingMenu || !canSaveMenu}>
+				<button class="btn btn-primary" onclick={saveMenu} disabled={savingMenu || !canSaveMenu}>
 					{savingMenu ? 'Saving…' : 'Save menu'}
 				</button>
 			{:else}
-				<button class="btn btn-accent" onclick={doClose}>Done</button>
+				<button class="btn btn-primary" onclick={doClose}>Done</button>
 			{/if}
 		</div>
 	</Dialog.Content>

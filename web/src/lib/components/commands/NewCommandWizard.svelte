@@ -344,7 +344,7 @@
 				{:else}
 					<button
 						type="button"
-						class="inline-flex h-7 items-center gap-1.5 rounded-md bg-accent px-3 text-[12px] font-medium text-ink transition-colors hover:bg-accent/85 disabled:opacity-50"
+						class="inline-flex h-7 items-center gap-1.5 rounded-md bg-ink px-3 text-[12px] font-medium text-bg transition-opacity hover:opacity-90 disabled:opacity-50"
 						disabled={creating || !nameValid || nameTaken}
 						onclick={create}
 					>
