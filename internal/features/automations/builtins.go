@@ -222,8 +222,9 @@ func autoroleFlow(cfg roles.Config) cc.Definition {
 }
 
 // welcomeFlow renders one welcome/goodbye MessageConfig as an illustrative
-// read-only step tree: an optional DM, then the channel post (content + embeds,
-// with a note when a card image is attached).
+// read-only step tree: the card render (once, shared by every surface that
+// attaches it), an optional DM, then the channel post (content + embeds, with
+// the card attached).
 func welcomeFlow(mc welcome.MessageConfig) cc.Definition {
 	if !mc.Enabled {
 		return cc.Definition{Steps: []cc.Step{{
@@ -234,7 +235,24 @@ func welcomeFlow(mc welcome.MessageConfig) cc.Definition {
 
 	var steps []cc.Step
 
-	if mc.DM.Enabled && (mc.DM.Content != "" || len(mc.DM.Components) > 0 || len(mc.DM.Embeds) > 0) {
+	// Illustrative: the Welcome feature renders the card image itself, once per
+	// event, and attaches the same PNG to every surface that wants it. Shown as
+	// a single step so the flow reads truthfully (you can see the image is
+	// generated before whichever send attaches it first).
+	cardStep := cc.Step{
+		ID:   "builtin-card",
+		Kind: cc.KindImageRender,
+		Spec: mustSpec(cc.SpecImageRender{Into: "welcome_card"}),
+	}
+	cardRef := cc.AttachmentRef{FromVar: "welcome_card", Filename: "card.png"}
+	dmAttachesCard := mc.DM.Enabled && mc.DM.AttachCard && mc.Card.Enabled
+	cardEmitted := false
+	if dmAttachesCard {
+		steps = append(steps, cardStep)
+		cardEmitted = true
+	}
+
+	if mc.DM.Enabled && (mc.DM.Content != "" || len(mc.DM.Components) > 0 || len(mc.DM.Embeds) > 0 || dmAttachesCard) {
 		dm := cc.SpecSendDM{
 			User:    cc.Expr{Src: "{{ .User.ID }}"},
 			Content: tokensToTmpl(mc.DM.Content),
@@ -246,21 +264,17 @@ func welcomeFlow(mc welcome.MessageConfig) cc.Definition {
 			dm.Embeds = append(dm.Embeds, welcomeEmbed(e))
 		}
 		dm.Components = welcomeComponents(mc.DM.Components)
+		if dmAttachesCard {
+			dm.Attachments = append(dm.Attachments, cardRef)
+		}
 		steps = append(steps, cc.Step{ID: "builtin-dm", Kind: cc.KindSendDM, Spec: mustSpec(dm)})
 		// The DM's own click-router, right after it, so the canvas fuses its
 		// button dots independently of the channel message's.
 		steps = append(steps, clickRouter("builtin-dm", mc.DM.Components, welcomeClickActions(mc.DM.Actions))...)
 	}
 
-	if mc.Card.Enabled {
-		// Illustrative: the Welcome feature renders the card image itself and
-		// attaches it to the message below. Shown as its own step so the flow
-		// reads truthfully (you can see the image is generated).
-		steps = append(steps, cc.Step{
-			ID:   "builtin-card",
-			Kind: cc.KindImageRender,
-			Spec: mustSpec(cc.SpecImageRender{Into: "welcome_card"}),
-		})
+	if mc.Card.Enabled && !cardEmitted {
+		steps = append(steps, cardStep)
 	}
 
 	send := cc.SpecSendMessage{
@@ -275,10 +289,7 @@ func welcomeFlow(mc welcome.MessageConfig) cc.Definition {
 	}
 	send.Components = welcomeComponents(mc.Components)
 	if mc.Card.Enabled {
-		send.Attachments = append(send.Attachments, cc.AttachmentRef{
-			FromVar:  "welcome_card",
-			Filename: "card.png",
-		})
+		send.Attachments = append(send.Attachments, cardRef)
 	}
 	steps = append(steps, cc.Step{
 		ID:   "builtin-send",

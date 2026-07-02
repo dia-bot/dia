@@ -115,8 +115,14 @@ type CardConfig struct {
 // custom_id "welcome:dm:<tab>:<guildID>:<suffix>" (the guild id is embedded
 // because a DM interaction carries no guild on its own).
 type DMConfig struct {
-	Enabled    bool              `json:"enabled"`
-	Content    string            `json:"content"`
+	Enabled bool   `json:"enabled"`
+	Content string `json:"content"`
+
+	// AttachCard also attaches the channel message's card image (the Card on
+	// the parent MessageConfig) to the DM when it's on; there is no separate DM
+	// card design.
+	AttachCard bool `json:"attach_card,omitempty"`
+
 	Embeds     []EmbedConfig     `json:"embeds,omitempty"`
 	Components []cc.ComponentRow `json:"components,omitempty"`
 	Actions    []ButtonAction    `json:"actions,omitempty"`
