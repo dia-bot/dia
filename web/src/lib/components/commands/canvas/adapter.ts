@@ -52,6 +52,11 @@ export type NodeData = {
 	endsHere?: boolean; // step.kind is 'exit' or 'fail' (terminates this branch)
 	ownerId?: string; // error-router nodes: the step the handlers belong to
 	clickTarget?: boolean; // reached via a button's on-click line (enters left)
+	// Decorations layered on by the canvas after treeToGraph:
+	errorText?: string; // first validation error on this step (shown when hasError)
+	locked?: boolean; // managed/read-only node, edit affordances are hidden
+	outUnlocked?: boolean; // locked node whose out handle stays connectable (tail anchor)
+	entryKind?: 'command' | 'trigger'; // entry pill style (command editor vs automation)
 };
 
 export type Slot =

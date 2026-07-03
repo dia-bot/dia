@@ -3,6 +3,7 @@
 		SvelteFlow,
 		Background,
 		Controls,
+		MiniMap,
 		BackgroundVariant,
 		Panel,
 		MarkerType,
@@ -71,7 +72,16 @@
 		onAddCase,
 		onAddParallelBranch,
 		palette,
-		showLegend = true
+		showLegend = true,
+		entryKind = 'command',
+		onEntryClick,
+		errorMessages = new Map<string, string>(),
+		initialPositions,
+		onPositionsChange,
+		readonly = false,
+		lockedIds,
+		tailAnchorId = '',
+		quickAdds
 	}: {
 		steps: Step[];
 		scratch?: Step[][];
@@ -97,6 +107,26 @@
 		onAttachScratch?: (sourceId: string, handle: string | null, headId: string) => void;
 		onAddCase?: (id: string) => void;
 		onAddParallelBranch?: (id: string) => void;
+		// Entry pill: a trigger automation shows a "when …" event pill instead of
+		// the /command pill, and clicking it opens the trigger config.
+		entryKind?: 'command' | 'trigger';
+		onEntryClick?: () => void;
+		// First validation error per step id, rendered inline on the node.
+		errorMessages?: Map<string, string>;
+		// Saved layout (ui_hints.positions): seeds node positions on first paint;
+		// onPositionsChange reports the live layout back so it joins the save cycle.
+		initialPositions?: Record<string, { x: number; y: number }>;
+		onPositionsChange?: (positions: Record<string, { x: number; y: number }>) => void;
+		// Read-only canvas: no connections, no add-step, every node locked.
+		readonly?: boolean;
+		// lockedIds marks managed nodes (e.g. a feature's generated spine) as
+		// locked, edit affordances hidden, handles disabled.
+		lockedIds?: (id: string) => boolean;
+		// A locked node whose out handle must stay live (the tail anchor a
+		// follow-up flow hangs off).
+		tailAnchorId?: string;
+		// Trigger-aware quick-add chips shown in the empty state.
+		quickAdds?: { kind: string; label: string }[];
 	} = $props();
 
 	const nodeTypes: NodeTypes = {
@@ -132,6 +162,15 @@
 	// rebuild, and extended incrementally: a NEW node lands right next to the
 	// node it connects from; nothing already placed ever moves on its own.
 	const positions = new Map<string, { x: number; y: number }>();
+
+	// Node positions snap to a 14px lattice so drag-created and dagre-seeded
+	// cards line up (matches the SvelteFlow snapGrid below).
+	const GRID = 14;
+	const snap = (v: number) => Math.round(v / GRID) * GRID;
+
+	// Saved layout is applied exactly once (first paint). Tidy deliberately
+	// re-runs dagre without re-seeding, so it actually re-lays-out.
+	let seededInitial = false;
 
 	function offsetFor(src: XYNode, handle: string | null | undefined): { x: number; y: number } {
 		const { x, y } = src.position;
@@ -215,6 +254,15 @@
 			const laid = applyLayout(spineNodes, spineEdges, { rankdir: 'TB' });
 			positions.clear();
 			for (const n of laid) positions.set(n.id, n.position);
+			// Saved layout wins over the fresh dagre pass on the very first paint;
+			// ids the saved map lacks keep their dagre spot. Tidy skips this so it
+			// relayouts for real.
+			if (!seededInitial && initialPositions) {
+				for (const [id, p] of Object.entries(initialPositions)) {
+					positions.set(id, { x: p.x, y: p.y });
+				}
+			}
+			seededInitial = true;
 			// Off-spine nodes fall through to the multi-pass below as
 			// unknowns, resolved via offsetFor (beside their owner).
 		}
@@ -240,7 +288,8 @@
 				const src = byId.get(e.source);
 				const node = byId.get(e.target);
 				if (!src || !node) continue;
-				node.position = offsetFor(src as XYNode, e.sourceHandle);
+				const p = offsetFor(src as XYNode, e.sourceHandle);
+				node.position = { x: snap(p.x), y: snap(p.y) };
 				unknown.delete(e.target);
 				progressed = true;
 			}
@@ -342,6 +391,19 @@
 		if (lit && n.id !== ENTRY_ID && !lit.has(n.id)) {
 			(data as Record<string, unknown>).dimmed = true;
 		}
+		if (n.id === ENTRY_ID) {
+			data.entryKind = entryKind;
+		} else {
+			const msg = errorMessages.get(n.id);
+			if (msg) data.errorText = msg;
+		}
+		// Read-only canvas locks every node; otherwise a caller-supplied predicate
+		// (a feature's generated spine) locks individual nodes. The tail anchor
+		// stays out-connectable so the follow-up flow can still be wired.
+		if (readonly || lockedIds?.(n.id)) {
+			data.locked = true;
+			if (n.id === tailAnchorId) data.outUnlocked = true;
+		}
 		return { ...n, data };
 	}
 
@@ -362,6 +424,7 @@
 		void scratch;
 		void commandName;
 		void errorPaths;
+		void errorMessages;
 		void selectedId;
 		rebuild();
 	});
@@ -370,6 +433,7 @@
 		edgePanel = null;
 		if (node.type === 'entry') {
 			selectedId = '';
+			onEntryClick?.();
 			return;
 		}
 		if (node.type === 'error_router') {
@@ -459,9 +523,20 @@
 		for (const n of dragged ?? (targetNode ? [targetNode] : [])) {
 			positions.set(n.id, n.position);
 		}
+		emitPositions();
+	}
+
+	// Report the live layout back so it can be persisted (ui_hints.positions).
+	function emitPositions() {
+		onPositionsChange?.(Object.fromEntries(positions));
 	}
 
 	const { fitView, screenToFlowPosition } = useSvelteFlow();
+
+	// centerOn frames a single node, used when jumping to a validation issue.
+	export function centerOn(id: string) {
+		fitView({ nodes: [{ id }], duration: 300, padding: 0.4, maxZoom: 1 });
+	}
 
 	// Reattaching islands: the ONLY valid drag-to-connect target is the first
 	// step of a disconnected chain. Everything else opens the drop picker.
@@ -518,6 +593,7 @@
 	} | null>(null);
 
 	function onconnectend(event: MouseEvent | TouchEvent, state: FinalConnectionState) {
+		if (readonly) return;
 		if (state.isValid) return;
 		if (!state.fromNode || !state.fromHandle) return;
 		// Source handles only — dragging out of a target ("in") handle means
@@ -643,6 +719,7 @@
 		const from = new Map(nodes.map((n) => [n.id, { ...n.position }]));
 		forceLayout = true;
 		rebuild();
+		emitPositions();
 		const total = dur(360);
 		if (total > 0 && from.size > 0) {
 			const target = new Map(nodes.map((n) => [n.id, { ...n.position }]));
@@ -683,8 +760,9 @@
 		fitView
 		fitViewOptions={FIT_OPTS}
 		nodesDraggable
-		nodesConnectable
+		nodesConnectable={!readonly}
 		elementsSelectable
+		snapGrid={[14, 14]}
 		connectionRadius={32}
 		{onnodeclick}
 		{onpaneclick}
@@ -703,17 +781,29 @@
 		<Background variant={BackgroundVariant.Dots} gap={28} size={0.9} />
 		<Controls position="bottom-right" showLock={false} />
 
+		<!-- Overview map, only worth its space on a busy canvas. -->
+		{#if nodes.length > 10}
+			<MiniMap
+				pannable
+				zoomable
+				nodeColor="hsl(var(--muted-foreground) / 0.4)"
+				maskColor="hsl(var(--background) / 0.7)"
+			/>
+		{/if}
+
 		<Panel position="top-left">
 			<div class="flex items-center gap-1.5">
 				<!-- Add step — the primary way in. -->
-				<button
-					type="button"
-					onclick={() => (addOpen = !addOpen)}
-					class="inline-flex h-8 items-center gap-1.5 rounded-lg bg-foreground px-3 text-[12px] font-medium text-background shadow-sm transition-opacity hover:opacity-90"
-				>
-					<Plus class="size-3.5" />
-					Add step
-				</button>
+				{#if !readonly}
+					<button
+						type="button"
+						onclick={() => (addOpen = !addOpen)}
+						class="inline-flex h-8 items-center gap-1.5 rounded-lg bg-foreground px-3 text-[12px] font-medium text-background shadow-sm transition-opacity hover:opacity-90"
+					>
+						<Plus class="size-3.5" />
+						Add step
+					</button>
+				{/if}
 
 				<div
 					class="flex items-center overflow-hidden rounded-lg border border-border/60 bg-card/90 shadow-sm backdrop-blur-md"
@@ -841,10 +931,17 @@
 				>
 					<Workflow class="size-4" />
 				</div>
-				<p class="text-[13px] font-medium text-foreground">Build the flow</p>
+				<p class="text-[13px] font-medium text-foreground">
+					{entryKind === 'trigger' ? 'Add the first step' : 'Build the flow'}
+				</p>
 				<p class="mt-1 text-[11.5px] leading-relaxed text-muted-foreground">
-					Add the first step, then drag from a step's dots to branch, chain, and
-					handle errors. Click any step to edit it.
+					{#if entryKind === 'trigger'}
+						Runs when: {commandName}. Add the first step, then drag from a step's
+						dots to branch, chain, and handle errors.
+					{:else}
+						Add the first step, then drag from a step's dots to branch, chain, and
+						handle errors. Click any step to edit it.
+					{/if}
 				</p>
 				<button
 					type="button"
@@ -854,6 +951,19 @@
 					<Plus class="size-3.5" />
 					Add your first step
 				</button>
+				{#if quickAdds && quickAdds.length}
+					<div class="mt-3 flex flex-wrap justify-center gap-1.5">
+						{#each quickAdds as qa (qa.kind + qa.label)}
+							<button
+								type="button"
+								class="inline-flex h-6 items-center rounded-full border border-border/70 px-2.5 text-[11px] font-medium text-muted-foreground transition-colors hover:border-foreground/30 hover:text-foreground"
+								onclick={() => onAddAtRoot?.(qa.kind)}
+							>
+								{qa.label}
+							</button>
+						{/each}
+					</div>
+				{/if}
 			</div>
 		</div>
 	{/if}
@@ -972,6 +1082,25 @@
 	}
 	:global(.svelte-flow__background) {
 		background-color: hsl(var(--background));
+	}
+	/* Overview map, sits above the Controls stack in the bottom-right. */
+	:global(.svelte-flow__minimap) {
+		background: hsl(var(--card));
+		border: 1px solid hsl(var(--border));
+		border-radius: 0.5rem;
+		bottom: 5rem;
+		overflow: hidden;
+		box-shadow: none;
+	}
+	:global(.svelte-flow__minimap-node) {
+		fill: hsl(var(--muted-foreground) / 0.4);
+		stroke: none;
+	}
+	:global(.svelte-flow__minimap-node.selected) {
+		fill: hsl(var(--foreground));
+	}
+	:global(.svelte-flow__minimap-mask) {
+		fill: hsl(var(--background) / 0.7);
 	}
 	:global(.svelte-flow__attribution) {
 		display: none !important;

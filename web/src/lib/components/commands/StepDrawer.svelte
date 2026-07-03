@@ -13,15 +13,20 @@
 
 	import X from 'lucide-svelte/icons/x';
 	import Trash2 from 'lucide-svelte/icons/trash-2';
+	import Copy from 'lucide-svelte/icons/copy';
 
 	let {
 		step,
 		onClose,
-		onDelete
+		onDelete,
+		onDuplicate
 	}: {
 		step: Step;
 		onClose: () => void;
 		onDelete: (id: string) => void;
+		// Optional: when provided, a Copy button duplicates this step (the
+		// automations editor wires it; the command editor leaves it off).
+		onDuplicate?: (id: string) => void;
 	} = $props();
 
 	const meta = $derived(STEP_KIND_BY_KIND.get(step.kind));
@@ -54,6 +59,17 @@
 				<p class="truncate font-mono text-[10px] text-faint">{summary}</p>
 			{/if}
 		</div>
+		{#if onDuplicate}
+			<button
+				type="button"
+				class="grid size-7 shrink-0 place-items-center rounded-md text-muted transition-colors hover:bg-surface hover:text-ink"
+				onclick={() => onDuplicate?.(step.id)}
+				title="Duplicate step (⌘D)"
+				aria-label="Duplicate step"
+			>
+				<Copy size={12} />
+			</button>
+		{/if}
 		<button
 			type="button"
 			class="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md px-2 text-[11.5px] font-medium text-muted transition-colors hover:bg-surface hover:text-danger"

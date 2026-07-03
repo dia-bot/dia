@@ -14,7 +14,7 @@
 	import ReleaseDock, { type DockState } from '$lib/components/commands/ReleaseDock.svelte';
 	import PreflightIssues from '$lib/components/commands/PreflightIssues.svelte';
 	import type { Definition, Step, ValidationResult, ValidationIssue, StepKindMeta } from '$lib/commands/types';
-	import { newStep, STEP_KINDS, STEP_KIND_BY_KIND } from '$lib/commands/types';
+	import { newStep, newStepID, STEP_KINDS, STEP_KIND_BY_KIND } from '$lib/commands/types';
 	import { EXPR_SCOPE_CTX, AUTOMATION_CTX, type ExprScope } from '$lib/commands/expr-meta';
 	import { TRIGGERS, TRIGGER_BY_KEY, triggerEventVars, type TriggerConfig } from '$lib/automations/types';
 
@@ -64,6 +64,15 @@
 
 	let settingsOpen = $state(false);
 	let triggerOpen = $state(false);
+	let runsOpen = $state(false);
+
+	// Undo/redo history of definition snapshots (JSON strings). snapshot() runs
+	// before every mutation; the keyboard handler pops between the stacks.
+	let undoStack: string[] = [];
+	let redoStack: string[] = [];
+
+	// canvasEl (editable canvas) lets jump-to-issue frame the offending node.
+	let canvasEl = $state<FlowCanvas | null>(null);
 
 	type DockPhase = 'idle' | 'saving' | 'publishing' | 'saved' | 'published' | 'error';
 	let phase = $state<DockPhase>('idle');
@@ -123,6 +132,56 @@
 	const errorPaths = $derived(buildErrorPaths(validation?.issues ?? []));
 	const issueCount = $derived(validation?.issues?.length ?? 0);
 	const errorCount = $derived(validation?.issues?.filter((i) => i.severity === 'error').length ?? 0);
+
+	// First error message per step id, rendered inline on each node.
+	const errorMessages = $derived.by(() => {
+		const m = new Map<string, string>();
+		for (const iss of validation?.issues ?? []) {
+			if (iss.severity !== 'error') continue;
+			const id = stepIdAtPath(iss.path);
+			if (id && !m.has(id)) m.set(id, iss.message);
+		}
+		return m;
+	});
+
+	// Saved node layout (ui_hints.positions) seeds the canvas and joins the save
+	// cycle as the user drags cards.
+	const savedPositions = $derived(
+		auto?.definition.ui_hints?.positions as Record<string, { x: number; y: number }> | undefined
+	);
+
+	// Trigger-aware first steps offered in the empty-state.
+	const quickAdds = $derived.by<{ kind: string; label: string }[]>(() => {
+		const t = auto?.trigger_type ?? '';
+		if (t === 'member_join' || t === 'member_leave')
+			return [
+				{ kind: 'send_message', label: 'Post a message' },
+				{ kind: 'send_dm', label: 'DM the member' },
+				{ kind: 'role_add', label: 'Grant a role' }
+			];
+		if (t === 'automod_action' || t === 'moderation_action')
+			return [
+				{ kind: 'send_message', label: 'Log to a channel' },
+				{ kind: 'member_timeout', label: 'Timeout the member' }
+			];
+		return [
+			{ kind: 'send_message', label: 'Send a message' },
+			{ kind: 'role_add', label: 'Grant a role' },
+			{ kind: 'wait_for', label: 'Wait for…' }
+		];
+	});
+
+	// Latest run drives the header capsule's status dot.
+	const latestRun = $derived(runs[0] ?? null);
+	function runDot(status?: string): string {
+		return status === 'done'
+			? 'bg-success'
+			: status === 'failed'
+				? 'bg-danger'
+				: status === 'waiting'
+					? 'bg-ink/60'
+					: 'bg-faint/40';
+	}
 
 	const dockState = $derived.by<DockState>(() => {
 		if (!auto || readonly) return 'hidden';
@@ -310,6 +369,8 @@
 		selectedId = '';
 		validation = null;
 		runs = [];
+		undoStack = [];
+		redoStack = [];
 		clearDockTimer();
 		phase = 'idle';
 		dockError = '';
@@ -433,6 +494,7 @@
 				auto.status = fresh.status;
 			}
 			phase = thenPublish ? 'published' : 'saved';
+			if (thenPublish) void loadRuns();
 			dockTimer = setTimeout(() => (phase = 'idle'), thenPublish ? 1600 : 1400);
 		} catch (e) {
 			if (gen !== loadGen) return;
@@ -451,6 +513,14 @@
 			clearDockTimer();
 			phase = 'idle';
 		}
+	});
+
+	// Keep the runs popover fresh while it's open (a run may finish as you watch).
+	$effect(() => {
+		if (!runsOpen || !auto || auto.builtin) return;
+		void loadRuns();
+		const t = setInterval(() => void loadRuns(), 10000);
+		return () => clearInterval(t);
 	});
 
 	// The welcome flow is read-only except for its button click actions. Spine
@@ -625,6 +695,20 @@
 	}
 
 	function onShortcut(e: KeyboardEvent) {
+		const mod = e.metaKey || e.ctrlKey;
+		if (mod && e.key.toLowerCase() === 'z') {
+			if (isInTextField(e.target)) return;
+			e.preventDefault();
+			if (e.shiftKey) redo();
+			else undo();
+			return;
+		}
+		if (mod && e.key.toLowerCase() === 'd') {
+			if (isInTextField(e.target)) return;
+			e.preventDefault();
+			duplicateStep();
+			return;
+		}
 		if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
 			e.preventDefault();
 			if (featureEditable) {
@@ -647,9 +731,78 @@
 
 	function jumpToIssue(iss: ValidationIssue) {
 		const stepId = stepIdAtPath(iss.path);
-		if (stepId) selectedId = stepId;
-		else if (iss.path.startsWith('trigger')) triggerOpen = true;
+		if (stepId) {
+			selectedId = stepId;
+			canvasEl?.centerOn(stepId);
+		} else if (iss.path.startsWith('trigger')) triggerOpen = true;
 		else settingsOpen = true;
+	}
+
+	// ── undo / redo ──
+	// snapshot() captures the definition before a mutation. It dedupes against the
+	// last entry (so a mutating fn that early-returns doesn't stack a no-op) and
+	// caps the history at 50. Any real edit clears the redo stack.
+	function snapshot() {
+		if (!auto) return;
+		const s = JSON.stringify(auto.definition);
+		if (undoStack[undoStack.length - 1] === s) return;
+		undoStack.push(s);
+		if (undoStack.length > 50) undoStack.shift();
+		redoStack = [];
+	}
+	function undo() {
+		if (!auto || undoStack.length === 0) return;
+		const prev = undoStack.pop()!;
+		redoStack.push(JSON.stringify(auto.definition));
+		auto.definition = JSON.parse(prev);
+		if (selectedId && !findStep(auto.definition.steps ?? [], selectedId)) selectedId = '';
+	}
+	function redo() {
+		if (!auto || redoStack.length === 0) return;
+		const next = redoStack.pop()!;
+		undoStack.push(JSON.stringify(auto.definition));
+		auto.definition = JSON.parse(next);
+		if (selectedId && !findStep(auto.definition.steps ?? [], selectedId)) selectedId = '';
+	}
+
+	// cloneWithNewIds deep-copies a step (and every nested branch) with fresh ids
+	// so a duplicate never collides with the original.
+	function cloneWithNewIds(s: Step): Step {
+		const clone = structuredClone(s);
+		const reassign = (st: Step) => {
+			st.id = newStepID();
+			for (const b of [st.then, st.else, st.default, st.on_error]) if (b) b.forEach(reassign);
+			for (const c of st.cases ?? []) (c.do ?? []).forEach(reassign);
+			for (const ec of st.on_error_cases ?? []) (ec.do ?? []).forEach(reassign);
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any
+			const spec = (st.spec ?? {}) as any;
+			for (const br of spec.branches ?? []) (br as Step[]).forEach(reassign);
+			for (const t of spec.on_timeout ?? []) reassign(t as Step);
+		};
+		reassign(clone);
+		return clone;
+	}
+	function duplicateStep() {
+		if (!auto || !selectedId) return;
+		// A fully read-only built-in can't be edited at all.
+		if (readonly && !featureEditable) return;
+		// Spine nodes can't be duplicated on a feature-editable flow (they're
+		// regenerated from config and wouldn't persist).
+		if (featureEditable && isSpineNode(selectedId)) return;
+		const located = locateAnywhere(selectedId);
+		if (!located) return;
+		snapshot();
+		const clone = cloneWithNewIds(located.step);
+		located.branch.splice(located.index + 1, 0, clone);
+		auto.definition.steps = [...(auto.definition.steps ?? [])];
+		auto.definition.scratch = [...(auto.definition.scratch ?? [])];
+		selectedId = clone.id;
+	}
+
+	// Persist the live node layout into ui_hints so it saves with the definition.
+	function onPositionsChange(pos: Record<string, { x: number; y: number }>) {
+		if (!auto) return;
+		auto.definition.ui_hints = { ...(auto.definition.ui_hints ?? {}), positions: pos };
 	}
 
 	// ── step mutations (identical canvas semantics to the command editor) ──
@@ -664,6 +817,7 @@
 	}
 	function addAtRoot(kind: string) {
 		if (!auto) return;
+		snapshot();
 		const ns = newStep(kind);
 		tuneForEvent(ns);
 		auto.definition.steps = [...(auto.definition.steps ?? []), ns];
@@ -678,6 +832,7 @@
 	}
 	function addFromHandle(sourceNodeId: string, handle: string | null, kind: string) {
 		if (!auto) return;
+		snapshot();
 		const ns = newStep(kind);
 		tuneForEvent(ns);
 		if (sourceNodeId === ENTRY_ID) {
@@ -770,6 +925,7 @@
 		if (!auto) return;
 		const located = locateAnywhere(id);
 		if (!located) return;
+		snapshot();
 		located.branch.splice(located.index, 1);
 		auto.definition.scratch = (auto.definition.scratch ?? []).filter((ch) => ch.length > 0);
 		auto.definition.steps = [...(auto.definition.steps ?? [])];
@@ -779,6 +935,7 @@
 		if (!auto) return;
 		const located = locateAnywhere(id);
 		if (!located) return;
+		snapshot();
 		const chain = located.branch.splice(located.index);
 		if (chain.length === 0) return;
 		auto.definition.scratch = [...(auto.definition.scratch ?? []), chain];
@@ -789,6 +946,7 @@
 		const all = auto.definition.scratch ?? [];
 		const idx = all.findIndex((ch) => ch[0]?.id === headId);
 		if (idx < 0) return;
+		snapshot();
 		const chain = all[idx];
 		auto.definition.scratch = all.filter((_, i) => i !== idx);
 		insertChain(sourceNodeId, handle, chain);
@@ -893,6 +1051,7 @@
 		if (!auto) return;
 		const located = locateStep(auto.definition.steps ?? [], id);
 		if (!located) return;
+		snapshot();
 		if (located.step.on_error === undefined && !located.step.on_error_cases?.length) located.step.on_error = [];
 		auto.definition.steps = [...(auto.definition.steps ?? [])];
 	}
@@ -900,6 +1059,7 @@
 		if (!auto) return;
 		const located = locateStep(auto.definition.steps ?? [], id);
 		if (!located) return;
+		snapshot();
 		located.step.on_error = undefined;
 		located.step.on_error_cases = undefined;
 		auto.definition.steps = [...(auto.definition.steps ?? [])];
@@ -908,8 +1068,9 @@
 		if (!auto) return;
 		const located = locateStep(auto.definition.steps ?? [], id);
 		if (!located) return;
+		if (located.index + 1 >= located.branch.length) return;
+		snapshot();
 		const following = located.branch.splice(located.index + 1);
-		if (following.length === 0) return;
 		located.step[which] = [...(located.step[which] ?? []), ...following];
 		auto.definition.steps = [...(auto.definition.steps ?? [])];
 	}
@@ -917,6 +1078,7 @@
 		if (!auto) return;
 		const located = locateStep(auto.definition.steps ?? [], id);
 		if (!located) return;
+		snapshot();
 		located.branch.splice(located.index);
 		auto.definition.steps = [...(auto.definition.steps ?? [])];
 		if (selectedId && !findStep(auto.definition.steps ?? [], selectedId)) selectedId = '';
@@ -925,6 +1087,7 @@
 		if (!auto) return;
 		const located = locateStep(auto.definition.steps ?? [], id);
 		if (!located || located.step.kind !== 'switch') return;
+		snapshot();
 		const ns = newStep('send_message');
 		located.step.cases = [...(located.step.cases ?? []), { when: { lang: 'tmpl', src: '' }, do: [ns] }];
 		auto.definition.steps = [...(auto.definition.steps ?? [])];
@@ -934,6 +1097,7 @@
 		if (!auto) return;
 		const located = locateStep(auto.definition.steps ?? [], id);
 		if (!located || located.step.kind !== 'parallel') return;
+		snapshot();
 		const ns = newStep('send_message');
 		// eslint-disable-next-line @typescript-eslint/no-explicit-any
 		const spec = (located.step.spec ?? {}) as any;
@@ -945,6 +1109,7 @@
 
 	function addVariable() {
 		if (!auto) return;
+		snapshot();
 		auto.definition.variables = [
 			...(auto.definition.variables ?? []),
 			{ name: `var${(auto.definition.variables?.length ?? 0) + 1}`, type: 'string', scope: 'run' }
@@ -952,6 +1117,7 @@
 	}
 	function removeVariable(i: number) {
 		if (!auto) return;
+		snapshot();
 		auto.definition.variables = (auto.definition.variables ?? []).filter((_, idx) => idx !== i);
 	}
 
@@ -987,7 +1153,19 @@
 		if (!loaded) return;
 		const onKey = (e: KeyboardEvent) => {
 			if (isInTextField(e.target)) return;
-			if (e.key === 'Escape' && !e.defaultPrevented) selectedId = '';
+			if (e.key === 'Escape' && !e.defaultPrevented) {
+				selectedId = '';
+				return;
+			}
+			if ((e.key === 'Delete' || e.key === 'Backspace') && selectedId) {
+				// A fully read-only built-in blocks deletes; feature spines block their
+				// own generated nodes (welcomeDeleteStep no-ops on them).
+				if (readonly && !featureEditable) return;
+				if (featureEditable && isSpineNode(selectedId)) return;
+				e.preventDefault();
+				if (featureEditable) welcomeDeleteStep(selectedId);
+				else deleteStep(selectedId);
+			}
 		};
 		window.addEventListener('keydown', onKey);
 		return () => window.removeEventListener('keydown', onKey);
@@ -1135,6 +1313,51 @@
 				</Popover.Root>
 			{/if}
 
+			{#if !readonly && !(runs.length === 0 && auto.status === 'draft')}
+				<Popover.Root bind:open={runsOpen}>
+					<Popover.Trigger
+						class="inline-flex h-[22px] shrink-0 items-center gap-1.5 rounded border border-line bg-surface/40 px-1.5 font-mono text-[10px] uppercase tracking-[0.1em] text-muted transition-colors hover:border-line-strong hover:text-ink"
+						title="Recent runs"
+					>
+						<span class="size-1.5 rounded-full {runDot(latestRun?.status)}"></span>
+						{runs.length} run{runs.length === 1 ? '' : 's'}
+					</Popover.Trigger>
+					<Popover.Content class="w-[340px] p-0" side="bottom" align="start" sideOffset={8}>
+						<div class="flex items-center justify-between border-b border-line px-2.5 py-1.5">
+							<span class="font-mono text-[10px] uppercase tracking-[0.14em] text-faint">Recent runs</span>
+							<button
+								type="button"
+								onclick={loadRuns}
+								class="inline-flex h-6 items-center gap-1 rounded border border-line bg-bg px-1.5 text-[11px] font-medium text-muted hover:border-line-strong hover:text-ink"
+							>
+								Refresh
+							</button>
+						</div>
+						{#if runs.length === 0}
+							<p class="px-2.5 py-3 font-mono text-[10.5px] text-faint">No runs yet.</p>
+						{:else}
+							<div class="max-h-[320px] overflow-y-auto p-1">
+								{#each runs.slice(0, 15) as r (r.id)}
+									<div class="rounded-md px-1.5 py-1.5 hover:bg-surface">
+										<div class="flex items-center gap-2">
+											<span class="size-1.5 shrink-0 rounded-full {runDot(r.status)}"></span>
+											<code class="font-mono text-[10.5px] text-ink">{r.id.slice(0, 10)}</code>
+											<span class="font-mono text-[10px] text-faint">{r.status}</span>
+											<span class="ml-auto font-mono text-[10px] tabular-nums text-faint">{relTime(r.started_at)}</span>
+										</div>
+										{#if r.error}
+											<p class="mt-1 break-words pl-3.5 font-mono text-[10px] text-danger" title={r.error}>
+												{r.error}
+											</p>
+										{/if}
+									</div>
+								{/each}
+							</div>
+						{/if}
+					</Popover.Content>
+				</Popover.Root>
+			{/if}
+
 			<div class="ml-auto flex items-center gap-1">
 				{#if readonly}
 					<a
@@ -1179,6 +1402,8 @@
 					commandName={triggerMeta?.label ?? auto.trigger_type}
 					commandId={auto.id}
 					bind:selectedId
+					entryKind="trigger"
+					readonly
 					showLegend={false}
 				/>
 			{:else if featureEditable}
@@ -1203,6 +1428,10 @@
 					commandId={auto.id}
 					bind:selectedId
 					{errorPaths}
+					{errorMessages}
+					entryKind="trigger"
+					lockedIds={isSpineNode}
+					{tailAnchorId}
 					palette={paletteFor}
 					showLegend={false}
 					onAddFromHandle={welcomeAddFromHandle}
@@ -1272,12 +1501,19 @@
 					class="absolute inset-0 transition-[filter] duration-300 motion-reduce:transition-none {auto.enabled ? '' : 'brightness-[0.85] saturate-[0.85]'}"
 				>
 					<FlowCanvas
+						bind:this={canvasEl}
 						steps={auto.definition.steps as Step[]}
 						scratch={auto.definition.scratch ?? []}
 						commandName={triggerMeta?.label ?? auto.trigger_type}
 						commandId={auto.id}
 						bind:selectedId
 						{errorPaths}
+						{errorMessages}
+						entryKind="trigger"
+						onEntryClick={() => (triggerOpen = true)}
+						initialPositions={savedPositions}
+						{onPositionsChange}
+						{quickAdds}
 						palette={paletteFor}
 						showLegend={dockState === 'hidden' && !pillVisible}
 						onAddAtRoot={addAtRoot}
@@ -1332,7 +1568,12 @@
 			{/if}
 
 			{#if selectedStep}
-				<StepDrawer step={selectedStep as Step} onClose={() => (selectedId = '')} onDelete={(id) => deleteStep(id)} />
+				<StepDrawer
+					step={selectedStep as Step}
+					onClose={() => (selectedId = '')}
+					onDelete={(id) => deleteStep(id)}
+					onDuplicate={readonly && !featureEditable ? undefined : () => duplicateStep()}
+				/>
 			{/if}
 		</div>
 	</div>
@@ -1509,7 +1750,7 @@
 		<Dialog.Content class="max-w-3xl">
 			<Dialog.Header>
 				<Dialog.Title>Automation settings</Dialog.Title>
-				<Dialog.Description>Description, variables, and recent runs.</Dialog.Description>
+				<Dialog.Description>Description and variables.</Dialog.Description>
 			</Dialog.Header>
 
 			<div class="grid max-h-[65vh] gap-5 overflow-y-auto pr-1">
@@ -1564,40 +1805,6 @@
 					{/if}
 				</section>
 
-				<section>
-					<div class="mb-1.5 flex items-center justify-between">
-						<div class="font-mono text-[10px] font-medium uppercase tracking-[0.14em] text-faint">Recent runs</div>
-						<button type="button" onclick={loadRuns} class="inline-flex h-6 items-center gap-1 rounded border border-line bg-bg px-1.5 text-[11px] font-medium text-muted hover:border-line-strong hover:text-ink">
-							Refresh
-						</button>
-					</div>
-					{#if runs.length === 0}
-						<p class="font-mono text-[10.5px] text-faint">No runs yet.</p>
-					{:else}
-						<div class="overflow-hidden rounded-md border border-line">
-							<div class="divide-y divide-line/60">
-								{#each runs.slice(0, 10) as r (r.id)}
-									<div class="flex h-8 items-center gap-2 px-2.5">
-										<span
-											class="size-1.5 rounded-full {r.status === 'done'
-												? 'bg-success'
-												: r.status === 'failed'
-													? 'bg-danger'
-													: r.status === 'waiting'
-														? 'bg-ink/60'
-														: 'bg-faint/40'}"
-										></span>
-										<code class="font-mono text-[10.5px] text-ink">{r.id.slice(0, 10)}</code>
-										{#if r.error}
-											<span class="truncate font-mono text-[10px] text-danger" title={r.error}>{r.error}</span>
-										{/if}
-										<span class="ml-auto font-mono text-[10px] tabular-nums text-faint">{relTime(r.started_at)}</span>
-									</div>
-								{/each}
-							</div>
-						</div>
-					{/if}
-				</section>
 			</div>
 		</Dialog.Content>
 	</Dialog.Root>
