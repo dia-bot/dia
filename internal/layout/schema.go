@@ -40,20 +40,26 @@ type Layer struct {
 	Fit string `json:"fit,omitempty"`
 
 	// rect / ellipse / common
-	Fill        string    `json:"fill,omitempty"`  // LEGACY single hex fill; superseded by Fills when set
-	Fills       []Paint   `json:"fills,omitempty"` // Figma-style paint stack, BOTTOM → TOP
-	Radius      float64   `json:"radius,omitempty"`
-	Corners     []float64 `json:"corners,omitempty"`      // independent corner radii [tl,tr,br,bl]; overrides Radius when len==4
-	StrokeColor string    `json:"stroke_color,omitempty"` // LEGACY single outline hex; superseded by Strokes when set
-	Strokes     []Paint   `json:"strokes,omitempty"`      // Figma-style stroke paint stack, BOTTOM → TOP (like Fills)
-	StrokeWidth float64   `json:"stroke_width,omitempty"`
-	StrokeAlign string    `json:"stroke_align,omitempty"` // inside|center|outside (Figma stroke Position); default center
-	StrokeStyle string    `json:"stroke_style,omitempty"` // solid|dashed (default solid)
-	Dash        float64   `json:"dash,omitempty"`         // dash length, px (dashed)
-	Gap         float64   `json:"gap,omitempty"`          // gap length, px (dashed)
-	StrokeCap   string    `json:"stroke_cap,omitempty"`   // butt|round|square (default round)
-	StrokeJoin  string    `json:"stroke_join,omitempty"`  // miter|bevel|round (default round)
-	StrokeSides []string  `json:"stroke_sides,omitempty"` // rect per-side strokes; empty OR all 4 = full outline
+	Fill    string    `json:"fill,omitempty"`  // LEGACY single hex fill; superseded by Fills when set
+	Fills   []Paint   `json:"fills,omitempty"` // Figma-style paint stack, BOTTOM → TOP
+	Radius  float64   `json:"radius,omitempty"`
+	Corners []float64 `json:"corners,omitempty"` // independent corner radii [tl,tr,br,bl]; overrides Radius when len==4
+	// Progress, on a rect, fills the rect's WIDTH by the member's XP progress
+	// percent (the rank card's {{ .Progress }} token, e.g. "64%"). Left-anchored:
+	// x/y/h and the corner radius are kept, only the width shrinks. When the
+	// progress var is absent or unparseable (welcome cards carry none) the rect
+	// renders full width, so non-rank layouts are unaffected.
+	Progress    bool     `json:"progress,omitempty"`
+	StrokeColor string   `json:"stroke_color,omitempty"` // LEGACY single outline hex; superseded by Strokes when set
+	Strokes     []Paint  `json:"strokes,omitempty"`      // Figma-style stroke paint stack, BOTTOM → TOP (like Fills)
+	StrokeWidth float64  `json:"stroke_width,omitempty"`
+	StrokeAlign string   `json:"stroke_align,omitempty"` // inside|center|outside (Figma stroke Position); default center
+	StrokeStyle string   `json:"stroke_style,omitempty"` // solid|dashed (default solid)
+	Dash        float64  `json:"dash,omitempty"`         // dash length, px (dashed)
+	Gap         float64  `json:"gap,omitempty"`          // gap length, px (dashed)
+	StrokeCap   string   `json:"stroke_cap,omitempty"`   // butt|round|square (default round)
+	StrokeJoin  string   `json:"stroke_join,omitempty"`  // miter|bevel|round (default round)
+	StrokeSides []string `json:"stroke_sides,omitempty"` // rect per-side strokes; empty OR all 4 = full outline
 
 	// advanced stroke (Figma's Stroke-settings popover; mostly path-only). Kept in sync
 	// with web/src/lib/layout/schema.ts.
@@ -184,6 +190,11 @@ const (
 	MaxCanvasDim   = 4096
 	MaxCanvasPixel = 4_000_000
 )
+
+// MaxLayers is the most layers one layout may contain. The dashboard editor caps
+// new layers here and the API rejects any layout that exceeds it, so a saved card
+// can't grow unbounded. Mirrors web/src/lib/layout/schema.ts MAX_LAYERS.
+const MaxLayers = 48
 
 // ClampSize constrains a width/height to the canvas limits, scaling both down
 // proportionally if the pixel budget is exceeded (keeping the aspect ratio).

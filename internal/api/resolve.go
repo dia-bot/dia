@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/dia-bot/dia/internal/layout"
 	"github.com/dia-bot/dia/internal/templating"
 	"github.com/gin-gonic/gin"
 )
@@ -24,8 +25,10 @@ func (s *Server) handleResolveCard(c *gin.Context) {
 		fail(c, http.StatusBadRequest, "invalid body")
 		return
 	}
-	if len(req.Strings) > 40 {
-		req.Strings = req.Strings[:40] // bound work; cards are small
+	// Bound work: each layer can carry a text and an image-source template, so cap
+	// the batch at twice the layer limit (client-side dedup keeps it well under this).
+	if max := 2 * layout.MaxLayers; len(req.Strings) > max {
+		req.Strings = req.Strings[:max]
 	}
 	data := templating.DataFromVars(s.cardSampleVars(c, "", "", req.ExtraVars))
 	eng := templating.New()

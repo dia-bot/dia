@@ -1,6 +1,7 @@
 package api
 
 import (
+	"fmt"
 	"net/http"
 
 	"github.com/dia-bot/dia/internal/discord"
@@ -26,6 +27,10 @@ func (s *Server) handleLayoutPreview(c *gin.Context) {
 	var req layoutPreviewReq
 	if err := c.ShouldBindJSON(&req); err != nil {
 		fail(c, http.StatusBadRequest, "invalid body")
+		return
+	}
+	if len(req.Layout.Layers) > layout.MaxLayers {
+		fail(c, http.StatusBadRequest, fmt.Sprintf("layout has too many layers (max %d)", layout.MaxLayers))
 		return
 	}
 

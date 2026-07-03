@@ -5,6 +5,7 @@ import (
 	"image"
 	"image/color"
 	"math"
+	"strconv"
 	"strings"
 	"unicode"
 
@@ -39,6 +40,34 @@ func applyVars(s string, vars map[string]string) string {
 		}
 	}
 	return s
+}
+
+// progressFraction parses a rank-card progress value into a 0..1 fraction used to
+// fill a progress-bar rect's width. It accepts the token the rank card exposes as
+// {{ .Progress }} ("64%"), a bare percent ("64"), or a 0..1 fraction ("0.64"). ok
+// is false when the value is absent or unparseable, so the caller leaves the rect
+// at full width, welcome cards, which carry no progress var, stay unaffected.
+func progressFraction(s string) (float64, bool) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0, false
+	}
+	pctForm := strings.HasSuffix(s, "%")
+	v, err := strconv.ParseFloat(strings.TrimSpace(strings.TrimSuffix(s, "%")), 64)
+	if err != nil {
+		return 0, false
+	}
+	// A "%"-suffixed value or any number above 1 is a 0..100 percent; a bare value
+	// in [0,1] is already a fraction ("0.45").
+	if pctForm || v > 1 {
+		v /= 100
+	}
+	if v < 0 {
+		v = 0
+	} else if v > 1 {
+		v = 1
+	}
+	return v, true
 }
 
 // withAlpha multiplies the alpha channel of c by mul (clamped to [0,1]).
@@ -379,6 +408,17 @@ func (r *Renderer) RenderLayout(ctx context.Context, in layout.Layout, vars map[
 		}
 		switch l.Type {
 		case "rect":
+			// Progress-bar rect: fill the WIDTH by the member's XP progress percent,
+			// left-anchored (x/y/h and the corner radius are kept). An absent or
+			// unparseable progress var (welcome cards carry none) leaves it full width.
+			if l.Progress {
+				if frac, ok := progressFraction(vars["{progress}"]); ok {
+					l.W = math.Round(l.W * frac) // frac ∈ [0,1] ⇒ width ∈ [0, l.W]
+					if l.W < 0 {
+						l.W = 0
+					}
+				}
+			}
 			tl, tr, br, bl := cornerRadii(l)
 			r.fillShape(ctx, dc, l, opacity, func(c *gg.Context) {
 				drawRoundRect(c, l.X, l.Y, l.W, l.H, tl, tr, br, bl)
