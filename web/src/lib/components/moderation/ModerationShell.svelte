@@ -20,10 +20,9 @@
 	// loading skeleton and the error/retry state so no page can hang on a blank
 	// skeleton, and owns the floating save dock.
 	import { type Snippet } from 'svelte';
-	import { slide } from 'svelte/transition';
-	import { cubicOut } from 'svelte/easing';
 	import Toggle from '$lib/components/Toggle.svelte';
-	import { Loader2, RotateCw, CircleAlert } from 'lucide-svelte';
+	import ReleaseDock from '$lib/components/page/ReleaseDock.svelte';
+	import { RotateCw, CircleAlert } from 'lucide-svelte';
 
 	let {
 		icon,
@@ -183,41 +182,14 @@
 				</div>
 			{/if}
 		{:else}
-			<div class="pb-6">
+			<div class="pb-20">
 				{@render children()}
 			</div>
 		{/if}
 	</div>
 
-	<!-- ── Save bar: docked to the bottom edge, full width, never over content ── -->
-	{#if ready && !error && (dirty || saving)}
-		<div
-			class="flex h-14 shrink-0 items-center gap-2.5 border-t border-line bg-surface px-4 sm:px-5"
-			transition:slide={{ duration: 180, easing: cubicOut }}
-		>
-			{#if saving}
-				<Loader2 size={15} class="animate-spin text-muted" />
-				<span class="text-[12.5px] text-muted">Saving…</span>
-			{:else}
-				<span class="size-1.5 animate-pulse rounded-full bg-accent"></span>
-				<span class="text-[12.5px] text-muted">Unsaved changes</span>
-				<div class="ml-auto flex items-center gap-1.5">
-					<button
-						type="button"
-						onclick={onreset}
-						class="inline-flex h-8 items-center rounded-md border border-line-strong px-3 text-[12px] font-medium text-muted transition-colors hover:text-ink"
-					>
-						Discard
-					</button>
-					<button
-						type="button"
-						onclick={onsave}
-						class="inline-flex h-8 items-center gap-1.5 rounded-md bg-ink px-3.5 text-[12px] font-medium text-bg transition-opacity hover:opacity-90"
-					>
-						Save <kbd class="hidden font-mono text-[10px] text-bg/60 sm:inline">⌘S</kbd>
-					</button>
-				</div>
-			{/if}
-		</div>
+	<!-- ── Save dock: the shared floating pill, centered on the viewport ── -->
+	{#if ready && !error}
+		<ReleaseDock {dirty} phase={saving ? 'saving' : 'idle'} {onsave} {onreset} />
 	{/if}
 </div>

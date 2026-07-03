@@ -163,7 +163,7 @@
 
 {#if visible}
 	<div
-		class="pointer-events-none absolute inset-x-4 bottom-4 z-40 flex justify-center @container {drawerOpen
+		class="pointer-events-none fixed inset-x-0 bottom-6 z-50 flex justify-center px-4 @container {drawerOpen
 			? `max-md:hidden ${drawerWide ? 'md:pr-[36rem] xl:pr-[42rem]' : 'md:pr-[28rem]'}`
 			: ''}"
 	>
