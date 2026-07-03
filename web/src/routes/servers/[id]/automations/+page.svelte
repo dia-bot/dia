@@ -11,6 +11,7 @@
 		TRIGGER_CATEGORIES,
 		type AutomationSummary
 	} from '$lib/automations/types';
+	import { AUTOMATION_TEMPLATES, type AutomationTemplate } from '$lib/automations/templates';
 
 	import Zap from 'lucide-svelte/icons/zap';
 	import Plus from 'lucide-svelte/icons/plus';
@@ -67,6 +68,31 @@
 				trigger_type: triggerKey,
 				trigger_config: {},
 				definition: { steps: [] }
+			});
+			pickerOpen = false;
+			await goto(`${base}/automations/${r.id}`);
+		} catch (e) {
+			createError = e instanceof ApiError ? e.message : String(e);
+		} finally {
+			creating = false;
+		}
+	}
+
+	// Same create/upsert path as picking a bare trigger, but seeded with a
+	// template's full name / trigger / step program.
+	async function createFromTemplate(tpl: AutomationTemplate) {
+		if (creating) return;
+		creating = true;
+		createError = '';
+		try {
+			const r = await api.upsertAutomation(store.id, {
+				name: tpl.name,
+				description: tpl.description,
+				enabled: false,
+				status: 'draft',
+				trigger_type: tpl.trigger_type,
+				trigger_config: tpl.trigger_config,
+				definition: tpl.definition()
 			});
 			pickerOpen = false;
 			await goto(`${base}/automations/${r.id}`);
@@ -270,6 +296,24 @@
 					{createError}
 				</p>
 			{/if}
+			<div class="mb-4">
+				<div class="mb-1.5 font-mono text-[9.5px] uppercase tracking-[0.16em] text-faint">
+					Start from a template
+				</div>
+				<div class="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+					{#each AUTOMATION_TEMPLATES as tpl (tpl.key)}
+						<button
+							type="button"
+							disabled={creating}
+							onclick={() => createFromTemplate(tpl)}
+							class="flex flex-col items-start gap-0.5 rounded-md border border-line bg-surface/40 p-2.5 text-left transition-colors hover:border-line-strong hover:bg-surface disabled:opacity-50"
+						>
+							<span class="text-[12.5px] font-medium text-ink">{tpl.name}</span>
+							<span class="font-mono text-[10px] leading-snug text-faint">{tpl.description}</span>
+						</button>
+					{/each}
+				</div>
+			</div>
 			{#each triggersByCat as group (group.id)}
 				<div class="mb-4">
 					<div class="mb-1.5 font-mono text-[9.5px] uppercase tracking-[0.16em] text-faint">
