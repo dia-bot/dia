@@ -196,6 +196,10 @@ func (s *Server) Handler() http.Handler {
 	g.PUT("/automod-rules", s.handleUpsertAutoModRule)
 	g.DELETE("/automod-rules/:ruleId", s.handleDeleteAutoModRule)
 
+	// Dia automod rules (the "automod" feature config), not the Discord-native
+	// /automod-rules above: the per-rule canvas-owned follow-up flow.
+	g.POST("/automod/rules/:rid/actions", s.handleAutomodRuleActions)
+
 	return r
 }
 

@@ -7,6 +7,7 @@ import (
 
 	cc "github.com/dia-bot/dia/internal/features/customcommands"
 	"github.com/dia-bot/dia/internal/features/leveling"
+	"github.com/dia-bot/dia/internal/features/moderation"
 	"github.com/dia-bot/dia/internal/features/roles"
 	"github.com/dia-bot/dia/internal/features/welcome"
 	"github.com/dia-bot/dia/internal/store"
@@ -35,7 +36,7 @@ type Builtin struct {
 // each owning feature's live config. configs maps a feature key to its raw
 // JSONB config (nil/missing → that feature's defaults), featureEnabled maps a
 // feature key to its top-level toggle, and menus is the guild's reaction-role
-// menus (each posted menu contributes one built-in).
+// menus (each posted menu contributes one built-in, as does each automod rule).
 func BuildBuiltins(configs map[string]json.RawMessage, featureEnabled map[string]bool, menus []store.ReactionRoleMenu) []Builtin {
 	var out []Builtin
 
@@ -131,7 +132,62 @@ func BuildBuiltins(configs map[string]json.RawMessage, featureEnabled map[string
 		})
 	}
 
+	// ── Automod (one built-in per rule) ──────────────────────────────────────
+	acfg := moderation.DefaultAutomod()
+	if raw := configs[moderation.AutomodKey]; len(raw) > 0 {
+		_ = json.Unmarshal(raw, &acfg)
+	}
+	aEnabled := featureEnabled[moderation.AutomodKey]
+	for _, rule := range acfg.Rules {
+		name := rule.Name
+		if name == "" {
+			name = "Untitled rule"
+		}
+		out = append(out, Builtin{
+			Key:         "automod.rule." + rule.ID,
+			Name:        "Automod: " + name,
+			Description: "Runs after this rule's actions apply. Managed on the Automod tab.",
+			TriggerType: "automod_action",
+			FeatureKey:  moderation.AutomodKey,
+			FeatureName: "Automod",
+			FeatureTab:  "automod",
+			Enabled:     aEnabled && rule.Enabled,
+			Definition:  ruleFlow(rule),
+		})
+	}
+
 	return out
+}
+
+// ruleFlow renders one automod rule as a read-only step spine followed by the
+// editable follow-up tail. A rule's action list is heterogeneous (delete, warn,
+// timeout, points, …) with no single step kind that honestly covers it, so the
+// spine is one placeholder noop ("builtin-actions") the canvas renders as the
+// "rule actions apply" node; the moderation engine actually applies the
+// actions. Mirrors menuFlow: the spine step carries a "builtin-" id (generated,
+// read-only) while rule.Tail is appended as real, persisted steps (their own
+// non-"builtin-" ids) that render as ordinary draggable nodes off the spine's
+// out handle.
+func ruleFlow(rule moderation.AutomodRule) cc.Definition {
+	if !rule.Enabled {
+		// Keep the tail behind the disabled spine so an authored follow-up flow
+		// isn't dropped (and can't be silently wiped by a canvas round-trip) just
+		// because the rule is momentarily disabled.
+		return cc.Definition{Steps: append([]cc.Step{{
+			ID:   "builtin-disabled",
+			Kind: cc.KindNoop,
+		}}, rule.Tail...)}
+	}
+
+	steps := []cc.Step{{
+		ID:   "builtin-actions",
+		Kind: cc.KindNoop,
+	}}
+
+	// The editable follow-up tail, wired after the actions spine on the canvas.
+	steps = append(steps, rule.Tail...)
+
+	return cc.Definition{Steps: steps}
 }
 
 // menuFlow renders one reaction-role menu as a read-only step spine (a role_add

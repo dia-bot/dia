@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/dia-bot/dia/internal/event"
+	"github.com/dia-bot/dia/internal/features/automations/runner"
 	"github.com/dia-bot/dia/internal/interactions"
 	"github.com/dia-bot/dia/internal/plugin"
 	"github.com/dia-bot/dia/internal/store"
@@ -19,7 +20,15 @@ import (
 )
 
 // Plugin implements the moderation + automod feature.
-type Plugin struct{}
+type Plugin struct {
+	// runner runs each automod rule's durable follow-up flow (AutomodRule.Tail)
+	// on the shared automations machinery: it persists a parked run to
+	// automation_runs and emits "auto:" components, so any waits, modals and
+	// follow-up clicks resume through the automations plugin's handlers + the
+	// wait scheduler. The rule's own actions stay engine-applied; the tail runs
+	// after they (and the hit's event/log) have gone out.
+	runner *runner.Runner
+}
 
 // New returns the moderation plugin.
 func New() *Plugin { return &Plugin{} }
@@ -36,7 +45,9 @@ func (*Plugin) Info() plugin.Info {
 
 // Init registers the moderation slash commands, the automod message handler and
 // the background expiry worker.
-func (*Plugin) Init(ctx context.Context, d plugin.Deps, reg *plugin.Registrar) error {
+func (p *Plugin) Init(ctx context.Context, d plugin.Deps, reg *plugin.Registrar) error {
+	p.runner = runner.New(d)
+
 	banPerm := int64(discordgo.PermissionBanMembers)
 	kickPerm := int64(discordgo.PermissionKickMembers)
 	modPerm := int64(discordgo.PermissionModerateMembers)
@@ -146,16 +157,16 @@ func (*Plugin) Init(ctx context.Context, d plugin.Deps, reg *plugin.Registrar) e
 	})
 
 	reg.OnEvent(event.TypeMessageCreate, func(ctx context.Context, env *event.Envelope) error {
-		return handleAutomodMessage(ctx, d, env, false)
+		return handleAutomodMessage(ctx, d, p.runner, env, false)
 	})
 	reg.OnEvent(event.TypeMessageUpdate, func(ctx context.Context, env *event.Envelope) error {
-		return handleAutomodMessage(ctx, d, env, true)
+		return handleAutomodMessage(ctx, d, p.runner, env, true)
 	})
 	reg.OnEvent(event.TypeMemberAdd, func(ctx context.Context, env *event.Envelope) error {
-		return handleAutomodMember(ctx, d, env)
+		return handleAutomodMember(ctx, d, p.runner, env)
 	})
 	reg.OnEvent(event.TypeMemberUpdate, func(ctx context.Context, env *event.Envelope) error {
-		return handleAutomodMember(ctx, d, env)
+		return handleAutomodMember(ctx, d, p.runner, env)
 	})
 
 	reg.Worker("mod-expiry", func(ctx context.Context) { runExpiry(ctx, d) })

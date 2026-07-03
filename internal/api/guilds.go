@@ -344,12 +344,13 @@ func (s *Server) handlePutFeature(c *gin.Context) {
 	}
 	gid := guildID(c)
 	gidInt, _ := event.ParseID(gid)
-	// Welcome's, leveling's and auto-roles' canvas-owned programs (button click
-	// actions and/or the follow-up flow) are owned by the automation flow (saved
-	// via /welcome/actions, /leveling/actions or /autorole/actions), not the
-	// settings page. Keep the stored copy authoritative so a settings save can't
-	// clobber a flow wired meanwhile on the canvas.
-	if len(req.Config) > 0 && (key == welcome.FeatureKey || key == leveling.FeatureKey || key == roles.FeatureKey) {
+	// Welcome's, leveling's, auto-roles' and automod's canvas-owned programs
+	// (button click actions and/or the follow-up flows) are owned by the
+	// automation flow (saved via /welcome/actions, /leveling/actions,
+	// /autorole/actions or /automod/rules/:rid/actions), not the settings page.
+	// Keep the stored copy authoritative so a settings save can't clobber a flow
+	// wired meanwhile on the canvas.
+	if len(req.Config) > 0 && (key == welcome.FeatureKey || key == leveling.FeatureKey || key == roles.FeatureKey || key == moderation.AutomodKey) {
 		if existing, err := s.store.Features.Get(c.Request.Context(), gidInt, key); err == nil && len(existing.Config) > 0 {
 			switch key {
 			case welcome.FeatureKey:
@@ -358,6 +359,8 @@ func (s *Server) handlePutFeature(c *gin.Context) {
 				req.Config = leveling.MergeStoredActions(req.Config, existing.Config)
 			case roles.FeatureKey:
 				req.Config = roles.MergeStoredActions(req.Config, existing.Config)
+			case moderation.AutomodKey:
+				req.Config = moderation.MergeStoredRuleTails(req.Config, existing.Config)
 			}
 		}
 	}
