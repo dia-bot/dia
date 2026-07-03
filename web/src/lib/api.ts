@@ -245,6 +245,11 @@ export const api = {
 	// read-only and there are no click actions, so only the post-pick tail saves.
 	saveMenuTail: (id: string, menuId: number, tail: unknown[]) =>
 		req<{ ok: boolean }>('POST', `/api/guilds/${id}/reaction-roles/${menuId}/actions`, { tail }),
+	// saveAutomodRuleTail persists the canvas-authored follow-up flow for one
+	// automod rule. The spine (the rule's built-in actions) is read-only, so
+	// like reaction-roles only the post-fire tail saves.
+	saveAutomodRuleTail: (id: string, ruleId: string, tail: unknown[]) =>
+		req<{ ok: boolean }>('POST', `/api/guilds/${id}/automod/rules/${ruleId}/actions`, { tail }),
 	levelingVariables: (id: string) =>
 		req<{ variables: { token: string; desc: string }[] }>('GET', `/api/guilds/${id}/leveling/variables`),
 	// templatingPreview renders one template string and returns the text + any error.

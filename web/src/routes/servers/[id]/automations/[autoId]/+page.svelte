@@ -84,17 +84,18 @@
 	// back into the owning feature's config (the message, embeds and card stay
 	// managed on that feature's tab). Today Welcome (welcome/goodbye tabs, plus a
 	// DM router) and Leveling (a single channel surface, no DM) share this
-	// "editable spine" shape; Auto-roles and Reaction-roles menus add a variant
-	// whose spine is a read-only apply/grant step (no message, so no click router)
-	// and whose only editable part is the post-spine tail. featureEditable turns
-	// the shared canvas editing on; the save routes to the matching endpoint by
-	// feature_tab.
+	// "editable spine" shape; Auto-roles, Reaction-roles menus and Automod rules
+	// add a variant whose spine is a read-only apply/grant/action step (no
+	// message, so no click router) and whose only editable part is the
+	// post-spine tail. featureEditable turns the shared canvas editing on; the
+	// save routes to the matching endpoint by feature_tab.
 	const featureEditable = $derived(
 		!!auto?.builtin &&
 			(auto?.feature_tab === 'welcome' ||
 				auto?.feature_tab === 'leveling' ||
 				auto?.feature_tab === 'auto-roles' ||
-				auto?.feature_tab === 'reaction-roles')
+				auto?.feature_tab === 'reaction-roles' ||
+				auto?.feature_tab === 'automod')
 	);
 	// Welcome distinguishes its two built-in ids (join vs leave) as config tabs;
 	// leveling has a single surface so this is only meaningful for welcome.
@@ -458,13 +459,18 @@
 	// wouldn't persist can never be accepted-then-silently-discarded.
 	const isSpineNode = (id: string | null) => !!id && id.startsWith('builtin-');
 	// tailAnchorId is the spine node the editable tail hangs off. Welcome/leveling
-	// anchor on the channel message ('builtin-send'); auto-roles and reaction-role
-	// menus have no message, so their tail hangs off the last leading spine node
-	// instead (the grant step, or the menu's builtin-apply/builtin-disabled).
+	// anchor on the channel message ('builtin-send'); auto-roles, reaction-role
+	// menus and automod rules have no message, so their tail hangs off the last
+	// leading spine node instead (the grant step, the menu's
+	// builtin-apply/builtin-disabled, or the rule's built-in action step).
 	const tailAnchorId = $derived.by(() => {
 		if (!auto) return '';
 		const steps = auto.definition.steps ?? [];
-		if (auto.feature_tab === 'auto-roles' || auto.feature_tab === 'reaction-roles') {
+		if (
+			auto.feature_tab === 'auto-roles' ||
+			auto.feature_tab === 'reaction-roles' ||
+			auto.feature_tab === 'automod'
+		) {
 			let last = '';
 			for (const s of steps) {
 				if (!isSpineNode(s.id)) break;
@@ -562,10 +568,12 @@
 	// saveFeatureActions writes the canvas-authored click actions + tail back into
 	// the owning feature's config, routing to the right endpoint by feature_tab:
 	// welcome takes a kind (welcome/goodbye) and a DM router; leveling is a single
-	// channel surface with no DM tab; auto-roles and reaction-role menus have no
-	// message (so no click actions), only the post-spine tail. Reaction-role
-	// builtins are per-menu ("reactionroles.menu.<id>"), so the menu id parses out
-	// of the automation id.
+	// channel surface with no DM tab; auto-roles, reaction-role menus and automod
+	// rules have no message (so no click actions), only the post-spine tail.
+	// Reaction-role builtins are per-menu ("reactionroles.menu.<id>") and automod
+	// builtins are per-rule ("automod.rule.<id>"), so the owner id parses out of
+	// the automation id (automod rule ids are opaque strings, so strip the prefix
+	// rather than splitting on dots).
 	async function saveFeatureActions() {
 		if (!auto || featureSaving === 'saving' || !featureDirty) return;
 		if (featureDockTimer) clearTimeout(featureDockTimer);
@@ -576,6 +584,12 @@
 			if (auto.id.startsWith('reactionroles.menu.')) {
 				const menuId = Number(auto.id.split('.')[2]);
 				await api.saveMenuTail(store.id, menuId, extractSpineTail(auto.definition));
+			} else if (auto.id.startsWith('automod.rule.')) {
+				await api.saveAutomodRuleTail(
+					store.id,
+					auto.id.slice('automod.rule.'.length),
+					extractSpineTail(auto.definition)
+				);
 			} else if (auto.feature_tab === 'auto-roles') {
 				await api.saveAutoroleActions(store.id, extractSpineTail(auto.definition));
 			} else if (auto.feature_tab === 'leveling') {
@@ -1176,6 +1190,8 @@
 						Drag off the grant step to add a follow-up action. The roles granted on join are managed in {auto.feature_name}.
 					{:else if auto.feature_tab === 'reaction-roles'}
 						The grey steps mirror this menu's role assignment and are managed on the Reaction Roles tab. Steps you connect after them run when a member picks their roles.
+					{:else if auto.feature_tab === 'automod'}
+						The grey step mirrors this rule's actions and is managed on the Automod tab. Steps you connect after it run when the rule fires.
 					{:else}
 						Drag off the message to add a follow-up action, or off a button's dot to set what it does. Message, embed &amp; card are managed in {auto.feature_name}.
 					{/if}

@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount, getContext } from 'svelte';
+	import { goto } from '$app/navigation';
 	import { GuildStore, GUILD_CTX } from '$lib/guild.svelte';
 	import { api } from '$lib/api';
 	import {
@@ -333,6 +334,7 @@
 									onedit={() => (editingId = editingId === rule.id ? null : rule.id)}
 									onduplicate={() => duplicateRule(rule)}
 									ondelete={() => (pendingDelete = rule.id)}
+									onflow={() => goto('/servers/' + store.id + '/automations/automod.rule.' + rule.id)}
 								/>
 								{#if editingId === rule.id}
 									<div class="mt-2">

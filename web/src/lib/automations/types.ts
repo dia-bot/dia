@@ -122,7 +122,8 @@ const AUTOMOD_EVENT_VARS: TmplVar[] = [
 	v('.Event.escalated', 'string', 'Escalation action fired ("" if none)'),
 	v('.Event.content', 'string', 'The offending message content (truncated)'),
 	v('.Event.message_id', 'snowflake', 'The offending message id ("" if none)'),
-	v('.Event.channel_id', 'snowflake', 'The channel it happened in ("" if none)')
+	v('.Event.channel_id', 'snowflake', 'The channel it happened in ("" if none)'),
+	v('.Event.actions', 'list', 'Action types the rule applied, in order')
 ];
 
 const CHANNEL_EVENT_VARS: TmplVar[] = [
