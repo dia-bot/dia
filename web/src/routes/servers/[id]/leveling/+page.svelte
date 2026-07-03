@@ -643,7 +643,7 @@
 										<RolePicker value={newRole} onChange={(v) => (newRole = v as string)} placeholder="Select a role…" />
 									</div>
 									<label
-										class="flex h-10 shrink-0 items-center gap-2 text-[12px] text-muted"
+										class="flex h-9 shrink-0 items-center gap-2 text-[12px] text-muted"
 										title="Remove previously earned reward roles when this one is granted"
 									>
 										<Toggle bind:checked={newRemovePrevious} />

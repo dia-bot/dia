@@ -370,7 +370,7 @@
 			{/key}
 		</div>
 
-		<!-- Footer -->
+		<!-- Footer. Unified .btn controls so the modal matches the rest of the app. -->
 		<div class="flex h-12 shrink-0 items-center justify-end gap-2 border-t border-line px-4">
 			{#if phase === 'edit'}
 				<button class="btn btn-ghost" onclick={guardClose} disabled={savingMenu}>Cancel</button>
