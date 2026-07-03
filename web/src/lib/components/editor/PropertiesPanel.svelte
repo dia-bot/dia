@@ -34,7 +34,9 @@
 		TextCase,
 		TextDecoration
 	} from '$lib/layout/schema';
+	import { cardVarsFor } from '$lib/layout/vars';
 	import Select from '$lib/components/Select.svelte';
+	import Toggle from '$lib/components/Toggle.svelte';
 	import ImageInput from '$lib/components/editor/ImageInput.svelte';
 	import InspectorSection from '$lib/components/editor/InspectorSection.svelte';
 	import StrokeStyleSelect from '$lib/components/editor/StrokeStyleSelect.svelte';
@@ -106,6 +108,31 @@
 	import { cubicOut } from 'svelte/easing';
 
 	const editor = getContext<EditorStore>(EDITOR_CTX);
+
+	// Which card is being designed, scopes the click-to-insert variable chips
+	// (welcome hides the rank-only level/XP/progress tokens). Defaults to 'rank'.
+	let { context = 'rank' }: { context?: 'welcome' | 'rank' } = $props();
+	const varChips = $derived(cardVarsFor(context));
+
+	// The Typography <textarea>, so a variable chip can insert its token at the
+	// caret (keeping focus) instead of appending to the end.
+	let textArea = $state<HTMLTextAreaElement>();
+	function insertVar(tmpl: string) {
+		const cur = editor.common((l) => l.text ?? '') ?? '';
+		const el = textArea;
+		const s = el?.selectionStart ?? cur.length;
+		const en = el?.selectionEnd ?? s;
+		const next = cur.slice(0, s) + tmpl + cur.slice(en);
+		editor.setAll((l) => (l.text = next));
+		// Restore focus + place the caret after the inserted token once the
+		// controlled value has flushed to the DOM.
+		requestAnimationFrame(() => {
+			if (!el) return;
+			el.focus();
+			const pos = s + tmpl.length;
+			el.setSelectionRange(pos, pos);
+		});
+	}
 
 	const alignButtons: { edge: AlignEdge; label: string; icon: typeof Group }[] = [
 		{ edge: 'left', label: 'Align left', icon: AlignStartVertical },
@@ -1293,6 +1320,7 @@
 						<div class="space-y-3">
 							<div>
 								<textarea
+									bind:this={textArea}
 									rows="3"
 									value={editor.common((l) => l.text ?? '') ?? ''}
 									placeholder={editor.common((l) => l.text ?? '') === undefined ? 'Mixed' : undefined}
@@ -1302,14 +1330,20 @@
 									}}
 									class="w-full resize-y rounded-lg border border-line bg-ink-2 px-2.5 py-2 text-sm leading-snug text-ink outline-none transition-all placeholder:text-faint hover:border-faint focus:border-faint focus:ring-2 focus:ring-line-strong"
 								></textarea>
-								<p class="mt-1 text-[11px] text-faint">
-									Variables:
-									<span class="font-mono text-muted"
-										>{'{{.User.Username}}'} {'{{.User.Avatar}}'} {'{{.Guild.Name}}'}
-										{'{{.Guild.Icon}}'} {'{{.Guild.MemberCount}}'}</span
-									>
-									· supports <span class="font-mono text-muted">{'{{if}}'}</span> logic
-								</p>
+								<!-- Click-to-insert variable chips (insert at the caret, keep focus). -->
+								<div class="mt-1.5 flex flex-wrap gap-1">
+									{#each varChips as v (v.tmpl)}
+										<button
+											type="button"
+											title={v.tmpl}
+											onmousedown={(e) => e.preventDefault()}
+											onclick={() => insertVar(v.tmpl)}
+											class="rounded border border-line px-1.5 py-0.5 font-mono text-[10px] text-muted transition-colors hover:border-line-strong hover:text-ink"
+										>
+											{v.label}
+										</button>
+									{/each}
+								</div>
 							</div>
 
 							<Select
@@ -1477,10 +1511,25 @@
 										? 'Mixed'
 										: 'https://… or {{.User.Avatar}}'}
 								/>
-								<span class="mt-1 block text-[11px] text-faint">
-									Supports <span class="font-mono text-muted">{'{{.User.Avatar}}'}</span>,
-									<span class="font-mono text-muted">{'{{.Guild.Icon}}'}</span>
-								</span>
+								<!-- One-click presets for the two bound image sources. -->
+								<div class="mt-1.5 flex flex-wrap gap-1">
+									<button
+										type="button"
+										title="{'{{.User.Avatar}}'}"
+										onclick={() => editor.setAll((l) => (l.src = '{{.User.Avatar}}'))}
+										class="rounded border border-line px-1.5 py-0.5 text-[10px] text-muted transition-colors hover:border-line-strong hover:text-ink"
+									>
+										Member avatar
+									</button>
+									<button
+										type="button"
+										title="{'{{.Guild.Icon}}'}"
+										onclick={() => editor.setAll((l) => (l.src = '{{.Guild.Icon}}'))}
+										class="rounded border border-line px-1.5 py-0.5 text-[10px] text-muted transition-colors hover:border-line-strong hover:text-ink"
+									>
+										Server icon
+									</button>
+								</div>
 							</div>
 							<div class="flex items-center justify-between gap-3">
 								{@render row('Fit')}
@@ -1509,6 +1558,24 @@
 				{:else if editor.selectionType === 'rect' || editor.selectionType === 'ellipse'}
 					{@render fillSection()}
 					{@render strokeSection(true, false, true, editor.selectionType === 'rect')}
+					{#if editor.selectionType === 'rect'}
+						<!-- Bind a rect to XP progress: on the live rank card its width fills to
+						     {{.Progress}}; welcome cards (no progress) render it full width. -->
+						<InspectorSection title="Progress bar">
+							<label class="flex items-center justify-between gap-2">
+								<span class="text-xs text-muted">Bind width to XP progress</span>
+								<Toggle
+									checked={editor.common((l) => !!l.progress) ?? false}
+									onchange={(v) => editor.setAll((l) => (l.progress = v || undefined))}
+									label="Bind width to XP progress"
+								/>
+							</label>
+							<p class="mt-1.5 text-[11px] text-faint">
+								On the live card this bar fills to the member's XP progress. Welcome cards render it
+								full width.
+							</p>
+						</InspectorSection>
+					{/if}
 				{:else if editor.selectionType === 'path'}
 					<!-- Path controls are single-selection only. -->
 					{#if editor.selectedIds.length === 1 && one}

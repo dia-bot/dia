@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount, onDestroy, getContext, setContext } from 'svelte';
+	import { beforeNavigate, goto } from '$app/navigation';
 	import { GuildStore, GUILD_CTX } from '$lib/guild.svelte';
 	import { api, previewImage, layoutPreview } from '$lib/api';
 	import type { Layout } from '$lib/layout/schema';
@@ -21,6 +22,7 @@
 	import ReleaseDock from '$lib/components/page/ReleaseDock.svelte';
 	import MessageEditor from '$lib/components/commands/MessageEditor.svelte';
 	import CardStudioModal from '$lib/components/editor/CardStudioModal.svelte';
+	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 	import { TrendingUp, Trash2, Frame, Hash, Mail, Zap, ExternalLink, ChevronDown } from 'lucide-svelte';
 
 	const store = getContext<GuildStore>(GUILD_CTX);
@@ -361,6 +363,40 @@
 		}
 	}
 
+	// Unsaved-changes guard. In-app navigation is intercepted while dirty and routed
+	// through the confirm dialog (Save and leave / Discard / Keep editing); hard
+	// closes get the browser's native prompt. While the Card Studio is open it owns
+	// its own guard, so we defer to it and let its confirmed leave through.
+	let leaveOpen = $state(false);
+	let pendingUrl: URL | null = null;
+	let bypassNav = false;
+	beforeNavigate((nav) => {
+		if (bypassNav || nav.type === 'leave' || studioOpen) return;
+		if (!dirty || !nav.to) return;
+		nav.cancel();
+		pendingUrl = nav.to.url;
+		leaveOpen = true;
+	});
+	function keepEditing() {
+		pendingUrl = null;
+	}
+	function discardAndLeave() {
+		const url = pendingUrl;
+		pendingUrl = null;
+		bypassNav = true;
+		if (url) goto(url);
+	}
+	async function saveAndLeave() {
+		await save();
+		if (savePhase !== 'error') discardAndLeave();
+	}
+	function onBeforeUnload(e: BeforeUnloadEvent) {
+		if (dirty) {
+			e.preventDefault();
+			e.returnValue = ''; // shows the browser's native "leave site?" prompt
+		}
+	}
+
 	function openStudio() {
 		// Seed the modal from a local copy; commit only on Apply so Cancel reverts.
 		studioLayout = cfg.rank_card.layout ?? rankStarterLayout();
@@ -408,7 +444,7 @@
 </script>
 
 <svelte:head><title>Leveling · {store.name} · Dia</title></svelte:head>
-<svelte:window onkeydown={onKeydown} />
+<svelte:window onkeydown={onKeydown} onbeforeunload={onBeforeUnload} />
 
 <div class="relative flex h-full flex-col bg-bg text-ink">
 	<!-- ── Slab topbar ──────────────────────────────────────────────────── -->
@@ -875,8 +911,21 @@
 			layout={studioLayout}
 			guildId={store.id}
 			extraVars={rankSampleVars}
+			context="rank"
 			onApply={(l) => (cfg.rank_card.layout = l)}
 			onClose={() => (studioOpen = false)}
 		/>
 	{/if}
 </div>
+
+<ConfirmDialog
+	bind:open={leaveOpen}
+	title="Unsaved changes"
+	description="You have changes on this page that haven't been saved yet. What would you like to do?"
+	cancelLabel="Keep editing"
+	discardLabel="Discard"
+	confirmLabel="Save and leave"
+	oncancel={keepEditing}
+	ondiscard={discardAndLeave}
+	onconfirm={saveAndLeave}
+/>

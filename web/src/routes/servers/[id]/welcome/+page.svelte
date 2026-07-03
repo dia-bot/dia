@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount, onDestroy, getContext, setContext } from 'svelte';
+	import { beforeNavigate, goto } from '$app/navigation';
 	import { GuildStore, GUILD_CTX } from '$lib/guild.svelte';
 	import { api, layoutPreview } from '$lib/api';
 	import type { Layout } from '$lib/layout/schema';
@@ -15,6 +16,7 @@
 	import TabSwipe from '$lib/components/page/TabSwipe.svelte';
 	import MessageEditor from '$lib/components/commands/MessageEditor.svelte';
 	import CardStudioModal from '$lib/components/editor/CardStudioModal.svelte';
+	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 	import {
 		Send,
 		Image as ImageIcon,
@@ -245,6 +247,7 @@
 	let baseline = $state('');
 	let previewUrl = $state('');
 	let studioOpen = $state(false);
+	let studioLayout = $state<Layout>(); // local seed for the modal; only committed on Apply
 
 	let savePhase = $state<'idle' | 'saving' | 'saved' | 'error'>('idle');
 	let saveErr = $state('');
@@ -282,14 +285,20 @@
 	});
 
 	function openStudio() {
-		if (!cfg[tab].card.layout) cfg[tab].card.layout = templateLayout(tab === 'welcome' ? 'aurora' : 'midnight');
+		// Seed the modal from a local copy; commit to cfg only on Apply so opening
+		// (then cancelling) the studio never dirties the page.
+		studioLayout = cfg[tab].card.layout ?? templateLayout(tab === 'welcome' ? 'aurora' : 'midnight');
 		studioOpen = true;
 	}
-	// Add / remove the card straight from the artifact. Adding it opens the studio
-	// so designing the image is the immediate next move.
+	// Add / remove the card straight from the artifact. Turning it on just opens
+	// the studio; card.enabled is committed on Apply (see onApply below) so
+	// opening then cancelling never leaves an enabled card with no design.
 	function toggleCard(on: boolean) {
-		cfg[tab].card.enabled = on;
-		if (on) openStudio();
+		if (on) {
+			openStudio();
+		} else {
+			cfg[tab].card.enabled = false;
+		}
 	}
 
 	// Live card preview (debounced), rendered through the real layout engine.
@@ -393,6 +402,40 @@
 		}
 	}
 
+	// Unsaved-changes guard. In-app navigation is intercepted while dirty and routed
+	// through the confirm dialog (Save and leave / Discard / Keep editing); hard
+	// closes get the browser's native prompt. While the Card Studio is open it owns
+	// its own guard, so we defer to it and let its confirmed leave through.
+	let leaveOpen = $state(false);
+	let pendingUrl: URL | null = null;
+	let bypassNav = false;
+	beforeNavigate((nav) => {
+		if (bypassNav || nav.type === 'leave' || studioOpen) return;
+		if (!dirty || !nav.to) return;
+		nav.cancel();
+		pendingUrl = nav.to.url;
+		leaveOpen = true;
+	});
+	function keepEditing() {
+		pendingUrl = null;
+	}
+	function discardAndLeave() {
+		const url = pendingUrl;
+		pendingUrl = null;
+		bypassNav = true;
+		if (url) goto(url);
+	}
+	async function saveAndLeave() {
+		await save();
+		if (savePhase !== 'error') discardAndLeave();
+	}
+	function onBeforeUnload(e: BeforeUnloadEvent) {
+		if (dirty) {
+			e.preventDefault();
+			e.returnValue = ''; // shows the browser's native "leave site?" prompt
+		}
+	}
+
 	const tabs = [
 		{ k: 'welcome', label: 'Member joins' },
 		{ k: 'goodbye', label: 'Member leaves' }
@@ -400,7 +443,7 @@
 </script>
 
 <svelte:head><title>Welcome · {store.name} · Dia</title></svelte:head>
-<svelte:window onkeydown={onKeydown} />
+<svelte:window onkeydown={onKeydown} onbeforeunload={onBeforeUnload} />
 
 <div class="relative flex h-full flex-col bg-bg text-ink">
 	<!-- ── Slab topbar ──────────────────────────────────────────────────── -->
@@ -584,12 +627,28 @@
 		<ReleaseDock {dirty} phase={savePhase} error={saveErr} onsave={save} onreset={reset} />
 	{/if}
 
-	{#if studioOpen}
+	{#if studioOpen && studioLayout}
 		<CardStudioModal
-			layout={cfg[tab].card.layout ?? templateLayout('aurora')}
+			layout={studioLayout}
 			guildId={store.id}
-			onApply={(l) => (cfg[tab].card.layout = l)}
+			context="welcome"
+			onApply={(l) => {
+				cfg[tab].card.layout = l;
+				cfg[tab].card.enabled = true;
+			}}
 			onClose={() => (studioOpen = false)}
 		/>
 	{/if}
 </div>
+
+<ConfirmDialog
+	bind:open={leaveOpen}
+	title="Unsaved changes"
+	description="You have changes on this page that haven't been saved yet. What would you like to do?"
+	cancelLabel="Keep editing"
+	discardLabel="Discard"
+	confirmLabel="Save and leave"
+	oncancel={keepEditing}
+	ondiscard={discardAndLeave}
+	onconfirm={saveAndLeave}
+/>

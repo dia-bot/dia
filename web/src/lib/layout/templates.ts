@@ -99,9 +99,11 @@ export function rankStarterLayout(): Layout {
 			text('meta', 'Level / Rank', 268, 122, 618, 36, 'LEVEL {{.Level}}    ·    RANK #{{.Rank}}', 26, 700, '#A4A4AE', 'left'),
 			// XP progress-bar track (full width of the text column).
 			{ id: 'bar-bg', type: 'rect', name: 'XP track', x: 268, y: 178, w: 618, h: 22, opacity: 1, hidden: false, fill: '#212126', radius: 11 },
-			// XP progress fill — a rose bar. Width is a sensible sample; admins tune it
-			// in the studio. The renderer paints the real progress on the live card.
-			{ id: 'bar', type: 'rect', name: 'XP fill', x: 268, y: 178, w: 278, h: 22, opacity: 1, hidden: false, fill: '#FF6363', radius: 11 },
+			// XP progress fill: a rose bar bound to the member's XP progress. It spans
+			// the full track (same w as bar-bg); `progress: true` makes the renderer
+			// paint it to {{.Progress}} percent on the live card, so at 45% it fills
+			// ~278px. Editing the width here only changes the empty-track look.
+			{ id: 'bar', type: 'rect', name: 'XP fill', x: 268, y: 178, w: 618, h: 22, opacity: 1, hidden: false, fill: '#FF6363', radius: 11, progress: true },
 			// XP figures under the bar.
 			text('xp', 'XP', 268, 214, 618, 30, '{{.LevelXP}} / {{.LevelNeeded}} XP   ·   {{.Progress}}', 22, 400, '#A4A4AE', 'left')
 		]

@@ -87,7 +87,8 @@ export interface Effect {
 
 // The card renders server-side on every member join, so we cap layer count to
 // keep that cheap — masking + vector shapes mean you rarely need many layers.
-export const MAX_LAYERS = 12;
+// Mirrored (and enforced) server-side in schema.go.
+export const MAX_LAYERS = 48;
 
 // Canvas size limits. The card renders server-side on every join, so the canvas
 // can be any aspect ratio but its resolution is capped to keep memory/CPU
@@ -189,6 +190,10 @@ export interface Layer {
 	fills?: Paint[]; // Figma-style paint stack, BOTTOM → TOP (index 0 paints first)
 	radius?: number; // corner radius (rect / image / rounded avatar)
 	corners?: [number, number, number, number]; // independent corner radii [tl,tr,br,bl]; overrides `radius` when set (rect/image)
+	// rect-only: bind the rect's painted width to the member's XP progress. When
+	// true the renderer fills the rect to {{.Progress}} percent (an XP bar);
+	// welcome cards (no progress value) render it full width. Mirrored in schema.go.
+	progress?: boolean;
 	stroke_color?: string; // LEGACY single outline hex; superseded by `strokes` when set
 	strokes?: Paint[]; // Figma-style stroke paint stack, BOTTOM → TOP (like `fills`)
 	stroke_width?: number; // outline width in canvas px

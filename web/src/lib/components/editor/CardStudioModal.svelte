@@ -19,12 +19,14 @@
 		layout,
 		guildId,
 		extraVars,
+		context,
 		onApply,
 		onClose
 	}: {
 		layout: Layout;
 		guildId: string;
 		extraVars?: Record<string, string>;
+		context?: 'welcome' | 'rank';
 		onApply: (l: Layout) => void;
 		onClose: () => void;
 	} = $props();
@@ -101,7 +103,13 @@
 
 <svelte:window
 	onkeydown={(e) => {
-		if (e.key === 'Escape' && !confirmOpen) requestClose();
+		if (e.key !== 'Escape' || confirmOpen) return;
+		if (e.defaultPrevented) return; // a canvas/editor handler already consumed Esc
+		// Only close when the studio is fully idle. Otherwise Esc first walks the
+		// active state down (leave edit mode → drop the tool → clear the selection →
+		// dismiss the server-render overlay), each handled in Canvas / LayoutEditor.
+		if (store.editId || store.tool !== 'select' || store.selectedIds.length || store.overlayOpen) return;
+		requestClose();
 	}}
 />
 
@@ -118,7 +126,7 @@
 	transition:scale={{ duration: reduceMotion ? 0 : 220, start: 0.96, opacity: 0, easing: cubicOut }}
 	class="fixed inset-3 z-50 overflow-hidden rounded-2xl border border-line-strong bg-bg shadow-2xl md:inset-6 lg:inset-8"
 >
-	<LayoutEditor {guildId} {extraVars} title="Card Studio">
+	<LayoutEditor {guildId} {extraVars} {context} title="Card Studio">
 		{#snippet actions()}
 			<button
 				type="button"
