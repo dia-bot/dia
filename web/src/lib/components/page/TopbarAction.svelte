@@ -38,7 +38,7 @@
 		{href}
 		title={title}
 		aria-label={ariaLabel}
-		class="inline-flex h-7 items-center gap-1.5 rounded-md px-2.5 text-[12px] font-medium transition-colors {cls}"
+		class="inline-flex h-7 items-center gap-1.5 rounded-lg px-2.5 text-[12px] font-medium transition-colors {cls}"
 	>
 		{#if icon}{@render icon()}{/if}
 		{#if children}{@render children()}{/if}
@@ -50,7 +50,7 @@
 		{disabled}
 		{title}
 		aria-label={ariaLabel}
-		class="inline-flex h-7 items-center gap-1.5 rounded-md px-2.5 text-[12px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 {cls}"
+		class="inline-flex h-7 items-center gap-1.5 rounded-lg px-2.5 text-[12px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 {cls}"
 	>
 		{#if icon}{@render icon()}{/if}
 		{#if children}{@render children()}{/if}

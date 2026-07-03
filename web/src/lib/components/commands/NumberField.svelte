@@ -59,7 +59,7 @@
 </script>
 
 <div
-	class="group/num flex h-7 items-stretch overflow-hidden rounded-md border border-line bg-bg transition-colors focus-within:border-line-strong hover:border-line-strong {disabled
+	class="group/num flex h-7 items-stretch overflow-hidden rounded-lg border border-line bg-bg transition-colors focus-within:border-line-strong hover:border-line-strong {disabled
 		? 'pointer-events-none opacity-40'
 		: ''} {cls}"
 >

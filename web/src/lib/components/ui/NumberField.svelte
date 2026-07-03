@@ -34,7 +34,7 @@
 <div class="group relative {className}">
 	<input {id} type="number" bind:value {min} {max} {step} {placeholder} class="input w-full pr-8" />
 	<span
-		class="pointer-events-none absolute inset-y-[3px] right-[3px] flex w-6 flex-col overflow-hidden rounded-[9px] opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100"
+		class="pointer-events-none absolute inset-y-[3px] right-[3px] flex w-6 flex-col overflow-hidden rounded-[5px] opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100"
 	>
 		<button
 			type="button"
