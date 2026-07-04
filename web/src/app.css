@@ -211,6 +211,14 @@ body {
 		opacity: 0.5;
 		cursor: not-allowed;
 	}
+	/* Small tier for modal footers and inline confirms: 32px, matching the
+	   compact scale dialogs already use (ConfirmDialog, Card Studio). Same
+	   radius, one size down. Pages and forms keep the full-size .btn. */
+	.btn-sm {
+		height: 2rem;
+		padding: 0 0.75rem;
+		font-size: 0.8125rem;
+	}
 	/* On dark, the neutral "primary" is a near-white pill with dark text. */
 	.btn-primary {
 		background: var(--color-ink);

@@ -334,7 +334,7 @@
 				{#if step < STEPS.length - 1}
 					<button
 						type="button"
-						class="inline-flex h-7 items-center gap-1 rounded-md bg-ink px-2.5 text-[12px] font-medium text-bg transition-opacity hover:opacity-90 disabled:opacity-40"
+						class="inline-flex h-7 items-center gap-1 rounded-lg bg-ink px-2.5 text-[12px] font-medium text-bg transition-opacity hover:opacity-90 disabled:opacity-40"
 						disabled={!canAdvance}
 						onclick={() => (step = (step + 1) as WizardStep)}
 					>
@@ -344,7 +344,7 @@
 				{:else}
 					<button
 						type="button"
-						class="inline-flex h-7 items-center gap-1.5 rounded-md bg-ink px-3 text-[12px] font-medium text-bg transition-opacity hover:opacity-90 disabled:opacity-50"
+						class="inline-flex h-7 items-center gap-1.5 rounded-lg bg-ink px-3 text-[12px] font-medium text-bg transition-opacity hover:opacity-90 disabled:opacity-50"
 						disabled={creating || !nameValid || nameTaken}
 						onclick={create}
 					>

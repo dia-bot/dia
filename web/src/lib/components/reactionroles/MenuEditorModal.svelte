@@ -370,15 +370,15 @@
 			{/key}
 		</div>
 
-		<!-- Footer. Unified .btn controls so the modal matches the rest of the app. -->
+		<!-- Footer. The .btn-sm tier: modal footers use the 32px size dialogs share. -->
 		<div class="flex h-12 shrink-0 items-center justify-end gap-2 border-t border-line px-4">
 			{#if phase === 'edit'}
-				<button class="btn btn-ghost" onclick={guardClose} disabled={savingMenu}>Cancel</button>
-				<button class="btn btn-primary" onclick={saveMenu} disabled={savingMenu || !canSaveMenu}>
+				<button class="btn btn-sm btn-ghost" onclick={guardClose} disabled={savingMenu}>Cancel</button>
+				<button class="btn btn-sm btn-primary" onclick={saveMenu} disabled={savingMenu || !canSaveMenu}>
 					{savingMenu ? 'Saving…' : 'Save menu'}
 				</button>
 			{:else}
-				<button class="btn btn-primary" onclick={doClose}>Done</button>
+				<button class="btn btn-sm btn-primary" onclick={doClose}>Done</button>
 			{/if}
 		</div>
 	</Dialog.Content>
