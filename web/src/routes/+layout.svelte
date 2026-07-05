@@ -5,7 +5,6 @@
 	import { QueryClient, QueryClientProvider } from '@tanstack/svelte-query';
 	import { setCsrf, loginURL } from '$lib/api';
 	import { loginWithPopup } from '$lib/auth';
-	import { navDirection } from '$lib/nav-order';
 	import type { Snippet } from 'svelte';
 
 	let { data, children }: { data: { csrf?: string | null }; children: Snippet } = $props();
@@ -46,47 +45,22 @@
 		return () => document.removeEventListener('click', onClick);
 	});
 
-	// Cross-page transitions via the View Transitions API (a no-op elsewhere).
-	// Dashboard page switches get a direction-aware slide of the content surface
-	// (see the ::view-transition rules in app.css): we tag <html> with the travel
-	// direction derived from the sidebar order, and the content <main> (named
-	// `dash-surface`) slides that way while the sidebar/topbar hold still.
-	// Everything else keeps the default crossfade.
-	type ViewTransition = { finished: Promise<void> };
-	// Monotonic token so only the newest navigation may clear the shared <html>
-	// tags. Without it, a second nav started mid-slide would have its tags wiped
-	// by the interrupted first transition's `finished.finally` (which still runs
-	// when a transition is skipped), silently dropping the new slide.
-	let vtToken = 0;
+	// Cross-page transitions via the View Transitions API (a no-op where the API
+	// is unavailable). Dashboard page switches are SKIPPED here on purpose: they
+	// animate in the live DOM (vertical content slide + sliding sidebar highlight
+	// in servers/[id]/+layout.svelte), and wrapping them in a view transition
+	// would snapshot and freeze the sidebar, hiding that highlight. Every other
+	// navigation keeps the default crossfade.
 	onNavigate((navigation) => {
 		const doc = document as Document & {
-			startViewTransition?: (cb: () => Promise<void>) => ViewTransition;
+			startViewTransition?: (cb: () => Promise<void>) => void;
 		};
 		if (!doc.startViewTransition) return;
-
-		const root = document.documentElement;
-		const dir = navDirection(navigation.from?.url.pathname, navigation.to?.url.pathname);
-		if (dir) {
-			root.dataset.vt = 'dash';
-			root.dataset.vtDir = dir;
-		} else {
-			delete root.dataset.vt;
-			delete root.dataset.vtDir;
-		}
-		const token = ++vtToken;
-
+		if (/^\/servers\/[^/]+(\/|$)/.test(navigation.to?.url.pathname ?? '')) return;
 		return new Promise<void>((resolve) => {
-			const transition = doc.startViewTransition!(async () => {
+			doc.startViewTransition!(async () => {
 				resolve();
 				await navigation.complete;
-			});
-			// Clear the direction tags once the transition settles so they never
-			// leak into the next navigation, but only if a newer navigation hasn't
-			// already taken ownership of the tags.
-			transition?.finished?.finally(() => {
-				if (token !== vtToken) return;
-				delete root.dataset.vt;
-				delete root.dataset.vtDir;
 			});
 		});
 	});
