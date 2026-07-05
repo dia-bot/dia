@@ -667,60 +667,78 @@ input[type='number'] {
 		overflow: clip;
 	}
 
-	/* Forward (moving DOWN the sidebar): new page enters from the right, old page
-	   leaves to the left. */
+	/* Sliding sidebar highlight: the WHOLE active nav item (pill + icon + label) is
+	   its own view-transition group, so even while the rest of the chrome is frozen
+	   it MORPHS (glides + resizes) from the old page's item to the newly-selected
+	   one, in step with the content slide. Naming the whole item (not just the
+	   background pill) is what keeps the label legible for the whole glide: a
+	   named group always paints above the frozen root, so a background-only pill
+	   would occlude the icon/label under it. The name lives in the no-preference
+	   block so reduced-motion users get an instant highlight swap, not a glide. */
+	:root[data-vt='dash'] .vt-nav-active {
+		view-transition-name: nav-active;
+	}
+	:root[data-vt='dash']::view-transition-group(nav-active) {
+		animation-duration: 340ms;
+		animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+	}
+
+	/* The content slides VERTICALLY, mirroring the vertical sidebar. Forward
+	   (moving DOWN the sidebar): the new page rises up from below while the old
+	   page lifts out the top. */
 	:root[data-vt='dash'][data-vt-dir='fwd']::view-transition-new(dash-surface) {
-		animation: 340ms cubic-bezier(0.22, 1, 0.36, 1) both vt-enter-right;
+		animation: 340ms cubic-bezier(0.22, 1, 0.36, 1) both vt-in-up;
 	}
 	:root[data-vt='dash'][data-vt-dir='fwd']::view-transition-old(dash-surface) {
-		animation: 240ms cubic-bezier(0.4, 0, 0.2, 1) both vt-leave-left;
+		animation: 240ms cubic-bezier(0.4, 0, 0.2, 1) both vt-out-up;
 	}
-	/* Back (moving UP the sidebar): mirrored. */
+	/* Back (moving UP the sidebar): the new page descends from above, old drops
+	   out the bottom. */
 	:root[data-vt='dash'][data-vt-dir='back']::view-transition-new(dash-surface) {
-		animation: 340ms cubic-bezier(0.22, 1, 0.36, 1) both vt-enter-left;
+		animation: 340ms cubic-bezier(0.22, 1, 0.36, 1) both vt-in-down;
 	}
 	:root[data-vt='dash'][data-vt-dir='back']::view-transition-old(dash-surface) {
-		animation: 240ms cubic-bezier(0.4, 0, 0.2, 1) both vt-leave-right;
+		animation: 240ms cubic-bezier(0.4, 0, 0.2, 1) both vt-out-down;
 	}
 }
 
-@keyframes vt-enter-right {
+@keyframes vt-in-up {
 	from {
-		transform: translateX(6%);
+		transform: translateY(6%);
 		opacity: 0;
 	}
 	to {
-		transform: translateX(0);
+		transform: translateY(0);
 		opacity: 1;
 	}
 }
-@keyframes vt-leave-left {
+@keyframes vt-out-up {
 	from {
-		transform: translateX(0);
+		transform: translateY(0);
 		opacity: 1;
 	}
 	to {
-		transform: translateX(-4%);
+		transform: translateY(-4%);
 		opacity: 0;
 	}
 }
-@keyframes vt-enter-left {
+@keyframes vt-in-down {
 	from {
-		transform: translateX(-6%);
+		transform: translateY(-6%);
 		opacity: 0;
 	}
 	to {
-		transform: translateX(0);
+		transform: translateY(0);
 		opacity: 1;
 	}
 }
-@keyframes vt-leave-right {
+@keyframes vt-out-down {
 	from {
-		transform: translateX(0);
+		transform: translateY(0);
 		opacity: 1;
 	}
 	to {
-		transform: translateX(4%);
+		transform: translateY(4%);
 		opacity: 0;
 	}
 }

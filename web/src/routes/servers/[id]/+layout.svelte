@@ -240,10 +240,22 @@
 							<a
 								href={item.path ? `${base}/${item.path}` : base}
 								aria-current={active ? 'page' : undefined}
-								class="group flex h-8 items-center gap-2.5 rounded-md px-2.5 text-[13px] transition-colors duration-100 {active
-									? 'bg-surface font-medium text-ink shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]'
+								class:vt-nav-active={active}
+								class="group relative isolate flex h-8 items-center gap-2.5 rounded-md px-2.5 text-[13px] transition-colors duration-100 {active
+									? 'font-medium text-ink'
 									: 'font-medium text-muted hover:bg-surface/50 hover:text-ink'}"
 							>
+								{#if active}
+									<!-- The active item (this whole <a>) is the shared-element view
+									     transition group (`.vt-nav-active` in app.css): it glides along
+									     the sidebar from the old page's item to the new one, carrying its
+									     label so the text stays legible the entire glide. This pill is the
+									     item's background, kept behind the icon/label with `-z-10` inside
+									     the isolated link. -->
+									<span
+										class="absolute inset-0 -z-10 rounded-md bg-surface shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]"
+									></span>
+								{/if}
 								<item.icon
 									size={15}
 									strokeWidth={active ? 2 : 1.75}
