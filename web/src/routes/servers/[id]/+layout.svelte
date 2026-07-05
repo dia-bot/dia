@@ -263,9 +263,13 @@
 		</aside>
 
 		<!-- Content: the lighter framed work surface. `relative` so an in-context
-		     overlay (e.g. the Card Studio) can fill exactly this area, not the page. -->
+		     overlay (e.g. the Card Studio) can fill exactly this area, not the page.
+		     `dash-surface` names this box for the View Transitions API so page
+		     navigation slides only this region (the sidebar/topbar stay put). Its
+		     box is a constant full-height/width slot (content scrolls inside), so
+		     the slide never resizes. -->
 		<main
-			class="relative min-w-0 flex-1 overflow-auto border-line bg-bg md:rounded-tl-2xl md:border-l md:border-t"
+			class="dash-surface relative min-w-0 flex-1 overflow-auto border-line bg-bg md:rounded-tl-2xl md:border-l md:border-t"
 		>
 			{#if store.error}
 				<div class="px-6 py-12">
