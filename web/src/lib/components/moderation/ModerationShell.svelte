@@ -1,15 +1,10 @@
 <script lang="ts" module>
-	import type { LucideIcon } from '$lib/commands/icons';
+	import type { SubTab } from '$lib/components/page/SubTabs.svelte';
 	// One sub-section of a safety page. These are the page's OWN sections (Rules,
 	// Escalation, Events, …) — deliberately NOT the four moderation modules, which
-	// already live in the sidebar. badge = a small mono count; dot = a status pip.
-	export type ModTab = {
-		key: string;
-		label: string;
-		icon?: LucideIcon;
-		badge?: string | number;
-		dot?: boolean;
-	};
+	// already live in the sidebar. Aliased to the shared SubTab so the safety
+	// pages and the engagement pages render the exact same underline strip.
+	export type ModTab = SubTab;
 </script>
 
 <script lang="ts">
@@ -20,8 +15,10 @@
 	// loading skeleton and the error/retry state so no page can hang on a blank
 	// skeleton, and owns the floating save dock.
 	import { type Snippet } from 'svelte';
+	import type { LucideIcon } from '$lib/commands/icons';
 	import Toggle from '$lib/components/Toggle.svelte';
 	import ReleaseDock from '$lib/components/page/ReleaseDock.svelte';
+	import SubTabs from '$lib/components/page/SubTabs.svelte';
 	import { RotateCw, CircleAlert } from 'lucide-svelte';
 
 	let {
@@ -109,37 +106,7 @@
 
 	<!-- ── Subtab strip: the page's own sections (NOT the sidebar's modules) ── -->
 	{#if tabs.length && ready && !error}
-		<nav class="flex h-9 shrink-0 items-center gap-0.5 overflow-x-auto border-b border-line bg-bg px-2 sm:px-3">
-			{#each tabs as t (t.key)}
-				{@const on = t.key === active}
-				{@const TabIcon = t.icon}
-				<button
-					type="button"
-					onclick={() => (active = t.key)}
-					aria-current={on ? 'page' : undefined}
-					class="group -mb-px inline-flex h-9 shrink-0 items-center gap-1.5 border-b-2 px-2.5 text-[12.5px] font-medium transition-colors {on
-						? 'border-ink text-ink'
-						: 'border-transparent text-muted hover:text-ink'}"
-				>
-					{#if TabIcon}
-						<TabIcon size={14} class={on ? 'text-ink' : 'text-faint group-hover:text-muted'} />
-					{/if}
-					<span>{t.label}</span>
-					{#if t.badge !== undefined && t.badge !== ''}
-						<span
-							class="rounded-full border border-line px-1.5 font-mono text-[10px] leading-[1.4] tabular-nums {on
-								? 'text-muted'
-								: 'text-faint'}"
-						>
-							{t.badge}
-						</span>
-					{/if}
-					{#if t.dot}
-						<span class="size-1.5 rounded-full bg-success" title="On"></span>
-					{/if}
-				</button>
-			{/each}
-		</nav>
+		<SubTabs {tabs} bind:active />
 	{/if}
 
 	<!-- ── Body ─────────────────────────────────────────────────────────── -->

@@ -14,6 +14,7 @@
 	import SectionBar from '$lib/components/page/SectionBar.svelte';
 	import ReleaseDock from '$lib/components/page/ReleaseDock.svelte';
 	import TabSwipe from '$lib/components/page/TabSwipe.svelte';
+	import SubTabs from '$lib/components/page/SubTabs.svelte';
 	import MessageEditor from '$lib/components/commands/MessageEditor.svelte';
 	import CardStudioModal from '$lib/components/editor/CardStudioModal.svelte';
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
@@ -440,6 +441,17 @@
 		{ k: 'welcome', label: 'Member joins' },
 		{ k: 'goodbye', label: 'Member leaves' }
 	] as const;
+	// Underline subtab entries: icon + label from TRIGGERS, with an on/off pip so
+	// you can see at a glance which trigger is live.
+	const subTabs = $derived(
+		tabs.map((t) => ({
+			key: t.k,
+			label: TRIGGERS[t.k].label,
+			icon: TRIGGERS[t.k].icon,
+			dot: cfg[t.k].enabled,
+			dotOff: !cfg[t.k].enabled
+		}))
+	);
 </script>
 
 <svelte:head><title>Welcome · {store.name} · Dia</title></svelte:head>
@@ -469,28 +481,9 @@
 		{/snippet}
 	</PageTopbar>
 
-	<!-- ── Trigger switch ───────────────────────────────────────────────── -->
-	<div class="flex min-h-10 shrink-0 flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-line/60 bg-bg px-5 py-1.5 md:flex-nowrap">
-		<span class="hidden font-mono text-[10px] uppercase tracking-[0.14em] text-faint sm:inline">Editing</span>
-		<div class="flex items-center gap-1 rounded-lg border border-line bg-ink-2 p-0.5">
-			{#each tabs as t (t.k)}
-				{@const Icon = TRIGGERS[t.k].icon}
-				<button
-					type="button"
-					onclick={() => (tab = t.k)}
-					class="flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[12.5px] font-medium transition-colors {tab ===
-					t.k
-						? 'bg-surface text-ink shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]'
-						: 'text-muted hover:text-ink'}"
-				>
-					<span class="size-1.5 shrink-0 rounded-full {cfg[t.k].enabled ? 'bg-success' : 'bg-faint/40'}" title={cfg[t.k].enabled ? 'Active' : 'Off'}></span>
-					<Icon size={14} />
-					<span>{TRIGGERS[t.k].label}</span>
-				</button>
-			{/each}
-		</div>
-
-		<div class="ml-auto flex items-center gap-2.5">
+	<!-- ── Trigger switch: shared underline subtab strip (matches the safety pages) ── -->
+	<SubTabs tabs={subTabs} bind:active={tab}>
+		{#snippet actions()}
 			{#if testMsg}
 				<span class="text-[11.5px] {testMsg === 'Sent' ? 'text-success' : 'text-danger'}">{testMsg}</span>
 			{/if}
@@ -502,8 +495,8 @@
 			>
 				<Send size={13} /> {testing ? 'Sending…' : 'Send test'}
 			</button>
-		</div>
-	</div>
+		{/snippet}
+	</SubTabs>
 
 	<!-- ── Body: one live message you edit in place ─────────────────────── -->
 	<div class="relative min-h-0 flex-1 overflow-y-auto bg-bg pb-20">

@@ -19,6 +19,7 @@
 	import SectionBar from '$lib/components/page/SectionBar.svelte';
 	import Row from '$lib/components/page/Row.svelte';
 	import TabSwipe from '$lib/components/page/TabSwipe.svelte';
+	import SubTabs from '$lib/components/page/SubTabs.svelte';
 	import ReleaseDock from '$lib/components/page/ReleaseDock.svelte';
 	import MessageEditor from '$lib/components/commands/MessageEditor.svelte';
 	import CardStudioModal from '$lib/components/editor/CardStudioModal.svelte';
@@ -441,6 +442,7 @@
 		{ k: 'xp', label: 'XP & rewards' },
 		{ k: 'message', label: 'Level-up message' }
 	] as const;
+	const subTabs = tabs.map((t) => ({ key: t.k, label: t.label }));
 </script>
 
 <svelte:head><title>Leveling · {store.name} · Dia</title></svelte:head>
@@ -473,24 +475,8 @@
 		{/snippet}
 	</PageTopbar>
 
-	<!-- ── Tab band ─────────────────────────────────────────────────────── -->
-	<div class="flex min-h-10 shrink-0 flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-line/60 bg-bg px-5 py-1.5 md:flex-nowrap">
-		<span class="hidden font-mono text-[10px] uppercase tracking-[0.14em] text-faint sm:inline">Editing</span>
-		<div class="flex items-center gap-1 rounded-lg border border-line bg-ink-2 p-0.5">
-			{#each tabs as t (t.k)}
-				<button
-					type="button"
-					onclick={() => (tab = t.k)}
-					class="flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[12.5px] font-medium transition-colors {tab ===
-					t.k
-						? 'bg-surface text-ink shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]'
-						: 'text-muted hover:text-ink'}"
-				>
-					<span>{t.label}</span>
-				</button>
-			{/each}
-		</div>
-	</div>
+	<!-- ── Tab band: shared underline subtab strip (matches the safety pages) ── -->
+	<SubTabs tabs={subTabs} bind:active={tab} />
 
 	<!-- ── Body ─────────────────────────────────────────────────────────── -->
 	<div class="relative min-h-0 flex-1 overflow-y-auto bg-bg pb-20">
