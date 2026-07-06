@@ -61,3 +61,39 @@ func TestResolveLayerBindings(t *testing.T) {
 		t.Errorf("unbound slice should be returned as-is, not copied")
 	}
 }
+
+// TestResolveBindingsSupersede covers the "superseded legacy field" fixes: a
+// bound flat colour must clear the paint stack that would otherwise win, a bound
+// uniform radius clears per-corner radii, and a typo'd/out-of-scope field keeps
+// the static value (missingkey=error) instead of zeroing the layer.
+func TestResolveBindingsSupersede(t *testing.T) {
+	r := &Renderer{tmpl: templating.New()}
+	data := templating.DataFromVars(map[string]string{"{level}": "60"})
+
+	in := []layout.Layer{
+		// Text with a fill stack: a bound color must clear Fills so it takes effect.
+		{
+			ID: "t", Type: "text", Color: "#FFFFFF",
+			Fills: []layout.Paint{{Type: "solid", Color: "#111111"}},
+			Bind:  map[string]string{"color": "#00FF00"},
+		},
+		// Rect with per-corner radii: a bound radius must clear Corners.
+		{
+			ID: "r", Type: "rect", Radius: 4, Corners: []float64{1, 2, 3, 4},
+			Bind: map[string]string{"radius": "20"},
+		},
+		// Typo / out-of-scope field: static value kept, not zeroed.
+		{ID: "z", Type: "rect", W: 200, Bind: map[string]string{"w": "{{ fmul .Widht 2 }}"}},
+	}
+	out := r.resolveLayerBindings(context.Background(), in, data)
+
+	if out[0].Color != "#00FF00" || out[0].Fills != nil {
+		t.Errorf("text color bind: color=%q fills=%v, want #00FF00 / nil", out[0].Color, out[0].Fills)
+	}
+	if out[1].Radius != 20 || out[1].Corners != nil {
+		t.Errorf("radius bind: radius=%v corners=%v, want 20 / nil", out[1].Radius, out[1].Corners)
+	}
+	if out[2].W != 200 {
+		t.Errorf("typo formula width = %v, want 200 (static kept via missingkey=error)", out[2].W)
+	}
+}

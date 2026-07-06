@@ -95,15 +95,17 @@ func (r *Renderer) resolveLayerBindings(ctx context.Context, layers []layout.Lay
 		if len(l.Bind) == 0 {
 			continue
 		}
-		// eval renders a bound expression; ok is false when the key is absent/empty
-		// or the template errors, so callers keep the static value.
+		// eval renders a bound expression; ok is false when the key is absent/empty,
+		// the template errors (RenderCardStrict fails on a typo'd/out-of-scope field
+		// under missingkey=error), or it yields the "<no value>" sentinel — so a bad
+		// formula always keeps the static value instead of clobbering it.
 		eval := func(key string) (string, bool) {
 			expr, has := l.Bind[key]
 			if !has || strings.TrimSpace(expr) == "" {
 				return "", false
 			}
-			s, err := r.tmpl.RenderCard(ctx, expr, data)
-			if err != nil {
+			s, err := r.tmpl.RenderCardStrict(ctx, expr, data)
+			if err != nil || strings.TrimSpace(s) == "<no value>" {
 				return "", false
 			}
 			return s, true
@@ -140,6 +142,7 @@ func (r *Renderer) resolveLayerBindings(ctx context.Context, layers []layout.Lay
 		}
 		if v, ok := num("radius"); ok {
 			l.Radius = v
+			l.Corners = nil // a bound uniform radius overrides per-corner radii
 		}
 		if v, ok := num("stroke_width"); ok {
 			l.StrokeWidth = v
@@ -163,6 +166,11 @@ func (r *Renderer) resolveLayerBindings(ctx context.Context, layers []layout.Lay
 		if s, ok := eval("color"); ok {
 			if s = strings.TrimSpace(s); s != "" {
 				l.Color = s
+				// Text glyphs paint from the Fills stack when present, using Color only
+				// as fallback, so a bound flat text colour must clear the stack to win.
+				if l.Type == "text" {
+					l.Fills = nil
+				}
 			}
 		}
 		if s, ok := eval("fill"); ok {
@@ -539,7 +547,9 @@ func (r *Renderer) RenderLayout(ctx context.Context, in layout.Layout, vars map[
 			// Progress-bar rect: fill the WIDTH by the member's XP progress percent,
 			// left-anchored (x/y/h and the corner radius are kept). An absent or
 			// unparseable progress var (welcome cards carry none) leaves it full width.
-			if l.Progress {
+			// Skip when the width is already a formula (l.Bind["w"]) so the modern
+			// bound-width progress bar isn't scaled by the fraction a second time.
+			if l.Progress && l.Bind["w"] == "" {
 				if frac, ok := progressFraction(vars["{progress}"]); ok {
 					l.W = math.Round(l.W * frac) // frac ∈ [0,1] ⇒ width ∈ [0, l.W]
 					if l.W < 0 {

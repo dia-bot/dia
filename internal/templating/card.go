@@ -16,6 +16,19 @@ import (
 //
 // It is pure: no actions, no guild lookups, output + time capped like Render.
 func (e *Engine) RenderCard(ctx context.Context, src string, data map[string]any) (string, error) {
+	return e.renderCard(ctx, src, data, "zero")
+}
+
+// RenderCardStrict is RenderCard with missingkey=error, so a formula that
+// references a field NOT in the card scope (a typo like {{ .Widht }} or
+// {{ fmul .Widht 2 }}) FAILS instead of silently yielding zero / "<no value>".
+// Property bindings use this so a typo falls back to the static value rather than
+// collapsing a layer to a zero-size/zero-colour result.
+func (e *Engine) RenderCardStrict(ctx context.Context, src string, data map[string]any) (string, error) {
+	return e.renderCard(ctx, src, data, "error")
+}
+
+func (e *Engine) renderCard(ctx context.Context, src string, data map[string]any, missingkey string) (string, error) {
 	if src == "" {
 		return "", nil
 	}
@@ -60,7 +73,7 @@ func (e *Engine) RenderCard(ctx context.Context, src string, data map[string]any
 	for k, fn := range cardMathFuncs {
 		fm[k] = fn
 	}
-	tmpl, err := template.New("card").Funcs(fm).Option("missingkey=zero").Parse(src)
+	tmpl, err := template.New("card").Funcs(fm).Option("missingkey=" + missingkey).Parse(src)
 	if err != nil {
 		return "", fmt.Errorf("card template parse error: %w", err)
 	}
