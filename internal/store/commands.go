@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -309,23 +310,40 @@ func (r *FeatureKVRepo) Delete(ctx context.Context, e FeatureKVEntry) error {
 // the guild-wide value. A missing key / read error / null value → ("", false).
 // This is the same namespace a custom-command kv_set writes when marked shared.
 func (r *FeatureKVRepo) CardLookup(ctx context.Context, guildID, memberID int64) func(scope, key string) (string, bool) {
+	// Memoize within a single card render: a formula may reference the same key on
+	// many layers, and each getKV would otherwise be its own DB round-trip.
+	type res struct {
+		v  string
+		ok bool
+	}
+	cache := map[string]res{}
+	var mu sync.Mutex
 	return func(scope, key string) (string, bool) {
+		ck := scope + "\x00" + key
+		mu.Lock()
+		if r0, hit := cache[ck]; hit {
+			mu.Unlock()
+			return r0.v, r0.ok
+		}
+		mu.Unlock()
+
 		e := FeatureKVEntry{GuildID: guildID, CommandID: "", Scope: "guild", Key: key}
 		if scope == "member" {
 			e.Scope, e.OwnerID = "member", memberID
 		}
-		got, err := r.Get(ctx, e)
-		if err != nil || len(got.Value) == 0 {
-			return "", false
+		v, ok := "", false
+		if got, err := r.Get(ctx, e); err == nil && len(got.Value) > 0 {
+			var jv any
+			if json.Unmarshal(got.Value, &jv) != nil {
+				v, ok = string(got.Value), true // non-JSON payload: raw bytes
+			} else if jv != nil {
+				v, ok = fmt.Sprint(jv), true
+			}
 		}
-		var v any
-		if json.Unmarshal(got.Value, &v) != nil {
-			return string(got.Value), true // non-JSON payload: return the raw bytes
-		}
-		if v == nil {
-			return "", false
-		}
-		return fmt.Sprint(v), true
+		mu.Lock()
+		cache[ck] = res{v, ok}
+		mu.Unlock()
+		return v, ok
 	}
 }
 
