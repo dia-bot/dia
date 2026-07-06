@@ -187,3 +187,27 @@ export const BIND_GROUPS: BindGroup[] = [
 export function bindablePropsFor(type: LayerType): BindableProp[] {
 	return BINDABLE_PROPS.filter((p) => !p.types || p.types.includes(type));
 }
+
+// Editable TEST values for the live server-render preview: overriding a {token}
+// re-renders the card AS IF the member had that value, so formulas can be tested
+// (set Level 60 to watch a level-gated colour flip). `token` is the flat {brace}
+// key the render endpoint's ExtraVars expects (see internal/api/layout.go).
+export interface TestVar {
+	token: string;
+	label: string;
+	context: 'all' | 'rank';
+	numeric?: boolean;
+}
+export const CARD_TEST_VARS: TestVar[] = [
+	{ token: '{user}', label: 'Name', context: 'all' },
+	{ token: '{count}', label: 'Member #', context: 'all', numeric: true },
+	{ token: '{level}', label: 'Level', context: 'rank', numeric: true },
+	{ token: '{rank}', label: 'Rank', context: 'rank', numeric: true },
+	{ token: '{xp}', label: 'Total XP', context: 'rank', numeric: true },
+	{ token: '{level.xp}', label: 'Level XP', context: 'rank', numeric: true },
+	{ token: '{level.needed}', label: 'XP needed', context: 'rank', numeric: true },
+	{ token: '{progress}', label: 'Progress', context: 'rank' }
+];
+export function cardTestVarsFor(ctx: 'welcome' | 'rank'): TestVar[] {
+	return ctx === 'rank' ? CARD_TEST_VARS : CARD_TEST_VARS.filter((v) => v.context === 'all');
+}

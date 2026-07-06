@@ -16,7 +16,8 @@
 	import LayersPanel from '$lib/components/editor/LayersPanel.svelte';
 	import PropertiesPanel from '$lib/components/editor/PropertiesPanel.svelte';
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
-	import { Image, X, Loader2, AlertTriangle, MousePointer2, Scaling, Square, Circle, Type, PenTool, Pencil, Spline, Undo2, Redo2, Frame, Shapes, Triangle, Diamond, Pentagon, Hexagon, Star, Minus, Layers, SlidersHorizontal, LayoutTemplate, Keyboard } from 'lucide-svelte';
+	import { Image, X, Loader2, AlertTriangle, MousePointer2, Scaling, Square, Circle, Type, PenTool, Pencil, Spline, Undo2, Redo2, Frame, Shapes, Triangle, Diamond, Pentagon, Hexagon, Star, Minus, Layers, SlidersHorizontal, LayoutTemplate, Keyboard, ChevronDown, FlaskConical } from 'lucide-svelte';
+	import { cardTestVarsFor } from '$lib/layout/vars';
 
 	const shapeItems: { kind: ShapeKind; label: string; icon: typeof Image }[] = [
 		{ kind: 'triangle', label: 'Triangle', icon: Triangle },
@@ -62,11 +63,23 @@
 
 	const store = getContext<EditorStore>(EDITOR_CTX);
 
-	// Publish the host's sample vars + the server-render overlay flag onto the store
-	// so the canvas can preview a progress bar and the Esc cascade knows the overlay
-	// is up (see the modal's Esc handler).
+	// Editable TEST values: overrides the host's sample vars in the live preview so
+	// formulas can be exercised (set Level 60 to watch a level-gated colour flip).
+	// Empty entries fall back to the sample default, so the preview matches the bot
+	// until you type a value. See cardTestVarsFor / the "Test values" panel below.
+	let testVars = $state<Record<string, string>>({});
+	const testFields = $derived(cardTestVarsFor(context));
+	const previewVars = $derived.by(() => {
+		const merged: Record<string, string> = { ...(extraVars ?? {}) };
+		for (const [k, v] of Object.entries(testVars)) if (v.trim() !== '') merged[k] = v;
+		return merged;
+	});
+
+	// Publish the resolved sample+test vars + the server-render overlay flag onto
+	// the store so the canvas can preview a progress bar and the Esc cascade knows
+	// the overlay is up (see the modal's Esc handler).
 	$effect(() => {
-		store.extraVars = extraVars ?? {};
+		store.extraVars = previewVars;
 	});
 
 	// ── template gallery ────────────────────────────────────────────────────────
@@ -189,6 +202,7 @@
 	let previewing = $state(false); // a render is in flight (header spinner)
 	let previewError = $state('');
 	let renderOpen = $state(false); // the docked, live server-render panel is up
+	let testOpen = $state(false); // the "Test values" inputs are expanded
 
 	// On mobile the two side rails become off-canvas drawers (only one open at a
 	// time), toggled by floating buttons on the canvas. On md+ they're static panes.
@@ -216,7 +230,7 @@
 		const my = ++renderGen;
 		previewing = true;
 		try {
-			const url = await layoutPreview(guildId, store.toJSON(), extraVars);
+			const url = await layoutPreview(guildId, store.toJSON(), previewVars);
 			if (my !== renderGen) {
 				URL.revokeObjectURL(url); // superseded by a newer edit / close
 				return;
@@ -258,7 +272,7 @@
 			return;
 		}
 		touch(store.layout);
-		void extraVars; // re-render when the sample vars change too
+		void previewVars; // re-render when the sample/test vars change too
 		clearTimeout(liveTimer);
 		const delay = didFirstRender ? 700 : 0;
 		didFirstRender = true;
@@ -606,6 +620,38 @@
 						{:else}
 							<div class="flex items-center gap-2 py-6 text-[12px] text-muted">
 								<Loader2 size={14} class="animate-spin" /> Rendering…
+							</div>
+						{/if}
+					</div>
+					<!-- Test values: override the sample data so formulas can be exercised
+					     (e.g. bump Level to see a level-gated colour flip). Empty = default. -->
+					<div class="border-t border-line">
+						<button
+							type="button"
+							onclick={() => (testOpen = !testOpen)}
+							aria-expanded={testOpen}
+							class="flex w-full items-center gap-1.5 px-3 py-1.5 text-[11px] font-medium text-muted transition-colors hover:text-ink"
+						>
+							<FlaskConical size={12} /> Test values
+							<ChevronDown size={12} class="ml-auto transition-transform {testOpen ? 'rotate-180' : ''}" />
+						</button>
+						{#if testOpen}
+							<div class="grid grid-cols-2 gap-x-2 gap-y-1.5 px-3 pb-2">
+								{#each testFields as f (f.token)}
+									<label class="block min-w-0">
+										<span class="mb-0.5 block truncate text-[10px] text-faint">{f.label}</span>
+										<input
+											value={testVars[f.token] ?? ''}
+											oninput={(e) => (testVars = { ...testVars, [f.token]: e.currentTarget.value })}
+											placeholder={extraVars?.[f.token] ?? '—'}
+											inputmode={f.numeric ? 'numeric' : undefined}
+											class="w-full rounded border border-line bg-ink-2 px-2 py-1 text-[11px] text-ink outline-none transition-colors placeholder:text-faint/70 focus:border-faint"
+										/>
+									</label>
+								{/each}
+							</div>
+							<div class="px-3 pb-2 text-[10px] leading-relaxed text-faint">
+								Empty = sample default. The render above updates with these values.
 							</div>
 						{/if}
 					</div>
