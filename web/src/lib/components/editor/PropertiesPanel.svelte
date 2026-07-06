@@ -39,6 +39,7 @@
 	import Toggle from '$lib/components/Toggle.svelte';
 	import ImageInput from '$lib/components/editor/ImageInput.svelte';
 	import InspectorSection from '$lib/components/editor/InspectorSection.svelte';
+	import FormulaSection from '$lib/components/editor/FormulaSection.svelte';
 	import StrokeStyleSelect from '$lib/components/editor/StrokeStyleSelect.svelte';
 	import BrushSelect from '$lib/components/editor/BrushSelect.svelte';
 	import StrokeSidesSelect from '$lib/components/editor/StrokeSidesSelect.svelte';
@@ -1760,6 +1761,9 @@
 							</div>
 						{/if}
 					</InspectorSection>
+
+					<!-- Formulas: drive any property from a data formula (advanced). -->
+					<FormulaSection {context} />
 				{/if}
 
 				<!-- ── Align / Distribute / Arrange (multi-selection) ──────────────── -->

@@ -169,6 +169,14 @@ export interface Layer {
 	// `layers`; a mask group's stencil (clip=true) sits at the run's bottom.
 	group?: string;
 	locked?: boolean; // editor-only: can't be selected/moved on the canvas
+	// Formulas: map a property name to a Go text/template expression evaluated at
+	// render time against the card data (member / level / XP / progress, plus math
+	// and if/else). A bound key OVERRIDES the matching static field below on the
+	// server render, so any scalar property can be data-driven; the static field
+	// stays the editor's drag value + DOM-preview value + fallback. Recognised keys:
+	// x y w h opacity rotation font_size radius stroke_width letter_spacing
+	// line_height color fill stroke_color hidden. Mirrored in schema.go (Layer.Bind).
+	bind?: Record<string, string>;
 	// text
 	text?: string; // supports {variables}
 	font_size?: number;
