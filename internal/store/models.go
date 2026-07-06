@@ -278,6 +278,91 @@ type AutomationRunLog struct {
 	Error      string
 }
 
+// ── Tickets ──────────────────────────────────────────────────
+
+// TicketPanel is a posted ticket panel (embed + buttons/select). Its categories
+// (ticket types) live in the Config JSONB; see internal/features/tickets.
+type TicketPanel struct {
+	ID        string // UUID
+	GuildID   int64
+	ChannelID int64
+	MessageID int64
+	Name      string
+	Style     string // buttons | select
+	Config    json.RawMessage
+	Enabled   bool
+	Position  int
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+// Ticket is one live (or historical) support ticket.
+type Ticket struct {
+	ID                 string // UUID
+	GuildID            int64
+	Number             int
+	PanelID            string // "" when the panel was deleted
+	CategoryID         string
+	CategoryLabel      string
+	ChannelID          int64
+	IsThread           bool
+	OpenerID           int64
+	OpenerUsername     string
+	OpenerGlobalName   string
+	Subject            string
+	Status             string // open | closed | deleted
+	ClaimedBy          int64
+	FormAnswers        json.RawMessage
+	AutoCloseMinutes   int
+	AutoWarnMinutes    int
+	OpenedAt           time.Time
+	ClaimedAt          *time.Time
+	FirstResponseAt    *time.Time
+	LastActivityAt     time.Time
+	CloseWarnedAt      *time.Time
+	ClosedAt           *time.Time
+	ClosedBy           int64
+	CloseReason        string
+	Rating             int
+	Feedback           string
+	TranscriptURL      string
+	TranscriptMessages int
+}
+
+// TicketEvent is one append-only lifecycle log row for a ticket.
+type TicketEvent struct {
+	ID        int64
+	TicketID  string
+	GuildID   int64
+	Kind      string
+	ActorID   int64
+	Data      json.RawMessage
+	CreatedAt time.Time
+}
+
+// TicketNote is a staff-only note on a ticket.
+type TicketNote struct {
+	ID        int64
+	TicketID  string
+	GuildID   int64
+	AuthorID  int64
+	Body      string
+	CreatedAt time.Time
+}
+
+// TicketStats is the aggregate dashboard analytics view for a guild's tickets.
+type TicketStats struct {
+	Open              int
+	Closed            int
+	Total             int
+	Opened7d          int
+	Closed7d          int
+	Rated             int
+	AvgRating         float64
+	AvgFirstResponseS float64 // seconds, open -> first staff response
+	AvgResolutionS    float64 // seconds, open -> close
+}
+
 // AuditEntry is a dashboard audit-log row.
 type AuditEntry struct {
 	ID        int64

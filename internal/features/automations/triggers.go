@@ -42,6 +42,7 @@ const (
 	CatVoice      = "voice"
 	CatModeration = "moderation"
 	CatChannels   = "channels"
+	CatTickets    = "tickets"
 )
 
 // Triggers is the closed catalogue of automation triggers. Adding one here is
@@ -81,6 +82,12 @@ var Triggers = []TriggerKind{
 	{Key: "automod_action", Label: "Automod action taken", Description: "An automod rule fires on a member (keyword, spam, escalation, and more).", Event: event.TypeAutomodAction, Category: CatModeration, Actor: "the flagged member", HasChannel: true, Filters: []Filter{FilterIgnoreBots, FilterCooldown}},
 	{Key: "moderation_action", Label: "Moderation action taken", Description: "A moderator runs /ban, /kick, /timeout, /warn or /note.", Event: event.TypeModerationAction, Category: CatModeration, Actor: "the actioned member", Filters: []Filter{FilterCooldown}},
 	{Key: "raid_alert", Label: "Anti-raid mode changes", Description: "The server enters or leaves anti-raid mode (branch on .Event.active).", Event: event.TypeRaidAlert, Category: CatModeration, Actor: "(no actor)", Filters: []Filter{FilterCooldown}},
+
+	// Tickets
+	{Key: "ticket_opened", Label: "Ticket opened", Description: "A member opens a support ticket.", Event: event.TypeTicketOpened, Category: CatTickets, Actor: "the member who opened the ticket", HasChannel: true, Filters: []Filter{FilterCooldown}},
+	{Key: "ticket_claimed", Label: "Ticket claimed", Description: "A staff member claims a ticket.", Event: event.TypeTicketClaimed, Category: CatTickets, Actor: "the ticket opener", HasChannel: true, Filters: []Filter{FilterCooldown}},
+	{Key: "ticket_closed", Label: "Ticket closed", Description: "A ticket is closed (by staff, the opener, or auto-close).", Event: event.TypeTicketClosed, Category: CatTickets, Actor: "the ticket opener", HasChannel: true, Filters: []Filter{FilterCooldown}},
+	{Key: "ticket_rated", Label: "Ticket rated", Description: "A member rates their closed ticket (branch on .Event.rating).", Event: event.TypeTicketRated, Category: CatTickets, Actor: "the ticket opener", Filters: []Filter{FilterCooldown}},
 
 	// Channels & threads
 	{Key: "channel_create", Label: "Channel created", Description: "A channel is created.", Event: event.TypeChannelCreate, Category: CatChannels, Actor: "(no actor)", Filters: nil},
