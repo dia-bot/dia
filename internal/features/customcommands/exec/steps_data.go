@@ -108,9 +108,16 @@ func kvEntry(ctx context.Context, h *Halt, spec cc.SpecKV) (store.FeatureKVEntry
 			owner, _ = event.ParseID(h.Run.InvokerID)
 		}
 	}
+	// Shared writes/reads the guild-SHARED card namespace (command_id ""), which
+	// card formulas read via getKV / getGuildKV. Otherwise the value is private to
+	// this command's own namespace.
+	commandID := h.Run.CommandID
+	if spec.Shared {
+		commandID = ""
+	}
 	return store.FeatureKVEntry{
 		GuildID:   gid,
-		CommandID: h.Run.CommandID,
+		CommandID: commandID,
 		Scope:     scope,
 		OwnerID:   owner,
 		Key:       key,

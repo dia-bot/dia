@@ -17,9 +17,13 @@ import (
 	"github.com/dia-bot/dia/internal/imaging"
 	"github.com/dia-bot/dia/internal/interactions"
 	"github.com/dia-bot/dia/internal/plugin"
+	"github.com/dia-bot/dia/internal/templating"
 	"github.com/dia-bot/dia/internal/tmpllookup"
 	"github.com/dia-bot/dia/pkg/discordgo"
 )
+
+// pid parses a snowflake string to int64 (0 on failure), for KV owner ids.
+func pid(s string) int64 { id, _ := event.ParseID(s); return id }
 
 // Plugin implements the welcome feature.
 type Plugin struct {
@@ -114,7 +118,7 @@ func (p *Plugin) handleJoin(ctx context.Context, d plugin.Deps, env *event.Envel
 		return err
 	}
 	name, count, icon := guildInfo(ctx, d, gid, ma.MemberCount)
-	v := Vars{user: ma.Member.User, guildID: ma.GuildID, server: name, serverIcon: discord.GuildIconURL(ma.GuildID, icon, 256), count: count, lookup: tmpllookup.New(ctx, d.GuildState, ma.GuildID), fonts: guildFonts(ctx, d, gid)}
+	v := Vars{user: ma.Member.User, guildID: ma.GuildID, server: name, serverIcon: discord.GuildIconURL(ma.GuildID, icon, 256), count: count, lookup: tmpllookup.New(ctx, d.GuildState, ma.GuildID), fonts: guildFonts(ctx, d, gid), kv: d.Store.FeatureKV.CardLookup(ctx, gid, pid(ma.Member.User.ID))}
 	if err := sendConfigured(ctx, d, cfg.Welcome, v, tabWelcome); err != nil {
 		return err
 	}
@@ -134,7 +138,7 @@ func (p *Plugin) handleLeave(ctx context.Context, d plugin.Deps, env *event.Enve
 		return err
 	}
 	name, count, icon := guildInfo(ctx, d, gid, mr.MemberCount)
-	v := Vars{user: mr.User, guildID: mr.GuildID, server: name, serverIcon: discord.GuildIconURL(mr.GuildID, icon, 256), count: count, lookup: tmpllookup.New(ctx, d.GuildState, mr.GuildID), fonts: guildFonts(ctx, d, gid)}
+	v := Vars{user: mr.User, guildID: mr.GuildID, server: name, serverIcon: discord.GuildIconURL(mr.GuildID, icon, 256), count: count, lookup: tmpllookup.New(ctx, d.GuildState, mr.GuildID), fonts: guildFonts(ctx, d, gid), kv: d.Store.FeatureKV.CardLookup(ctx, gid, pid(mr.User.ID))}
 	if err := sendConfigured(ctx, d, cfg.Goodbye, v, tabGoodbye); err != nil {
 		return err
 	}
@@ -180,7 +184,7 @@ func handleTest(c *interactions.Context, d plugin.Deps) error {
 		return err
 	}
 	name, count, icon := guildInfo(c.Ctx, d, gid, 0)
-	v := Vars{user: c.User, guildID: c.GuildID, server: name, serverIcon: discord.GuildIconURL(c.GuildID, icon, 256), count: count, lookup: tmpllookup.New(c.Ctx, d.GuildState, c.GuildID), fonts: guildFonts(c.Ctx, d, gid)}
+	v := Vars{user: c.User, guildID: c.GuildID, server: name, serverIcon: discord.GuildIconURL(c.GuildID, icon, 256), count: count, lookup: tmpllookup.New(c.Ctx, d.GuildState, c.GuildID), fonts: guildFonts(c.Ctx, d, gid), kv: d.Store.FeatureKV.CardLookup(c.Ctx, gid, pid(c.User.ID))}
 	if err := sendConfigured(c.Ctx, d, cfg.Welcome, v, tabWelcome); err != nil {
 		_, e := c.FollowupContent("Failed to send test welcome: " + err.Error())
 		return e
@@ -667,7 +671,7 @@ func renderCard(ctx context.Context, img *imaging.Renderer, card CardConfig, v V
 	// Card Studio layout is the primary path; the legacy preset model only
 	// renders for configs created before the studio existed.
 	if card.Layout != nil {
-		return img.RenderLayout(ctx, *card.Layout, v.Map(), v.fonts)
+		return img.RenderLayout(templating.WithCardKV(ctx, v.kv), *card.Layout, v.Map(), v.fonts)
 	}
 	return img.RenderWelcome(ctx, imaging.WelcomeInput{
 		Background:   card.Background,

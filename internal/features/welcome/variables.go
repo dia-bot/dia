@@ -21,6 +21,7 @@ type Vars struct {
 	count      int
 	lookup     templating.Lookup // read-only guild data for getRole/getChannel; nil in previews
 	fonts      map[string]string // guild custom fonts (family → URL) for the card renderer
+	kv         templating.KVFunc // card getKV/getGuildKV lookup for this member; nil in previews
 }
 
 // NewVars builds a template context for a member in a guild.

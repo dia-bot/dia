@@ -21,6 +21,7 @@ import (
 	"github.com/dia-bot/dia/internal/interactions"
 	"github.com/dia-bot/dia/internal/plugin"
 	"github.com/dia-bot/dia/internal/store"
+	"github.com/dia-bot/dia/internal/templating"
 	"github.com/dia-bot/dia/internal/tmpllookup"
 	"github.com/dia-bot/dia/pkg/discordgo"
 )
@@ -684,7 +685,9 @@ func handleRank(c *interactions.Context, d plugin.Deps) error {
 			vars["{server.icon}"] = discord.GuildIconURL(c.GuildID, g.Icon, 256)
 			vars["{count}"] = strconv.Itoa(g.MemberCount)
 		}
-		png, err = d.Imaging.RenderLayout(c.Ctx, *card.Layout, vars, fonts)
+		// Card formulas can read stored values for THIS member / the guild.
+		kv := d.Store.FeatureKV.CardLookup(c.Ctx, gid, uid)
+		png, err = d.Imaging.RenderLayout(templating.WithCardKV(c.Ctx, kv), *card.Layout, vars, fonts)
 	} else {
 		png, err = d.Imaging.RenderRank(c.Ctx, imaging.RankInput{
 			Background:   card.Background,

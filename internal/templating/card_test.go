@@ -45,3 +45,42 @@ func TestRenderCardEmpty(t *testing.T) {
 		t.Fatalf("empty: got %q err %v", got, err)
 	}
 }
+
+// TestRenderCardKV covers getKV / getGuildKV backed by the ctx lookup, and the
+// no-lookup fallback (getKV → "").
+func TestRenderCardKV(t *testing.T) {
+	e := New()
+	data := DataFromVars(map[string]string{})
+	kv := func(scope, key string) (string, bool) {
+		switch scope + "/" + key {
+		case "member/coins":
+			return "150", true
+		case "guild/theme":
+			return "#FFD700", true
+		}
+		return "", false
+	}
+	ctx := WithCardKV(context.Background(), kv)
+
+	cases := []struct{ name, in, want string }{
+		{"member kv", "{{ getKV \"coins\" }}", "150"},
+		{"guild kv", "{{ getGuildKV \"theme\" }}", "#FFD700"},
+		{"missing key", "{{ getKV \"nope\" }}", ""},
+		{"kv in math", "{{ if gt (toInt (getKV \"coins\")) 100 }}rich{{ else }}poor{{ end }}", "rich"},
+	}
+	for _, c := range cases {
+		got, err := e.RenderCard(ctx, c.in, data)
+		if err != nil {
+			t.Errorf("%s: error: %v", c.name, err)
+			continue
+		}
+		if got != c.want {
+			t.Errorf("%s: = %q, want %q", c.name, got, c.want)
+		}
+	}
+
+	// No lookup on ctx → getKV renders empty, no error.
+	if got, err := e.RenderCard(context.Background(), "{{ getKV \"coins\" }}", data); err != nil || got != "" {
+		t.Fatalf("no-lookup: got %q err %v", got, err)
+	}
+}

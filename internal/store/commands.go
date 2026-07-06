@@ -303,6 +303,32 @@ func (r *FeatureKVRepo) Delete(ctx context.Context, e FeatureKVEntry) error {
 	return err
 }
 
+// CardLookup returns a read-only getter over the guild-SHARED KV namespace
+// (command_id ""), bound to a guild + member, for card formulas (getKV /
+// getGuildKV). scope "member" reads the member's own value; anything else reads
+// the guild-wide value. A missing key / read error / null value → ("", false).
+// This is the same namespace a custom-command kv_set writes when marked shared.
+func (r *FeatureKVRepo) CardLookup(ctx context.Context, guildID, memberID int64) func(scope, key string) (string, bool) {
+	return func(scope, key string) (string, bool) {
+		e := FeatureKVEntry{GuildID: guildID, CommandID: "", Scope: "guild", Key: key}
+		if scope == "member" {
+			e.Scope, e.OwnerID = "member", memberID
+		}
+		got, err := r.Get(ctx, e)
+		if err != nil || len(got.Value) == 0 {
+			return "", false
+		}
+		var v any
+		if json.Unmarshal(got.Value, &v) != nil {
+			return string(got.Value), true // non-JSON payload: return the raw bytes
+		}
+		if v == nil {
+			return "", false
+		}
+		return fmt.Sprint(v), true
+	}
+}
+
 // ── Command image templates ────────────────────────────────
 
 // CommandImageTemplateRepo manages command_image_templates.

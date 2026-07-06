@@ -9,6 +9,29 @@ import (
 	"text/template"
 )
 
+// KVFunc reads a stored value for the card being rendered. scope is "member"
+// (the member the card is about) or "guild" (guild-wide). ok is false when the
+// key is absent, so getKV falls back to "".
+type KVFunc func(scope, key string) (string, bool)
+
+type cardKVKey struct{}
+
+// WithCardKV attaches a KV lookup to ctx so card formulas can call getKV /
+// getGuildKV. Card render sites (leveling, welcome, the studio preview) build a
+// lookup bound to the guild + member and attach it here; a render without one
+// gets getKV == "" (no store access), so nothing breaks.
+func WithCardKV(ctx context.Context, fn KVFunc) context.Context {
+	if fn == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, cardKVKey{}, fn)
+}
+
+func cardKVFrom(ctx context.Context) KVFunc {
+	fn, _ := ctx.Value(cardKVKey{}).(KVFunc)
+	return fn
+}
+
 // RenderCard renders a card layer's text/image-source as a pure Go template with
 // a nested data root, so authors write {{.User.Username}}, {{.User.Avatar}},
 // {{.Server.Name}}, {{.Count}}, {{.Level}}, … plus the full template language
@@ -72,6 +95,24 @@ func (e *Engine) renderCard(ctx context.Context, src string, data map[string]any
 	// `{{ round (fmul .ProgressFrac .W) }}` work regardless of source type.
 	for k, fn := range cardMathFuncs {
 		fm[k] = fn
+	}
+	// Stored-value lookups (getKV = this member's value, getGuildKV = guild-wide),
+	// backed by the per-render KV func on ctx. Absent lookup / key → "" so a card
+	// without store access (or a missing key) renders cleanly.
+	kv := cardKVFrom(ctx)
+	fm["getKV"] = func(key string) string {
+		if kv == nil {
+			return ""
+		}
+		v, _ := kv("member", key)
+		return v
+	}
+	fm["getGuildKV"] = func(key string) string {
+		if kv == nil {
+			return ""
+		}
+		v, _ := kv("guild", key)
+		return v
 	}
 	tmpl, err := template.New("card").Funcs(fm).Option("missingkey=" + missingkey).Parse(src)
 	if err != nil {
