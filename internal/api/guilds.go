@@ -23,7 +23,7 @@ import (
 var knownFeatures = map[string]bool{
 	"welcome": true, "leveling": true, "autorole": true,
 	"moderation": true, "automod": true, "verification": true, "logging": true,
-	"customcommands": true, "reactionroles": true,
+	"customcommands": true, "reactionroles": true, "tickets": true,
 }
 
 // botInvitePerms is the permission requested in the bot invite URL: Administrator,
