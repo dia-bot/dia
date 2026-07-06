@@ -4,10 +4,15 @@
 
 	let {
 		open = $bindable(false),
+		onOpenChange,
 		children
-	}: { open?: boolean; children: Snippet } = $props();
+	}: {
+		open?: boolean;
+		onOpenChange?: (open: boolean) => void;
+		children: Snippet;
+	} = $props();
 </script>
 
-<DialogPrimitive.Root bind:open>
+<DialogPrimitive.Root bind:open {onOpenChange}>
 	{@render children()}
 </DialogPrimitive.Root>

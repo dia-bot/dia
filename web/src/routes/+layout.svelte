@@ -45,13 +45,18 @@
 		return () => document.removeEventListener('click', onClick);
 	});
 
-	// Smooth cross-page transitions where the View Transitions API is available
-	// (a no-op crossfade elsewhere).
+	// Cross-page transitions via the View Transitions API (a no-op where the API
+	// is unavailable). Dashboard page switches are SKIPPED here on purpose: they
+	// animate in the live DOM (vertical content slide + sliding sidebar highlight
+	// in servers/[id]/+layout.svelte), and wrapping them in a view transition
+	// would snapshot and freeze the sidebar, hiding that highlight. Every other
+	// navigation keeps the default crossfade.
 	onNavigate((navigation) => {
 		const doc = document as Document & {
 			startViewTransition?: (cb: () => Promise<void>) => void;
 		};
 		if (!doc.startViewTransition) return;
+		if (/^\/servers\/[^/]+(\/|$)/.test(navigation.to?.url.pathname ?? '')) return;
 		return new Promise<void>((resolve) => {
 			doc.startViewTransition!(async () => {
 				resolve();

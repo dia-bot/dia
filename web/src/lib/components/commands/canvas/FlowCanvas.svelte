@@ -22,7 +22,16 @@
 		onAddCase,
 		onAddParallelBranch,
 		palette,
-		showLegend = true
+		showLegend = true,
+		entryKind = 'command',
+		onEntryClick,
+		errorMessages,
+		initialPositions,
+		onPositionsChange,
+		readonly = false,
+		lockedIds,
+		tailAnchorId = '',
+		quickAdds
 	}: {
 		steps: Step[];
 		scratch?: Step[][];
@@ -50,11 +59,29 @@
 		onAttachScratch?: (sourceId: string, handle: string | null, headId: string) => void;
 		onAddCase?: (id: string) => void;
 		onAddParallelBranch?: (id: string) => void;
+		// See FlowInner for these, all optional, defaults preserve the command
+		// editor's behaviour.
+		entryKind?: 'command' | 'trigger';
+		onEntryClick?: () => void;
+		errorMessages?: Map<string, string>;
+		initialPositions?: Record<string, { x: number; y: number }>;
+		onPositionsChange?: (positions: Record<string, { x: number; y: number }>) => void;
+		readonly?: boolean;
+		lockedIds?: (id: string) => boolean;
+		tailAnchorId?: string;
+		quickAdds?: { kind: string; label: string }[];
 	} = $props();
+
+	let inner = $state<FlowInner | null>(null);
+	// centerOn frames a node (used by the page's jump-to-issue).
+	export function centerOn(id: string) {
+		inner?.centerOn(id);
+	}
 </script>
 
 <SvelteFlowProvider>
 	<FlowInner
+		bind:this={inner}
 		{steps}
 		{scratch}
 		{commandName}
@@ -74,5 +101,14 @@
 		{onAddParallelBranch}
 		{palette}
 		{showLegend}
+		{entryKind}
+		{onEntryClick}
+		{errorMessages}
+		{initialPositions}
+		{onPositionsChange}
+		{readonly}
+		{lockedIds}
+		{tailAnchorId}
+		{quickAdds}
 	/>
 </SvelteFlowProvider>

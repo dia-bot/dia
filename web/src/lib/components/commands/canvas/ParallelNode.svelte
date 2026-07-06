@@ -4,6 +4,7 @@
 	import Trash2 from 'lucide-svelte/icons/trash-2';
 	import Plus from 'lucide-svelte/icons/plus';
 	import AlertTriangle from 'lucide-svelte/icons/alert-triangle';
+	import Lock from 'lucide-svelte/icons/lock';
 	import type { NodeData } from './adapter';
 	import type { Step } from '$lib/commands/types';
 
@@ -16,6 +17,8 @@
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
 	const join = $derived(((step?.spec ?? {}) as any).join ?? 'all');
 	const hasError = $derived(!!data.hasError);
+	const locked = $derived(!!data.locked);
+	const outUnlocked = $derived(!!data.outUnlocked);
 	const hasErrorRail = $derived(
 		step?.on_error !== undefined || (step?.on_error_cases?.length ?? 0) > 0
 	);
@@ -30,12 +33,14 @@
 </script>
 
 <div
-	class="step-node group/node relative w-[240px] rounded-xl border bg-card text-foreground transition-all duration-200
-		{selected
-		? 'border-foreground/40 shadow-[0_0_0_3px_hsl(var(--foreground)/0.08),0_12px_32px_-12px_rgba(0,0,0,0.5)]'
-		: hasError
-			? 'border-destructive/40 shadow-[0_1px_2px_rgba(0,0,0,0.4)]'
-			: 'border-border/50 shadow-[0_1px_2px_rgba(0,0,0,0.3)] hover:border-foreground/25 hover:shadow-[0_4px_16px_-4px_rgba(0,0,0,0.45)]'}
+	class="step-node group/node relative w-[240px] rounded-xl border text-foreground transition-all duration-200
+		{locked
+		? 'border-line/40 bg-surface/60'
+		: selected
+			? 'bg-card border-foreground/40 shadow-[0_0_0_3px_hsl(var(--foreground)/0.08),0_12px_32px_-12px_rgba(0,0,0,0.5)]'
+			: hasError
+				? 'bg-card border-destructive/40 shadow-[0_1px_2px_rgba(0,0,0,0.4)]'
+				: 'bg-card border-border/50 shadow-[0_1px_2px_rgba(0,0,0,0.3)] hover:border-foreground/25 hover:shadow-[0_4px_16px_-4px_rgba(0,0,0,0.45)]'}
 		{data.dimmed ? 'opacity-30' : ''}"
 	data-selected={selected ? 'true' : null}
 	data-step-id={id}
@@ -68,33 +73,38 @@
 			Parallel
 		</span>
 		<span class="shrink-0 font-mono text-[10px] text-muted-foreground/70">join {join}</span>
+		{#if locked}
+			<Lock size={10} class="shrink-0 text-muted-foreground/50" />
+		{/if}
 		{#if hasError}
 			<AlertTriangle class="size-3 shrink-0 text-destructive" />
 		{/if}
-		<button
-			type="button"
-			class="nodrag grid size-5 shrink-0 place-items-center rounded text-muted-foreground/50 opacity-0 transition-[color,background,opacity] hover:bg-foreground/10 hover:text-foreground group-hover/node:opacity-100"
-			title="Add branch"
-			aria-label="Add branch"
-			onclick={(e) => {
-				e.stopPropagation();
-				emit('add-branch', { id });
-			}}
-		>
-			<Plus class="size-3" />
-		</button>
-		<button
-			type="button"
-			class="nodrag grid size-5 shrink-0 place-items-center rounded text-muted-foreground/50 opacity-0 transition-[color,background,opacity] hover:bg-destructive/15 hover:text-destructive group-hover/node:opacity-100"
-			title="Delete parallel"
-			aria-label="Delete parallel"
-			onclick={(e) => {
-				e.stopPropagation();
-				emit('delete', { id });
-			}}
-		>
-			<Trash2 class="size-3" />
-		</button>
+		{#if !locked}
+			<button
+				type="button"
+				class="nodrag grid size-5 shrink-0 place-items-center rounded text-muted-foreground/50 opacity-0 transition-[color,background,opacity] hover:bg-foreground/10 hover:text-foreground group-hover/node:opacity-100"
+				title="Add branch"
+				aria-label="Add branch"
+				onclick={(e) => {
+					e.stopPropagation();
+					emit('add-branch', { id });
+				}}
+			>
+				<Plus class="size-3" />
+			</button>
+			<button
+				type="button"
+				class="nodrag grid size-5 shrink-0 place-items-center rounded text-muted-foreground/50 opacity-0 transition-[color,background,opacity] hover:bg-destructive/15 hover:text-destructive group-hover/node:opacity-100"
+				title="Delete parallel"
+				aria-label="Delete parallel"
+				onclick={(e) => {
+					e.stopPropagation();
+					emit('delete', { id });
+				}}
+			>
+				<Trash2 class="size-3" />
+			</button>
+		{/if}
 	</div>
 
 	<div class="px-2.5 py-2">
@@ -104,6 +114,11 @@
 		<div class="mt-0.5 truncate font-mono text-[11px] leading-relaxed text-muted-foreground">
 			{branches.length} branch{branches.length === 1 ? '' : 'es'} run concurrently
 		</div>
+		{#if hasError && data.errorText}
+			<div class="mt-1 truncate font-mono text-[10px] text-destructive" title={data.errorText}>
+				{data.errorText}
+			</div>
+		{/if}
 	</div>
 
 	<div
@@ -118,6 +133,7 @@
 			position={Position.Bottom}
 			id={`branch-${i}`}
 			style="left: {pctFor(i, branches.length + 1)}%"
+			isConnectable={!locked}
 			class="!size-2.5 !border-2 !border-card !bg-foreground/65 hover:!bg-foreground"
 		/>
 	{/each}
@@ -128,15 +144,22 @@
 		position={Position.Bottom}
 		id="out"
 		style="left: {pctFor(branches.length, branches.length + 1)}%"
-		class="!size-2 !border-2 !border-card !bg-muted-foreground/40 hover:!bg-foreground"
+		isConnectable={!locked || outUnlocked}
+		class="!size-2 !border-2 !border-card !bg-muted-foreground/40 hover:!bg-foreground {locked &&
+		!outUnlocked
+			? '!pointer-events-none !opacity-0'
+			: ''}"
 	/>
 	<Handle
 		type="source"
 		position={Position.Left}
 		id="on_error"
-		class="!size-2 !border-2 !border-card !bg-destructive/80 {hasErrorRail
-			? ''
-			: '!opacity-0 transition-opacity group-hover/node:!opacity-100'}"
+		isConnectable={!locked}
+		class="!size-2 !border-2 !border-card !bg-destructive/80 {locked
+			? '!pointer-events-none !opacity-0'
+			: hasErrorRail
+				? ''
+				: '!opacity-0 transition-opacity group-hover/node:!opacity-100'}"
 	/>
 </div>
 

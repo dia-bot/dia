@@ -488,6 +488,10 @@ type SpecKV struct {
 	Default json.RawMessage `json:"default,omitempty"`
 	TTL     string          `json:"ttl,omitempty"` // "1h", "7d" (parsed by time.ParseDuration)
 	Into    string          `json:"into,omitempty"`
+	// Shared stores/reads in the guild-SHARED card namespace (command_id ""), so
+	// Card Studio formulas can read the value via getKV / getGuildKV. Off = the
+	// value stays private to this command.
+	Shared bool `json:"shared,omitempty"`
 }
 
 // SpecHTTP makes an outbound HTTP(S) request (SSRF-guarded).

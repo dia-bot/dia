@@ -3,9 +3,36 @@ package templating
 import (
 	"context"
 	"fmt"
+	"math"
+	"strconv"
 	"strings"
 	"text/template"
 )
+
+// KVFunc reads a stored value for the card being rendered. scope is "member"
+// (the member the card is about) or "guild" (guild-wide). ok is false when the
+// key is absent, so getKV falls back to "". It takes the render-scoped ctx so a
+// slow lookup is cancelled by the render timeout (not left dangling on a pooled
+// connection), and enforces its own per-render read budget.
+type KVFunc func(ctx context.Context, scope, key string) (string, bool)
+
+type cardKVKey struct{}
+
+// WithCardKV attaches a KV lookup to ctx so card formulas can call getKV /
+// getGuildKV. Card render sites (leveling, welcome, the studio preview) build a
+// lookup bound to the guild + member and attach it here; a render without one
+// gets getKV == "" (no store access), so nothing breaks.
+func WithCardKV(ctx context.Context, fn KVFunc) context.Context {
+	if fn == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, cardKVKey{}, fn)
+}
+
+func cardKVFrom(ctx context.Context) KVFunc {
+	fn, _ := ctx.Value(cardKVKey{}).(KVFunc)
+	return fn
+}
 
 // RenderCard renders a card layer's text/image-source as a pure Go template with
 // a nested data root, so authors write {{.User.Username}}, {{.User.Avatar}},
@@ -14,9 +41,27 @@ import (
 //
 // It is pure: no actions, no guild lookups, output + time capped like Render.
 func (e *Engine) RenderCard(ctx context.Context, src string, data map[string]any) (string, error) {
+	return e.renderCard(ctx, src, data, "zero")
+}
+
+// RenderCardStrict is RenderCard with missingkey=error, so a formula that
+// references a field NOT in the card scope (a typo like {{ .Widht }} or
+// {{ fmul .Widht 2 }}) FAILS instead of silently yielding zero / "<no value>".
+// Property bindings use this so a typo falls back to the static value rather than
+// collapsing a layer to a zero-size/zero-colour result.
+func (e *Engine) RenderCardStrict(ctx context.Context, src string, data map[string]any) (string, error) {
+	return e.renderCard(ctx, src, data, "error")
+}
+
+func (e *Engine) renderCard(ctx context.Context, src string, data map[string]any, missingkey string) (string, error) {
 	if src == "" {
 		return "", nil
 	}
+	// The render deadline: created up-front so the KV closures below use it for
+	// their DB reads (a slow getKV is cancelled with the render, not left blocking
+	// a pooled connection past the timeout).
+	cctx, cancel := context.WithTimeout(ctx, e.timeout)
+	defer cancel()
 	fm := make(template.FuncMap, len(baseFuncs))
 	for k, fn := range baseFuncs {
 		fm[k] = fn
@@ -51,13 +96,36 @@ func (e *Engine) RenderCard(ctx context.Context, src string, data map[string]any
 		elems += n
 		return strings.Repeat(s, n)
 	}
-	tmpl, err := template.New("card").Funcs(fm).Option("missingkey=zero").Parse(src)
+	// Float-aware math so property formulas can scale by fractional values (the
+	// integer add/sub/mul/div in baseFuncs truncate). These accept any numeric or
+	// numeric-string arg (toFloat), so `{{ fmul .ProgressFrac 618 }}` and
+	// `{{ round (fmul .ProgressFrac .W) }}` work regardless of source type.
+	for k, fn := range cardMathFuncs {
+		fm[k] = fn
+	}
+	// Stored-value lookups (getKV = this member's value, getGuildKV = guild-wide),
+	// backed by the per-render KV func on ctx. Absent lookup / key → "" so a card
+	// without store access (or a missing key) renders cleanly.
+	kv := cardKVFrom(ctx)
+	fm["getKV"] = func(key string) string {
+		if kv == nil {
+			return ""
+		}
+		v, _ := kv(cctx, "member", key)
+		return v
+	}
+	fm["getGuildKV"] = func(key string) string {
+		if kv == nil {
+			return ""
+		}
+		v, _ := kv(cctx, "guild", key)
+		return v
+	}
+	tmpl, err := template.New("card").Funcs(fm).Option("missingkey=" + missingkey).Parse(src)
 	if err != nil {
 		return "", fmt.Errorf("card template parse error: %w", err)
 	}
 
-	cctx, cancel := context.WithTimeout(ctx, e.timeout)
-	defer cancel()
 	buf := &limitedBuffer{max: e.maxOutput}
 	done := make(chan error, 1)
 	go func() { done <- tmpl.Execute(buf, data) }()
@@ -93,6 +161,10 @@ func DataFromVars(vars map[string]string) map[string]any {
 		"Icon":        vars["{server.icon}"],
 		"Banner":      vars["{server.banner}"],
 	}
+	// Numeric siblings of the formatted rank fields, so FORMULAS (layer bindings,
+	// {{ if gt .LevelNum 50 }}, {{ fmul .ProgressFrac 618 }}) can do real math while
+	// the string fields above stay for display (e.g. .XP keeps its "1,234" commas).
+	frac := progressFrac(vars["{progress}"]) // 0..1
 	return map[string]any{
 		"User": map[string]any{
 			"Username":   pick("{user.name}", "{username}"),
@@ -113,5 +185,102 @@ func DataFromVars(vars map[string]string) map[string]any {
 		"LevelXP":     vars["{level.xp}"],
 		"LevelNeeded": vars["{level.needed}"],
 		"Progress":    vars["{progress}"],
+		// numeric forms for formulas (0 when absent/unparseable). Whole-number
+		// fields are int so natural comparisons work ({{ if gt .LevelNum 50 }});
+		// ProgressFrac stays float for fractional math ({{ fmul .ProgressFrac 618 }}).
+		"LevelNum":     int(numFromVar(vars["{level}"])),
+		"RankNum":      int(numFromVar(vars["{rank}"])),
+		"XpNum":        int(numFromVar(vars["{xp}"])),
+		"LevelXpNum":   int(numFromVar(vars["{level.xp}"])),
+		"NeededNum":    int(numFromVar(vars["{level.needed}"])),
+		"MemberCount":  int(numFromVar(vars["{count}"])),
+		"ProgressFrac": frac,                // 0..1
+		"ProgressPct":  int(frac*100 + 0.5), // 0..100
 	}
+}
+
+// numFromVar parses a formatted rank var ("1,234", "64%", " 12 ") into a float,
+// tolerating thousands separators, a percent suffix and surrounding spaces.
+// Returns 0 when empty or unparseable so formulas degrade gracefully.
+func numFromVar(s string) float64 {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0
+	}
+	s = strings.TrimSuffix(strings.ReplaceAll(s, ",", ""), "%")
+	v, err := strconv.ParseFloat(strings.TrimSpace(s), 64)
+	if err != nil {
+		return 0
+	}
+	return v
+}
+
+// progressFrac parses the rank {progress} var ("64%", "64", "0.64") into a 0..1
+// fraction (mirrors imaging.progressFraction; kept here so the scope is
+// self-contained). Absent/unparseable → 0.
+func progressFrac(s string) float64 {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0
+	}
+	pct := strings.HasSuffix(s, "%")
+	v, err := strconv.ParseFloat(strings.TrimSpace(strings.TrimSuffix(s, "%")), 64)
+	if err != nil {
+		return 0
+	}
+	if pct || v > 1 {
+		v /= 100
+	}
+	if v < 0 {
+		return 0
+	}
+	if v > 1 {
+		return 1
+	}
+	return v
+}
+
+// toFloat coerces a template value (number or numeric string) to float64.
+func toFloat(v any) float64 {
+	switch n := v.(type) {
+	case float64:
+		return n
+	case float32:
+		return float64(n)
+	case int:
+		return float64(n)
+	case int64:
+		return float64(n)
+	case int32:
+		return float64(n)
+	case string:
+		return numFromVar(n)
+	default:
+		return 0
+	}
+}
+
+// cardMathFuncs are float-aware math helpers added to the card template funcmap,
+// so property formulas can scale by fractional values and clamp/round the result.
+var cardMathFuncs = template.FuncMap{
+	"fadd": func(a, b any) float64 { return toFloat(a) + toFloat(b) },
+	"fsub": func(a, b any) float64 { return toFloat(a) - toFloat(b) },
+	"fmul": func(a, b any) float64 { return toFloat(a) * toFloat(b) },
+	"fdiv": func(a, b any) float64 {
+		d := toFloat(b)
+		if d == 0 {
+			return 0
+		}
+		return toFloat(a) / d
+	},
+	"fmin":  func(a, b any) float64 { return math.Min(toFloat(a), toFloat(b)) },
+	"fmax":  func(a, b any) float64 { return math.Max(toFloat(a), toFloat(b)) },
+	"round": func(a any) float64 { return math.Round(toFloat(a)) },
+	"floor": func(a any) float64 { return math.Floor(toFloat(a)) },
+	"ceil":  func(a any) float64 { return math.Ceil(toFloat(a)) },
+	"float": toFloat,
+	"lerp":  func(a, b, t any) float64 { fa, fb := toFloat(a), toFloat(b); return fa + (fb-fa)*toFloat(t) },
+	"clamp": func(v, lo, hi any) float64 {
+		return math.Max(toFloat(lo), math.Min(toFloat(hi), toFloat(v)))
+	},
 }

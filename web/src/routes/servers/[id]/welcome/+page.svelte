@@ -1,7 +1,6 @@
 <script lang="ts">
 	import { onMount, onDestroy, getContext, setContext } from 'svelte';
-	import { fly } from 'svelte/transition';
-	import { cubicOut } from 'svelte/easing';
+	import { beforeNavigate, goto } from '$app/navigation';
 	import { GuildStore, GUILD_CTX } from '$lib/guild.svelte';
 	import { api, layoutPreview } from '$lib/api';
 	import type { Layout } from '$lib/layout/schema';
@@ -12,8 +11,13 @@
 	import Toggle from '$lib/components/Toggle.svelte';
 	import ChannelSelect from '$lib/components/ChannelSelect.svelte';
 	import PageTopbar from '$lib/components/page/PageTopbar.svelte';
+	import SectionBar from '$lib/components/page/SectionBar.svelte';
+	import ReleaseDock from '$lib/components/page/ReleaseDock.svelte';
+	import TabSwipe from '$lib/components/page/TabSwipe.svelte';
+	import SubTabs from '$lib/components/page/SubTabs.svelte';
 	import MessageEditor from '$lib/components/commands/MessageEditor.svelte';
 	import CardStudioModal from '$lib/components/editor/CardStudioModal.svelte';
+	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 	import {
 		Send,
 		Image as ImageIcon,
@@ -22,10 +26,7 @@
 		Zap,
 		ExternalLink,
 		Hash,
-		Mail,
-		Loader2,
-		Check,
-		CircleAlert
+		Mail
 	} from 'lucide-svelte';
 
 	const store = getContext<GuildStore>(GUILD_CTX);
@@ -86,8 +87,11 @@
 		card: Card;
 		// The DM carries the same rich surface as the channel message (embeds,
 		// buttons / selects and their click actions), mirroring Go's DMConfig.
+		// attach_card also attaches the channel message's card image to the DM
+		// (there is no separate DM card design).
 		dm: {
 			enabled: boolean;
+			attach_card: boolean;
 			content: string;
 			embeds: Embed[];
 			components: CompRow[];
@@ -106,7 +110,7 @@
 		actions: Record<string, unknown>[];
 		card: Card;
 		// The DM is its own send_dm Step; its click actions ride along untouched too.
-		dm: { enabled: boolean; step: Step; actions: Record<string, unknown>[] };
+		dm: { enabled: boolean; attach_card: boolean; step: Step; actions: Record<string, unknown>[] };
 	};
 	type CfgState = { welcome: MsgState; goodbye: MsgState };
 
@@ -121,7 +125,7 @@
 				components: [],
 				actions: [],
 				card: { enabled: true, layout: templateLayout('aurora') },
-				dm: { enabled: false, content: '', embeds: [], components: [], actions: [] }
+				dm: { enabled: false, attach_card: false, content: '', embeds: [], components: [], actions: [] }
 			},
 			goodbye: {
 				enabled: false,
@@ -132,7 +136,7 @@
 				components: [],
 				actions: [],
 				card: { enabled: false, layout: templateLayout('midnight') },
-				dm: { enabled: false, content: '', embeds: [], components: [], actions: [] }
+				dm: { enabled: false, attach_card: false, content: '', embeds: [], components: [], actions: [] }
 			}
 		};
 	}
@@ -184,6 +188,7 @@
 			card: { enabled: m.card?.enabled ?? false, layout: m.card?.layout },
 			dm: {
 				enabled: m.dm?.enabled ?? false,
+				attach_card: m.dm?.attach_card ?? false,
 				step: { id: `${id}-dm`, kind: 'send_dm', spec: dmSpec },
 				actions: m.dm?.actions ?? []
 			}
@@ -204,6 +209,7 @@
 			card: { enabled: st.card.enabled, layout: st.card.layout },
 			dm: {
 				enabled: st.dm.enabled,
+				attach_card: st.dm.attach_card,
 				content: (dmSpec.content as string) ?? '',
 				embeds: ((dmSpec.embeds as Record<string, unknown>[]) ?? []).map(toSavedEmbed),
 				components: (dmSpec.components as CompRow[]) ?? [],
@@ -242,6 +248,7 @@
 	let baseline = $state('');
 	let previewUrl = $state('');
 	let studioOpen = $state(false);
+	let studioLayout = $state<Layout>(); // local seed for the modal; only committed on Apply
 
 	let savePhase = $state<'idle' | 'saving' | 'saved' | 'error'>('idle');
 	let saveErr = $state('');
@@ -250,7 +257,6 @@
 		return JSON.stringify({ enabled, cfg });
 	}
 	const dirty = $derived(loaded && serialize() !== baseline);
-	const dockVisible = $derived(dirty || savePhase !== 'idle');
 
 	// The two triggers this built-in automation listens on (member_join / member_leave).
 	const TRIGGERS = {
@@ -280,14 +286,20 @@
 	});
 
 	function openStudio() {
-		if (!cfg[tab].card.layout) cfg[tab].card.layout = templateLayout(tab === 'welcome' ? 'aurora' : 'midnight');
+		// Seed the modal from a local copy; commit to cfg only on Apply so opening
+		// (then cancelling) the studio never dirties the page.
+		studioLayout = cfg[tab].card.layout ?? templateLayout(tab === 'welcome' ? 'aurora' : 'midnight');
 		studioOpen = true;
 	}
-	// Add / remove the card straight from the artifact. Adding it opens the studio
-	// so designing the image is the immediate next move.
+	// Add / remove the card straight from the artifact. Turning it on just opens
+	// the studio; card.enabled is committed on Apply (see onApply below) so
+	// opening then cancelling never leaves an enabled card with no design.
 	function toggleCard(on: boolean) {
-		cfg[tab].card.enabled = on;
-		if (on) openStudio();
+		if (on) {
+			openStudio();
+		} else {
+			cfg[tab].card.enabled = false;
+		}
 	}
 
 	// Live card preview (debounced), rendered through the real layout engine.
@@ -391,20 +403,65 @@
 		}
 	}
 
+	// Unsaved-changes guard. In-app navigation is intercepted while dirty and routed
+	// through the confirm dialog (Save and leave / Discard / Keep editing); hard
+	// closes get the browser's native prompt. While the Card Studio is open it owns
+	// its own guard, so we defer to it and let its confirmed leave through.
+	let leaveOpen = $state(false);
+	let pendingUrl: URL | null = null;
+	let bypassNav = false;
+	beforeNavigate((nav) => {
+		if (bypassNav || nav.type === 'leave' || studioOpen) return;
+		if (!dirty || !nav.to) return;
+		nav.cancel();
+		pendingUrl = nav.to.url;
+		leaveOpen = true;
+	});
+	function keepEditing() {
+		pendingUrl = null;
+	}
+	function discardAndLeave() {
+		const url = pendingUrl;
+		pendingUrl = null;
+		bypassNav = true;
+		if (url) goto(url);
+	}
+	async function saveAndLeave() {
+		await save();
+		if (savePhase !== 'error') discardAndLeave();
+	}
+	function onBeforeUnload(e: BeforeUnloadEvent) {
+		if (dirty) {
+			e.preventDefault();
+			e.returnValue = ''; // shows the browser's native "leave site?" prompt
+		}
+	}
+
 	const tabs = [
 		{ k: 'welcome', label: 'Member joins' },
 		{ k: 'goodbye', label: 'Member leaves' }
 	] as const;
+	// Underline subtab entries: icon + label from TRIGGERS, with an on/off pip so
+	// you can see at a glance which trigger is live.
+	const subTabs = $derived(
+		tabs.map((t) => ({
+			key: t.k,
+			label: TRIGGERS[t.k].label,
+			icon: TRIGGERS[t.k].icon,
+			dot: cfg[t.k].enabled,
+			dotOff: !cfg[t.k].enabled
+		}))
+	);
 </script>
 
 <svelte:head><title>Welcome · {store.name} · Dia</title></svelte:head>
-<svelte:window onkeydown={onKeydown} />
+<svelte:window onkeydown={onKeydown} onbeforeunload={onBeforeUnload} />
 
-<div class="flex h-full flex-col bg-bg text-ink">
+<div class="relative flex h-full flex-col bg-bg text-ink">
 	<!-- ── Slab topbar ──────────────────────────────────────────────────── -->
 	<PageTopbar eyebrow="Welcome" subtitle="Greet members the moment they join, and bid them farewell when they leave.">
 		{#snippet leading()}
-			<div class="grid size-6 place-items-center rounded border border-line bg-surface text-accent-ink">
+			<div class="grid size-6 place-items-center rounded border border-line bg-surface text-muted">
 				<ImageIcon size={13} />
 			</div>
 		{/snippet}
@@ -424,28 +481,9 @@
 		{/snippet}
 	</PageTopbar>
 
-	<!-- ── Trigger switch ───────────────────────────────────────────────── -->
-	<div class="flex min-h-10 shrink-0 flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-line/60 bg-bg px-5 py-1.5 md:flex-nowrap">
-		<span class="hidden font-mono text-[10px] uppercase tracking-[0.14em] text-faint sm:inline">Editing</span>
-		<div class="flex items-center gap-1 rounded-lg border border-line bg-ink-2 p-0.5">
-			{#each tabs as t (t.k)}
-				{@const Icon = TRIGGERS[t.k].icon}
-				<button
-					type="button"
-					onclick={() => (tab = t.k)}
-					class="flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[12.5px] font-medium transition-colors {tab ===
-					t.k
-						? 'bg-surface text-ink shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]'
-						: 'text-muted hover:text-ink'}"
-				>
-					<span class="size-1.5 shrink-0 rounded-full {cfg[t.k].enabled ? 'bg-success' : 'bg-faint/40'}" title={cfg[t.k].enabled ? 'Active' : 'Off'}></span>
-					<Icon size={14} class={tab === t.k ? 'text-accent-ink' : ''} />
-					<span>{TRIGGERS[t.k].label}</span>
-				</button>
-			{/each}
-		</div>
-
-		<div class="ml-auto flex items-center gap-2.5">
+	<!-- ── Trigger switch: shared underline subtab strip (matches the safety pages) ── -->
+	<SubTabs tabs={subTabs} bind:active={tab}>
+		{#snippet actions()}
 			{#if testMsg}
 				<span class="text-[11.5px] {testMsg === 'Sent' ? 'text-success' : 'text-danger'}">{testMsg}</span>
 			{/if}
@@ -457,138 +495,153 @@
 			>
 				<Send size={13} /> {testing ? 'Sending…' : 'Send test'}
 			</button>
-		</div>
-	</div>
+		{/snippet}
+	</SubTabs>
 
 	<!-- ── Body: one live message you edit in place ─────────────────────── -->
-	<div class="relative min-h-0 flex-1 overflow-y-auto bg-bg">
+	<div class="relative min-h-0 flex-1 overflow-y-auto bg-bg pb-20">
 		{#if !loaded}
-			<div class="mx-auto w-full max-w-2xl p-6">
+			<div class="p-6">
 				<div class="skeleton mb-3 h-6 w-40 rounded"></div>
-				<div class="skeleton h-72 w-full rounded-xl"></div>
+				<div class="skeleton h-72 w-full rounded"></div>
 			</div>
 		{:else}
 			{@const TIcon = trigger.icon}
-			{#key tab}
-				<div class="mx-auto w-full max-w-2xl space-y-6 px-5 py-6" in:fly={{ y: 8, duration: 160, easing: cubicOut }}>
-					{#if !enabled}
-						<div class="flex items-center gap-2 rounded-lg border border-line bg-ink-2 px-3 py-2 text-[12px] text-muted">
-							<span class="size-1.5 shrink-0 rounded-full bg-faint/40"></span>
-							The welcome system is off. Turn it on, top-right, to send anything.
-						</div>
-					{/if}
-
-					<!-- Per-trigger enable + what fires this -->
-					<div class="flex items-center justify-between gap-3 rounded-xl border border-accent/25 bg-accent/[0.06] px-3.5 py-2.5">
-						<div class="flex min-w-0 items-center gap-2.5">
-							<span class="grid size-7 shrink-0 place-items-center rounded-lg border border-accent/30 bg-accent/10 text-accent-ink">
-								<TIcon size={15} />
-							</span>
-							<div class="min-w-0">
-								<div class="flex items-center gap-1.5">
-									<span class="font-mono text-[9px] uppercase tracking-[0.16em] text-accent-ink/80">When</span>
-									<span class="font-mono text-[9.5px] text-faint">{trigger.key}</span>
+			<TabSwipe key={tab} index={tabs.findIndex((t) => t.k === tab)}>
+				<div class="grid border-b border-line/60 lg:grid-cols-2 lg:divide-x lg:divide-line/60">
+					<!-- ── Left column: Delivery (trigger · channel · DM) ─── -->
+					<div class="min-w-0">
+						<SectionBar label="Delivery" />
+						<div class="px-5 py-5">
+							{#if !enabled}
+								<div class="mb-4 flex items-center gap-2 border-b border-line/60 pb-4 text-[12px] text-muted">
+									<span class="size-1.5 shrink-0 rounded-full bg-faint/40"></span>
+									The welcome system is off. Turn it on, top-right, to send anything.
 								</div>
-								<div class="truncate text-[12.5px] font-medium text-ink">A member {trigger.verb}, send this</div>
-							</div>
-						</div>
-						<label class="flex shrink-0 items-center gap-2 text-[12px]">
-							<span class="hidden text-muted sm:inline">{cfg[tab].enabled ? 'On' : 'Off'}</span>
-							<Toggle bind:checked={cfg[tab].enabled} label="Send on {trigger.key}" />
-						</label>
-					</div>
-
-					<div class="transition-opacity {cfg[tab].enabled ? '' : 'opacity-60'}">
-						<!-- Channel: the message's destination, shown as its header -->
-						<div class="mb-2 flex flex-wrap items-center gap-2 text-[12.5px] text-muted">
-							<Hash size={14} class="text-faint" />
-							<span>Posts in</span>
-							<div class="min-w-[200px] max-w-xs flex-1"><ChannelSelect bind:value={cfg[tab].channel_id} placeholder="Channel to post the welcome in" /></div>
-						</div>
-
-						<!-- The message itself: content, embeds, the card image, buttons /
-						     selects, all edited right on the Discord surface. -->
-						<MessageEditor
-							step={cfg[tab].step}
-							embeds
-							components
-							clickPaths={false}
-							card
-							cardEnabled={cfg[tab].card.enabled && !!cfg[tab].card.layout}
-							cardUrl={previewUrl}
-							cardAspect={cardAspect}
-							onCardToggle={toggleCard}
-							onCardEdit={openStudio}
-						/>
-
-						<!-- DM: a second, private message to the member -->
-						<div class="mt-6 border-t border-line/60 pt-5">
-							<div class="mb-2 flex items-center justify-between gap-3">
-								<div class="flex min-w-0 items-center gap-2">
-									<Mail size={14} class="text-faint" />
-									<span class="text-[12.5px] font-medium text-ink">Private DM</span>
-									<span class="hidden truncate text-[11.5px] text-muted sm:inline">also message the member directly</span>
-								</div>
-								<Toggle bind:checked={cfg[tab].dm.enabled} label="Send a DM" />
-							</div>
-							{#if cfg[tab].dm.enabled}
-								<MessageEditor step={cfg[tab].dm.step} embeds components clickPaths={false} />
-							{:else}
-								<button
-									type="button"
-									onclick={() => (cfg[tab].dm.enabled = true)}
-									class="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-line px-4 py-6 text-[12.5px] font-medium text-faint transition-colors hover:border-line-strong hover:text-muted"
-								>
-									<Mail size={14} /> Add a private DM
-								</button>
 							{/if}
+
+							<!-- Per-trigger enable + what fires this, a flat hairline row (no rose box). -->
+							<div class="flex items-center justify-between gap-3 border-b border-line/60 pb-4">
+								<div class="flex min-w-0 items-center gap-2.5">
+									<span class="grid size-6 shrink-0 place-items-center rounded border border-line bg-surface text-muted">
+										<TIcon size={13} />
+									</span>
+									<div class="min-w-0">
+										<div class="flex items-center gap-1.5">
+											<span class="font-mono text-[10px] uppercase tracking-[0.14em] text-faint">When</span>
+											<span class="font-mono text-[9.5px] text-faint">{trigger.key}</span>
+										</div>
+										<div class="truncate text-[12.5px] font-medium text-ink">A member {trigger.verb}, send this</div>
+									</div>
+								</div>
+								<label class="flex shrink-0 items-center gap-2 text-[12px]">
+									<span class="hidden text-muted sm:inline">{cfg[tab].enabled ? 'On' : 'Off'}</span>
+									<Toggle bind:checked={cfg[tab].enabled} label="Send on {trigger.key}" />
+								</label>
+							</div>
+
+							<div class="transition-opacity {cfg[tab].enabled ? '' : 'opacity-60'}">
+								<!-- Channel: the message's destination -->
+								<div class="mt-4 flex flex-wrap items-center gap-2 text-[12.5px] text-muted">
+									<Hash size={14} class="text-faint" />
+									<span>Posts in</span>
+									<div class="min-w-[200px] max-w-xs flex-1"><ChannelSelect bind:value={cfg[tab].channel_id} placeholder="Channel to post the welcome in" /></div>
+								</div>
+
+								<!-- DM: a second, private message to the member -->
+								<div class="mt-5 border-t border-line/60 pt-5">
+									<div class="mb-2 flex items-center justify-between gap-3">
+										<div class="flex min-w-0 items-center gap-2">
+											<Mail size={14} class="text-faint" />
+											<span class="text-[12.5px] font-medium text-ink">Private DM</span>
+											<span class="hidden truncate text-[11.5px] text-muted sm:inline">also message the member directly</span>
+										</div>
+										<Toggle bind:checked={cfg[tab].dm.enabled} label="Send a DM" />
+									</div>
+									{#if cfg[tab].dm.enabled}
+										<!-- The DM can attach the same card image the channel message
+										     renders; there is no separate DM card design. -->
+										<MessageEditor
+											step={cfg[tab].dm.step}
+											embeds
+											components
+											clickPaths={false}
+											card
+											cardEnabled={cfg[tab].dm.attach_card && cfg[tab].card.enabled && !!cfg[tab].card.layout}
+											cardUrl={previewUrl}
+											cardAspect={cardAspect}
+											onCardToggle={(on) => (cfg[tab].dm.attach_card = on)}
+											onCardEdit={openStudio}
+										/>
+										<p class="mt-1.5 text-[11px] text-faint">Uses the same card as the channel message.</p>
+									{:else}
+										<button
+											type="button"
+											onclick={() => (cfg[tab].dm.enabled = true)}
+											class="flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-line px-4 py-4 text-[12.5px] font-medium text-faint transition-colors hover:border-line-strong hover:text-muted"
+										>
+											<Mail size={14} /> Add a private DM
+										</button>
+									{/if}
+								</div>
+							</div>
+						</div>
+					</div>
+
+					<!-- ── Right column: Message ─────────────────────────── -->
+					<div class="min-w-0">
+						<SectionBar label="Message" />
+						<div class="px-5 py-5">
+							<div class="transition-opacity {cfg[tab].enabled ? '' : 'opacity-60'}">
+								<!-- The message itself: content, embeds, the card image, buttons /
+								     selects, all edited right on the Discord surface. -->
+								<MessageEditor
+									step={cfg[tab].step}
+									embeds
+									components
+									clickPaths={false}
+									card
+									cardEnabled={cfg[tab].card.enabled && !!cfg[tab].card.layout}
+									cardUrl={previewUrl}
+									cardAspect={cardAspect}
+									onCardToggle={toggleCard}
+									onCardEdit={openStudio}
+								/>
+							</div>
 						</div>
 					</div>
 				</div>
-			{/key}
-		{/if}
-
-		<!-- Release dock — the saving experience -->
-		{#if loaded && dockVisible}
-			<div class="pointer-events-none sticky inset-x-0 bottom-4 z-40 flex justify-center px-4" transition:fly={{ y: 14, duration: 180, easing: cubicOut }}>
-				<div
-					class="pointer-events-auto relative flex h-11 items-center gap-2.5 overflow-hidden rounded-[14px] border bg-surface/95 px-3.5 shadow-[0_16px_40px_-12px_rgba(0,0,0,0.7)] backdrop-blur-md {savePhase ===
-					'error'
-						? 'dock-shake border-danger/40'
-						: 'border-line'}"
-				>
-					{#if savePhase === 'saving'}
-						<span class="dock-beam-sweep pointer-events-none absolute inset-y-0 left-0 w-1/3 bg-gradient-to-r from-transparent via-accent/30 to-transparent"></span>
-						<Loader2 size={15} class="animate-spin text-muted" />
-						<span class="text-[12.5px] text-muted">Saving…</span>
-					{:else if savePhase === 'saved'}
-						<span class="grid size-4 place-items-center rounded-full bg-success/15 text-success"><Check size={11} /></span>
-						<span class="text-[12.5px] text-ink">Saved</span>
-					{:else if savePhase === 'error'}
-						<CircleAlert size={15} class="text-danger" />
-						<span class="max-w-[16rem] truncate text-[12.5px] text-ink" title={saveErr}>{saveErr || "Couldn't save"}</span>
-						<button type="button" onclick={save} class="ml-1 inline-flex h-7 items-center rounded-md bg-ink px-2.5 text-[12px] font-medium text-bg transition-opacity hover:opacity-90">Retry</button>
-					{:else}
-						<span class="size-1.5 animate-pulse rounded-full bg-accent"></span>
-						<span class="text-[12.5px] text-muted">Unsaved changes</span>
-						<div class="ml-1 flex items-center gap-1.5">
-							<button type="button" onclick={reset} class="inline-flex h-7 items-center rounded-md border border-line-strong px-2.5 text-[12px] font-medium text-muted transition-colors hover:text-ink">Discard</button>
-							<button type="button" onclick={save} class="inline-flex h-7 items-center gap-1.5 rounded-md bg-ink px-3 text-[12px] font-medium text-bg transition-opacity hover:opacity-90">
-								Save <kbd class="hidden font-mono text-[10px] text-bg/60 sm:inline">⌘S</kbd>
-							</button>
-						</div>
-					{/if}
-				</div>
-			</div>
+			</TabSwipe>
 		{/if}
 	</div>
 
-	{#if studioOpen}
+	<!-- Release dock — the saving experience -->
+	{#if loaded}
+		<ReleaseDock {dirty} phase={savePhase} error={saveErr} onsave={save} onreset={reset} />
+	{/if}
+
+	{#if studioOpen && studioLayout}
 		<CardStudioModal
-			layout={cfg[tab].card.layout ?? templateLayout('aurora')}
+			layout={studioLayout}
 			guildId={store.id}
-			onApply={(l) => (cfg[tab].card.layout = l)}
+			context="welcome"
+			onApply={(l) => {
+				cfg[tab].card.layout = l;
+				cfg[tab].card.enabled = true;
+			}}
 			onClose={() => (studioOpen = false)}
 		/>
 	{/if}
 </div>
+
+<ConfirmDialog
+	bind:open={leaveOpen}
+	title="Unsaved changes"
+	description="You have changes on this page that haven't been saved yet. What would you like to do?"
+	cancelLabel="Keep editing"
+	discardLabel="Discard"
+	confirmLabel="Save and leave"
+	oncancel={keepEditing}
+	ondiscard={discardAndLeave}
+	onconfirm={saveAndLeave}
+/>

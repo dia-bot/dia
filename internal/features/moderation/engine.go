@@ -4,8 +4,11 @@ import (
 	"context"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/dia-bot/dia/internal/event"
+	"github.com/dia-bot/dia/internal/features/automations/runner"
+	cc "github.com/dia-bot/dia/internal/features/customcommands"
 	"github.com/dia-bot/dia/internal/plugin"
 	"github.com/dia-bot/dia/pkg/discordgo"
 )
@@ -22,7 +25,7 @@ const modPermBits = discordgo.PermissionManageMessages |
 // guild's automod rules. The first message-trigger rule that fires wins: its
 // actions run, escalation is applied, the event is emitted, and evaluation
 // stops for this message.
-func handleAutomodMessage(ctx context.Context, d plugin.Deps, env *event.Envelope, isEdit bool) error {
+func handleAutomodMessage(ctx context.Context, d plugin.Deps, r *runner.Runner, env *event.Envelope, isEdit bool) error {
 	msg, err := plugin.DecodeData[event.Message](env)
 	if err != nil {
 		return err
@@ -98,7 +101,7 @@ func handleAutomodMessage(ctx context.Context, d plugin.Deps, env *event.Envelop
 			OnMessage: true,
 			modCfg:    loadModConfig(ctx, d, gid),
 		}
-		runHit(ctx, d, cfg, h)
+		runHit(ctx, d, r, cfg, h)
 		return nil
 	}
 	return nil
@@ -106,7 +109,7 @@ func handleAutomodMessage(ctx context.Context, d plugin.Deps, env *event.Envelop
 
 // handleAutomodMember screens member identity triggers. On MEMBER_ADD it runs
 // account_age + name; on MEMBER_UPDATE only name. First match wins.
-func handleAutomodMember(ctx context.Context, d plugin.Deps, env *event.Envelope) error {
+func handleAutomodMember(ctx context.Context, d plugin.Deps, r *runner.Runner, env *event.Envelope) error {
 	var (
 		gidStr string
 		member event.Member
@@ -186,14 +189,15 @@ func handleAutomodMember(ctx context.Context, d plugin.Deps, env *event.Envelope
 			OnMessage: false,
 			modCfg:    loadModConfig(ctx, d, gid),
 		}
-		runHit(ctx, d, cfg, h)
+		runHit(ctx, d, r, cfg, h)
 		return nil
 	}
 	return nil
 }
 
-// runHit applies the matched rule's actions, then escalation, then emits.
-func runHit(ctx context.Context, d plugin.Deps, cfg AutomodConfig, h hitContext) {
+// runHit applies the matched rule's actions, then escalation, then emits, then
+// runs the rule's canvas-authored follow-up flow.
+func runHit(ctx context.Context, d plugin.Deps, r *runner.Runner, cfg AutomodConfig, h hitContext) {
 	applied, points := applyActions(ctx, d, h)
 
 	escAction, total := "", 0
@@ -203,6 +207,57 @@ func runHit(ctx context.Context, d plugin.Deps, cfg AutomodConfig, h hitContext)
 
 	res := emitResult{Applied: applied, Points: points, TotalPoints: total, Escalated: escAction}
 	emit(ctx, d, h, cfg, res)
+	runRuleTail(ctx, d, r, h, res)
+}
+
+// runRuleTail runs the rule's follow-up flow (Rule.Tail) as a durable
+// automation run once the actions have applied and the hit has been emitted.
+// Labelled with the rule's built-in key ("automod.rule.<id>") and TriggerKind
+// "automod_action" so it shares the flow's KV scope and Runs filter and reads
+// like the built-in automation the canvas shows. Best-effort and detached from
+// the offending message; nothing runs (and nothing persists) when the tail is
+// empty.
+func runRuleTail(ctx context.Context, d plugin.Deps, r *runner.Runner, h hitContext, res emitResult) {
+	if r == nil || len(h.Rule.Tail) == 0 {
+		return
+	}
+	guildID := event.FormatID(h.GuildID)
+	guildCtx := cc.ContextGuild{ID: guildID, Name: "the server"}
+	if h.GuildName != "" {
+		guildCtx.Name = h.GuildName
+	}
+	if g, err := d.Store.Guilds.Get(ctx, h.GuildID); err == nil {
+		if g.Name != "" {
+			guildCtx.Name = g.Name
+		}
+		guildCtx.MemberCount = g.MemberCount
+	}
+	ctxVars := cc.BuildContext(guildID, h.ChannelID, h.User, h.Member, guildCtx, time.Now().UnixMilli())
+	scope := cc.NewScope(d.GuildState, guildID, ctxVars, nil, nil)
+	// Exactly the .Event vars the automod_action trigger exposes, so a tail
+	// authored on the canvas behaves like a hand-built automation.
+	scope.SetEvent(map[string]any{
+		"rule_id":      h.Rule.ID,
+		"rule_name":    h.Rule.Name,
+		"trigger_type": h.Trigger.Type,
+		"reason":       h.Reason,
+		"points":       res.Points,
+		"total_points": res.TotalPoints,
+		"escalated":    res.Escalated,
+		"content":      truncate(h.Content, 300),
+		"message_id":   h.MessageID,
+		"channel_id":   h.ChannelID,
+		"actions":      res.Applied,
+	})
+	r.Start(ctx, runner.Meta{
+		AutomationID: "automod.rule." + h.Rule.ID,
+		Version:      1,
+		GuildID:      guildID,
+		InvokerID:    h.User.ID,
+		ActorID:      h.User.ID,
+		ChannelID:    h.ChannelID,
+		TriggerKind:  "automod_action",
+	}, cc.Definition{Steps: h.Rule.Tail}, scope)
 }
 
 // ── Exemption helpers ────────────────────────────────────────

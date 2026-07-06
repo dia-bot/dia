@@ -177,6 +177,12 @@ export const api = {
 		req<{ id?: number; ok?: boolean }>('PUT', `/api/guilds/${id}/reaction-roles`, menu),
 	deleteMenu: (id: string, mid: number) =>
 		req('DELETE', `/api/guilds/${id}/reaction-roles/${mid}`),
+	postMenu: (id: string, mid: number, channel_id: string) =>
+		req<{ ok: boolean; message_id: string }>(
+			'POST',
+			`/api/guilds/${id}/reaction-roles/${mid}/post`,
+			{ channel_id }
+		),
 
 	cases: (id: string) => req<{ cases: any[] }>('GET', `/api/guilds/${id}/cases`),
 	// Automod infractions (the escalation heat ledger); optional user filter.
@@ -219,6 +225,31 @@ export const api = {
 			dm_actions: dmActions,
 			tail
 		}),
+	// saveLevelingActions persists the canvas-authored programs back into the
+	// leveling config: the level-up announcement's per-button click actions and
+	// the post-message tail. Mirrors saveWelcomeActions, minus the welcome/goodbye
+	// kind and DM tab (the announcement is a single channel message).
+	saveLevelingActions: (id: string, actions: unknown, tail: unknown) =>
+		req<{ ok: boolean }>('POST', `/api/guilds/${id}/leveling/actions`, {
+			actions,
+			tail
+		}),
+	// saveAutoroleActions persists the canvas-authored post-grant tail back into the
+	// auto-roles config. Auto-roles sends no message and has no buttons, so unlike
+	// welcome/leveling there are no click actions: only the follow-up flow wired
+	// after the read-only grant-roles step.
+	saveAutoroleActions: (id: string, tail: unknown) =>
+		req<{ ok: boolean }>('POST', `/api/guilds/${id}/autorole/actions`, { tail }),
+	// saveMenuTail persists the canvas-authored follow-up flow for one
+	// reaction-role menu. Like auto-roles the spine (the role-apply step) is
+	// read-only and there are no click actions, so only the post-pick tail saves.
+	saveMenuTail: (id: string, menuId: number, tail: unknown[]) =>
+		req<{ ok: boolean }>('POST', `/api/guilds/${id}/reaction-roles/${menuId}/actions`, { tail }),
+	// saveAutomodRuleTail persists the canvas-authored follow-up flow for one
+	// automod rule. The spine (the rule's built-in actions) is read-only, so
+	// like reaction-roles only the post-fire tail saves.
+	saveAutomodRuleTail: (id: string, ruleId: string, tail: unknown[]) =>
+		req<{ ok: boolean }>('POST', `/api/guilds/${id}/automod/rules/${ruleId}/actions`, { tail }),
 	levelingVariables: (id: string) =>
 		req<{ variables: { token: string; desc: string }[] }>('GET', `/api/guilds/${id}/leveling/variables`),
 	// templatingPreview renders one template string and returns the text + any error.

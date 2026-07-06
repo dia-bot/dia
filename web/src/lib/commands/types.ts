@@ -371,13 +371,13 @@ export function newStep(kind: string): Step {
 			step.spec = { content: '' };
 			break;
 		case 'send_message':
-			step.spec = { channel: { src: '{channel.id}' }, content: '' };
+			step.spec = { channel: { src: '{{ .Channel.ID }}' }, content: '' };
 			break;
 		case 'send_dm':
 			step.spec = { user: { src: '{{ .User.ID }}' }, content: '' };
 			break;
 		case 'embed_send':
-			step.spec = { channel: { src: '{channel.id}' }, embed: { title: '', description: '' } };
+			step.spec = { channel: { src: '{{ .Channel.ID }}' }, embed: { title: '', description: '' } };
 			break;
 		case 'modal_open':
 			step.spec = {
@@ -389,27 +389,27 @@ export function newStep(kind: string): Step {
 			break;
 		case 'react_add':
 		case 'react_remove':
-			step.spec = { channel: { src: '{channel.id}' }, message: { src: '' }, emoji: '👍' };
+			step.spec = { channel: { src: '{{ .Channel.ID }}' }, message: { src: '' }, emoji: '👍' };
 			break;
 		case 'react_clear':
-			step.spec = { channel: { src: '{channel.id}' }, message: { src: '' } };
+			step.spec = { channel: { src: '{{ .Channel.ID }}' }, message: { src: '' } };
 			break;
 		case 'message_edit':
-			step.spec = { channel: { src: '{channel.id}' }, message: { src: '' }, content: '' };
+			step.spec = { channel: { src: '{{ .Channel.ID }}' }, message: { src: '' }, content: '' };
 			break;
 		case 'message_fetch':
-			step.spec = { channel: { src: '{channel.id}' }, message: { src: '' }, into: 'msg' };
+			step.spec = { channel: { src: '{{ .Channel.ID }}' }, message: { src: '' }, into: 'msg' };
 			break;
 		case 'message_delete':
 		case 'pin_add':
 		case 'pin_remove':
-			step.spec = { channel: { src: '{channel.id}' }, message: { src: '' } };
+			step.spec = { channel: { src: '{{ .Channel.ID }}' }, message: { src: '' } };
 			break;
 		case 'message_purge':
-			step.spec = { channel: { src: '{channel.id}' }, limit: 50 };
+			step.spec = { channel: { src: '{{ .Channel.ID }}' }, limit: 50 };
 			break;
 		case 'message_crosspost':
-			step.spec = { channel: { src: '{channel.id}' }, message: { src: '' } };
+			step.spec = { channel: { src: '{{ .Channel.ID }}' }, message: { src: '' } };
 			break;
 		case 'member_fetch':
 			step.spec = { user: { src: '{{ .User.ID }}' }, into: 'member' };
@@ -421,7 +421,7 @@ export function newStep(kind: string): Step {
 			step.spec = { thread: { src: '' }, user: { src: '{{ .User.ID }}' }, action: 'add' };
 			break;
 		case 'invite_create':
-			step.spec = { channel: { src: '{channel.id}' }, max_age: '24h', max_uses: 1, into: 'invite' };
+			step.spec = { channel: { src: '{{ .Channel.ID }}' }, max_age: '24h', max_uses: 1, into: 'invite' };
 			break;
 		case 'pick_random':
 			step.spec = { from: { lang: 'tmpl', src: '' }, into: 'picked' };
@@ -450,13 +450,13 @@ export function newStep(kind: string): Step {
 			step.spec = { name: 'new-channel', type: 'text', into: 'created_channel' };
 			break;
 		case 'channel_edit':
-			step.spec = { channel: { src: '{channel.id}' } };
+			step.spec = { channel: { src: '{{ .Channel.ID }}' } };
 			break;
 		case 'channel_delete':
 			step.spec = { channel: { src: '' } };
 			break;
 		case 'thread_create':
-			step.spec = { channel: { src: '{channel.id}' }, name: 'New thread', auto_archive_minutes: 60, into: 'thread' };
+			step.spec = { channel: { src: '{{ .Channel.ID }}' }, name: 'New thread', auto_archive_minutes: 60, into: 'thread' };
 			break;
 		case 'thread_archive':
 			step.spec = { thread: { src: '' } };

@@ -45,6 +45,19 @@ func (r *ReactionRoleRepo) Update(ctx context.Context, m ReactionRoleMenu) error
 	return err
 }
 
+// SetTail saves the canvas-owned follow-up flow for a menu scoped to a guild.
+// It is the only writer of tail (the dashboard's Create/Update upsert never
+// carries it), so a settings save can't clobber a canvas-authored flow.
+func (r *ReactionRoleRepo) SetTail(ctx context.Context, guildID, id int64, tail json.RawMessage) error {
+	if len(tail) == 0 {
+		tail = json.RawMessage("[]")
+	}
+	_, err := r.pool.Exec(ctx,
+		`UPDATE reaction_role_menus SET tail = $3, updated_at = now() WHERE id = $1 AND guild_id = $2`,
+		id, guildID, []byte(tail))
+	return err
+}
+
 // SetMessage records where a menu was posted (channel + message).
 func (r *ReactionRoleRepo) SetMessage(ctx context.Context, id, channelID, messageID int64) error {
 	_, err := r.pool.Exec(ctx,
@@ -63,9 +76,9 @@ func (r *ReactionRoleRepo) Delete(ctx context.Context, guildID, id int64) error 
 func (r *ReactionRoleRepo) Get(ctx context.Context, id int64) (ReactionRoleMenu, error) {
 	var m ReactionRoleMenu
 	err := r.pool.QueryRow(ctx, `
-		SELECT id, guild_id, channel_id, message_id, title, mode, options, created_at, updated_at
+		SELECT id, guild_id, channel_id, message_id, title, mode, options, tail, created_at, updated_at
 		FROM reaction_role_menus WHERE id = $1`, id).
-		Scan(&m.ID, &m.GuildID, &m.ChannelID, &m.MessageID, &m.Title, &m.Mode, &m.Options, &m.CreatedAt, &m.UpdatedAt)
+		Scan(&m.ID, &m.GuildID, &m.ChannelID, &m.MessageID, &m.Title, &m.Mode, &m.Options, &m.Tail, &m.CreatedAt, &m.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return m, ErrNotFound
 	}
@@ -75,7 +88,7 @@ func (r *ReactionRoleRepo) Get(ctx context.Context, id int64) (ReactionRoleMenu,
 // List returns all menus for a guild.
 func (r *ReactionRoleRepo) List(ctx context.Context, guildID int64) ([]ReactionRoleMenu, error) {
 	rows, err := r.pool.Query(ctx, `
-		SELECT id, channel_id, message_id, title, mode, options, created_at, updated_at
+		SELECT id, channel_id, message_id, title, mode, options, tail, created_at, updated_at
 		FROM reaction_role_menus WHERE guild_id = $1 ORDER BY id`, guildID)
 	if err != nil {
 		return nil, err
@@ -86,7 +99,7 @@ func (r *ReactionRoleRepo) List(ctx context.Context, guildID int64) ([]ReactionR
 	for rows.Next() {
 		m := ReactionRoleMenu{GuildID: guildID}
 		if err := rows.Scan(&m.ID, &m.ChannelID, &m.MessageID, &m.Title, &m.Mode,
-			&m.Options, &m.CreatedAt, &m.UpdatedAt); err != nil {
+			&m.Options, &m.Tail, &m.CreatedAt, &m.UpdatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, m)

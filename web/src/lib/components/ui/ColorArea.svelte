@@ -9,7 +9,7 @@
 
 	let {
 		value = $bindable('#B244FC'),
-		swatches = ['#FF6363', '#B244FC', '#34D399', '#F59E0B', '#3B82F6', '#FFFFFF', '#0A0A0C']
+		swatches = ['#FF6363', '#B244FC', '#34D399', '#3B82F6', '#FFFFFF', '#0A0A0C']
 	}: {
 		value?: string;
 		swatches?: string[];

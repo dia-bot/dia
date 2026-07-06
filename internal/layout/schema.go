@@ -21,6 +21,29 @@ type Layer struct {
 	Group    string   `json:"group,omitempty"`  // soft-group id; scopes a mask group (read by the mask loop). Members must be contiguous.
 	Locked   bool     `json:"locked,omitempty"` // editor-only; ignored when rendering
 
+	// Bind maps a property name to a Go text/template expression evaluated at
+	// render time against the same card data root as text/image sources (see
+	// internal/templating/card.go). When a key is present its computed value
+	// OVERRIDES the corresponding static field below, so any scalar property can be
+	// data-driven (e.g. bind["w"] = "{{ round (fmul .ProgressFrac 618) }}",
+	// bind["fill"] = "{{ if gt .LevelNum 50 }}#FFD700{{ else }}#FF6363{{ end }}").
+	// A missing key or an expression that fails to parse leaves the static value
+	// untouched, so legacy documents and bad formulas never break a render; the
+	// static field stays the editor's drag value and the fallback. Recognised keys:
+	//   numbers: x y w h opacity rotation font_size font_weight radius stroke_width
+	//            letter_spacing line_height dash gap miter_angle corner_tl corner_tr
+	//            corner_br corner_bl scatter_gap scatter_wiggle scatter_size
+	//            scatter_rotation scatter_angular dynamic_frequency dynamic_wiggle
+	//            dynamic_smoothen
+	//   colours: color fill stroke_color
+	//   bools:   hidden progress closed clip clip_invert
+	//   enums:   align valign text_case text_decoration font_family fit stroke_align
+	//            stroke_style stroke_cap stroke_join width_profile start_cap end_cap
+	//            brush_name brush_direction clip_mode
+	// (enum formulas must output a valid value; the renderer defaults on unknown.)
+	// Mirrored in schema.ts (BINDABLE_PROPS in web/src/lib/layout/vars.ts).
+	Bind map[string]string `json:"bind,omitempty"`
+
 	// text
 	Text       string  `json:"text,omitempty"`
 	FontSize   float64 `json:"font_size,omitempty"`
@@ -40,20 +63,26 @@ type Layer struct {
 	Fit string `json:"fit,omitempty"`
 
 	// rect / ellipse / common
-	Fill        string    `json:"fill,omitempty"`  // LEGACY single hex fill; superseded by Fills when set
-	Fills       []Paint   `json:"fills,omitempty"` // Figma-style paint stack, BOTTOM → TOP
-	Radius      float64   `json:"radius,omitempty"`
-	Corners     []float64 `json:"corners,omitempty"`      // independent corner radii [tl,tr,br,bl]; overrides Radius when len==4
-	StrokeColor string    `json:"stroke_color,omitempty"` // LEGACY single outline hex; superseded by Strokes when set
-	Strokes     []Paint   `json:"strokes,omitempty"`      // Figma-style stroke paint stack, BOTTOM → TOP (like Fills)
-	StrokeWidth float64   `json:"stroke_width,omitempty"`
-	StrokeAlign string    `json:"stroke_align,omitempty"` // inside|center|outside (Figma stroke Position); default center
-	StrokeStyle string    `json:"stroke_style,omitempty"` // solid|dashed (default solid)
-	Dash        float64   `json:"dash,omitempty"`         // dash length, px (dashed)
-	Gap         float64   `json:"gap,omitempty"`          // gap length, px (dashed)
-	StrokeCap   string    `json:"stroke_cap,omitempty"`   // butt|round|square (default round)
-	StrokeJoin  string    `json:"stroke_join,omitempty"`  // miter|bevel|round (default round)
-	StrokeSides []string  `json:"stroke_sides,omitempty"` // rect per-side strokes; empty OR all 4 = full outline
+	Fill    string    `json:"fill,omitempty"`  // LEGACY single hex fill; superseded by Fills when set
+	Fills   []Paint   `json:"fills,omitempty"` // Figma-style paint stack, BOTTOM → TOP
+	Radius  float64   `json:"radius,omitempty"`
+	Corners []float64 `json:"corners,omitempty"` // independent corner radii [tl,tr,br,bl]; overrides Radius when len==4
+	// Progress, on a rect, fills the rect's WIDTH by the member's XP progress
+	// percent (the rank card's {{ .Progress }} token, e.g. "64%"). Left-anchored:
+	// x/y/h and the corner radius are kept, only the width shrinks. When the
+	// progress var is absent or unparseable (welcome cards carry none) the rect
+	// renders full width, so non-rank layouts are unaffected.
+	Progress    bool     `json:"progress,omitempty"`
+	StrokeColor string   `json:"stroke_color,omitempty"` // LEGACY single outline hex; superseded by Strokes when set
+	Strokes     []Paint  `json:"strokes,omitempty"`      // Figma-style stroke paint stack, BOTTOM → TOP (like Fills)
+	StrokeWidth float64  `json:"stroke_width,omitempty"`
+	StrokeAlign string   `json:"stroke_align,omitempty"` // inside|center|outside (Figma stroke Position); default center
+	StrokeStyle string   `json:"stroke_style,omitempty"` // solid|dashed (default solid)
+	Dash        float64  `json:"dash,omitempty"`         // dash length, px (dashed)
+	Gap         float64  `json:"gap,omitempty"`          // gap length, px (dashed)
+	StrokeCap   string   `json:"stroke_cap,omitempty"`   // butt|round|square (default round)
+	StrokeJoin  string   `json:"stroke_join,omitempty"`  // miter|bevel|round (default round)
+	StrokeSides []string `json:"stroke_sides,omitempty"` // rect per-side strokes; empty OR all 4 = full outline
 
 	// advanced stroke (Figma's Stroke-settings popover; mostly path-only). Kept in sync
 	// with web/src/lib/layout/schema.ts.
@@ -157,6 +186,11 @@ type Background struct {
 	// survive a Go round-trip (feature configs embed Layout); nil ↔ null keeps
 	// legacy documents on the legacy fields.
 	Fills []Paint `json:"fills"`
+	// Bind maps a background property to a Go template formula, so the whole card
+	// backdrop can be data-driven (e.g. tint by level). Recognised keys: color from
+	// to (hex) angle blur (numbers). A bound colour/gradient forces the legacy
+	// solid/gradient path. Same fallback rules as Layer.Bind. Mirrored in schema.ts.
+	Bind map[string]string `json:"bind,omitempty"`
 }
 
 // LayoutGroup is metadata for a soft group, keyed by Layer.Group id. Name
@@ -184,6 +218,11 @@ const (
 	MaxCanvasDim   = 4096
 	MaxCanvasPixel = 4_000_000
 )
+
+// MaxLayers is the most layers one layout may contain. The dashboard editor caps
+// new layers here and the API rejects any layout that exceeds it, so a saved card
+// can't grow unbounded. Mirrors web/src/lib/layout/schema.ts MAX_LAYERS.
+const MaxLayers = 48
 
 // ClampSize constrains a width/height to the canvas limits, scaling both down
 // proportionally if the pixel budget is exceeded (keeping the aspect ratio).

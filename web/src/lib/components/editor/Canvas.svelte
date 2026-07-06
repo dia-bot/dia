@@ -54,6 +54,18 @@
 		return resolveSrc(l.src);
 	}
 
+	// Live XP-progress fraction (0..1) from the host's sample vars, so a rect flagged
+	// `progress` previews the fill width exactly like the server. Welcome cards inject
+	// no {progress}, so the fraction is 1 (full width). Accepts '45%', '45' or '0.45'.
+	const progressFrac = $derived.by(() => {
+		const raw = editor.extraVars?.['{progress}'];
+		if (raw == null || raw === '') return 1;
+		let n = parseFloat(String(raw).replace(/[^0-9.\-]/g, ''));
+		if (!isFinite(n)) return 1;
+		if (n > 1) n /= 100;
+		return Math.max(0, Math.min(1, n));
+	});
+
 	// Rendered pixel width of the stage; scale maps canvas px → screen px.
 	let clientWidth = $state(0);
 	const scale = $derived(clientWidth > 0 ? clientWidth / layout.width : 0);
@@ -1277,6 +1289,24 @@
 	};
 	let g: Gesture | null = $state(null);
 
+	// On-canvas rotation: a drag in a corner rotate-zone spins the single selection
+	// about its centre. cx/cy are the layer centre (canvas px); a0 is the pointer's
+	// start angle and start the layer's rotation at grab, so rotation follows the
+	// pointer. screen/angle drive the live angle badge near the cursor.
+	type Rotate = {
+		id: string;
+		cx: number;
+		cy: number;
+		a0: number; // pointer angle at grab, degrees
+		start: number; // layer rotation at grab, degrees
+		ptrId: number;
+		target: HTMLElement;
+		angle: number; // current rotation, for the badge
+		sx: number; // cursor screen px, for the badge
+		sy: number;
+	};
+	let rot: Rotate | null = $state(null);
+
 	// ── path drawing state (pen = multi-click bezier, pencil = freehand) ────────
 	let penId = $state<string | null>(null); // path being built with the pen
 	let penDrag: number | null = null; // node index whose handle is being dragged this click
@@ -1530,15 +1560,60 @@
 		guideY = null;
 	}
 
+	// ── on-canvas rotation (a drag in a corner rotate-zone) ─────────────────────
+	function beginRotate(e: PointerEvent, l: Layer) {
+		if (l.locked || busy() || !stageEl) return;
+		if (editor.tool !== 'select' && editor.tool !== 'scale') return;
+		if (e.button !== 0) return;
+		e.stopPropagation();
+		const target = e.currentTarget as HTMLElement;
+		target.setPointerCapture(e.pointerId);
+		const cx = l.x + l.w / 2;
+		const cy = l.y + l.h / 2;
+		const p = canvasPoint(e, stageEl);
+		const a0 = (Math.atan2(p.y - cy, p.x - cx) * 180) / Math.PI;
+		rot = { id: l.id, cx, cy, a0, start: l.rotation ?? 0, ptrId: e.pointerId, target, angle: l.rotation ?? 0, sx: e.clientX, sy: e.clientY };
+		e.preventDefault();
+	}
+	function rotateMove(e: PointerEvent) {
+		if (!rot || !stageEl || e.pointerId !== rot.ptrId) return;
+		const p = canvasPoint(e, stageEl);
+		const a = (Math.atan2(p.y - rot.cy, p.x - rot.cx) * 180) / Math.PI;
+		let next = rot.start + (a - rot.a0);
+		if (e.shiftKey) next = Math.round(next / 15) * 15; // snap to 15° while Shift is held
+		next = Math.round(((next % 360) + 360) % 360);
+		editor.patch(rot.id, { rotation: next });
+		rot = { ...rot, angle: next, sx: e.clientX, sy: e.clientY };
+	}
+	function rotateUp(e: PointerEvent) {
+		if (!rot || e.pointerId !== rot.ptrId) return;
+		try {
+			rot.target.releasePointerCapture(rot.ptrId);
+		} catch {
+			/* capture may already be gone */
+		}
+		rot = null;
+	}
+
+	// The four rotate-zones sit just OUTSIDE the corner resize handles of the single
+	// selection box; each is a small transparent grab target.
+	const ROT_ZONES: { key: Dir; style: string }[] = [
+		{ key: 'nw', style: 'left:-18px;top:-18px;' },
+		{ key: 'ne', style: 'right:-18px;top:-18px;' },
+		{ key: 'se', style: 'right:-18px;bottom:-18px;' },
+		{ key: 'sw', style: 'left:-18px;bottom:-18px;' }
+	];
+
 	// A gesture is in progress — used to ignore a second finger / stray pointerdown.
 	function busy(): boolean {
-		return !!(g || draw || marquee || pan || nodeDrag || segDrag || bend);
+		return !!(g || rot || draw || marquee || pan || nodeDrag || segDrag || bend);
 	}
 	// Single hard reset for ALL canvas gestures — wired to window pointercancel/blur
 	// so a drag can never get stuck (the browser stealing the pointer, tab blur, the
 	// SVG implicit-capture drop on touch, etc.).
 	function cancelAllGestures() {
 		g = null;
+		rot = null;
 		draw = null;
 		marquee = null;
 		nodeDrag = null;
@@ -1757,7 +1832,14 @@
 					});
 				}
 			}
-			editor.select(draw.id);
+			// A fresh text layer drops into inline edit with its placeholder selected, so
+			// typing replaces it; other layers just select. Either way, back to Select.
+			if (l?.type === 'text') {
+				selectTextOnFocus = true;
+				editor.enterEdit(l.id);
+			} else {
+				editor.select(draw.id);
+			}
 			editor.setTool('select');
 			draw = null;
 			return;
@@ -1881,6 +1963,10 @@
 	// endpoint onto the other end to close the loop.
 	let stageEl = $state<HTMLElement>();
 	let textEl = $state<HTMLTextAreaElement>();
+	// When a text layer is created with the text tool we drop straight into edit
+	// mode; this asks the focus effect to select the placeholder so the first
+	// keystroke replaces it (Figma's new-text behaviour).
+	let selectTextOnFocus = false;
 	// $state so the closeNode $derived re-tracks when a node drag starts/ends.
 	let nodeDrag = $state<{ node: number; kind: 'anchor' | 'h1' | 'h2'; ptrId: number; target: Element } | null>(null);
 	// The bezier handle most recently grabbed (for Delete = remove that bend).
@@ -1908,9 +1994,16 @@
 	$effect(() => {
 		if (editor.editId && editor.selectedId !== editor.editId) editor.exitEdit();
 	});
-	// Focus the inline text editor as soon as it appears.
+	// Focus the inline text editor as soon as it appears. A newly-created text layer
+	// also gets its placeholder selected so the first keystroke replaces it.
 	$effect(() => {
-		if (editor.editId && textEl) textEl.focus();
+		if (editor.editId && textEl) {
+			textEl.focus();
+			if (selectTextOnFocus) {
+				textEl.select();
+				selectTextOnFocus = false;
+			}
+		}
 	});
 
 	// Convert a canvas-space point into a path's un-rotated local space so node
@@ -2396,6 +2489,7 @@
 	async function onPaste(e: ClipboardEvent) {
 		const t = e.target as HTMLElement | null;
 		if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+		if (editor.formulaOpen) return; // don't paste a layer while the Formulas modal is up
 		const dt = e.clipboardData;
 		if (!dt) return;
 		const item = Array.from(dt.items).find((it) => it.type.startsWith('image/'));
@@ -2448,6 +2542,10 @@
 	function onKeydown(e: KeyboardEvent) {
 		const t = e.target as HTMLElement | null;
 		if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+		// The Formulas modal is a separate dialog over the canvas; let it own every
+		// key (its own Escape closes it) so a keypress there can't delete/nudge/
+		// tool-switch the layer being edited underneath.
+		if (editor.formulaOpen) return;
 
 		// hold Space to pan the canvas
 		if (e.key === ' ') {
@@ -2505,15 +2603,31 @@
 			}
 		}
 
+		// Shift+/ ("?") opens the keyboard-shortcuts sheet (owned by the toolbar chrome).
+		if (e.key === '?') {
+			e.preventDefault();
+			editor.shortcutsOpen = true;
+			return;
+		}
 		if (e.key === 'Enter' && penId) {
 			finishPen();
 			editor.setTool('select');
 			return;
 		}
 		if (e.key === 'Escape') {
-			if (editor.editId) editor.exitEdit();
-			else if (editor.tool !== 'select') editor.setTool('select');
-			else editor.select(null);
+			// Esc cascade: leave edit mode → drop back to Select → clear the selection.
+			// preventDefault ONLY when we actually consume the key, so once the canvas is
+			// idle the host (the studio modal) sees an unconsumed Esc and can close.
+			if (editor.editId) {
+				editor.exitEdit();
+				e.preventDefault();
+			} else if (editor.tool !== 'select') {
+				editor.setTool('select');
+				e.preventDefault();
+			} else if (editor.selectedIds.length) {
+				editor.select(null);
+				e.preventDefault();
+			}
 			return;
 		}
 		if (!e.metaKey && !e.ctrlKey && !e.altKey) {
@@ -3030,10 +3144,15 @@
 				{@const perSide = sw > 0 && !l.clip && sidesRestricted(l) && !wob && !brush}
 				{@const svgStroke = !l.clip && !perSide && !wob && !brush ? boxStrokeSvg(l) : ''}
 				{@const strokeBase = sw > 0 && !l.clip && !svgStroke && !perSide && !wob && !brush ? strokeShadow(l, sw) : ''}
+				<!-- A `progress` rect previews the XP fill: painted width = layer width ×
+				     the sample progress fraction, anchored left, so the live canvas matches
+				     the server (welcome cards, with no {progress}, render full width). -->
+				{@const pw = l.progress ? progressFrac : 1}
 				<div
-					class="h-full w-full"
+					class="h-full"
+					class:w-full={pw >= 1}
 					class:stencil-ghost={l.clip && isSel}
-					style="{wob || l.clip ? 'background:transparent;' : cssBackgrounds(l)} border-radius:{radiusCss(l)}; {wob ? '' : boxShadow(l, strokeBase, shadowsViaBox)}"
+					style="{pw < 1 ? `width:${pw * 100}%;` : ''} {wob || l.clip ? 'background:transparent;' : cssBackgrounds(l)} border-radius:{radiusCss(l)}; {wob ? '' : boxShadow(l, strokeBase, shadowsViaBox)}"
 				></div>
 				{#if wob}{@html wobbleSvg(l, true)}{:else if brush}{@html brushShapeSvg(l)}{:else if perSide}{@html strokeSidesSvg(l)}{:else if svgStroke}{@html svgStroke}{/if}
 			{:else if l.type === 'ellipse'}
@@ -3068,6 +3187,22 @@
 				style="left:{b.left}; top:{b.top}; width:{b.width}; height:{b.height}; transform:rotate({l.rotation ??
 					0}deg);"
 			>
+				<!-- Rotate zones just outside each corner (single selection only), reusing
+				     the handle capture/endGesture plumbing. -->
+				{#if editor.selectedIds.length === 1 && !l.locked}
+					{#each ROT_ZONES as rz (rz.key)}
+						<button
+							type="button"
+							aria-label="Rotate"
+							class="rot-zone"
+							style={rz.style}
+							onpointerdown={(e) => beginRotate(e, l)}
+							onpointermove={rotateMove}
+							onpointerup={rotateUp}
+							onpointercancel={rotateUp}
+						></button>
+					{/each}
+				{/if}
 				{#each HANDLES as hd (hd.dir)}
 					<button
 						type="button"
@@ -3085,6 +3220,11 @@
 	{/each}
 </div>
 </div>
+
+	<!-- Live rotation angle, pinned near the cursor while a rotate-zone is dragged. -->
+	{#if rot}
+		<div class="rot-badge" style="left:{rot.sx + 16}px; top:{rot.sy + 16}px;">{rot.angle}°</div>
+	{/if}
 
 	<!-- zoom control -->
 	<div class="zoomctl">
@@ -3229,6 +3369,37 @@
 	}
 	.sel-chrome .handle {
 		pointer-events: all;
+	}
+	/* Rotate grab-zones: small transparent squares just outside the corner handles.
+	   Sit below the resize handles' z so a corner drag still resizes. */
+	.rot-zone {
+		position: absolute;
+		width: 16px;
+		height: 16px;
+		padding: 0;
+		background: transparent;
+		border: 0;
+		pointer-events: all;
+		cursor: grab;
+		z-index: 2;
+	}
+	.rot-zone:active {
+		cursor: grabbing;
+	}
+	/* Live angle readout that follows the cursor during a rotate drag. */
+	.rot-badge {
+		position: fixed;
+		z-index: 50;
+		padding: 2px 6px;
+		border-radius: 6px;
+		border: 1px solid var(--color-line-strong);
+		background: color-mix(in srgb, var(--color-surface) 92%, transparent);
+		font-family: var(--font-mono, monospace);
+		font-size: 11px;
+		font-variant-numeric: tabular-nums;
+		color: var(--color-ink);
+		pointer-events: none;
+		white-space: nowrap;
 	}
 
 	/* Path layers render as a full-stage SVG; only the painted path takes pointers

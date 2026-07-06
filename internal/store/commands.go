@@ -1,10 +1,12 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -301,6 +303,62 @@ func (r *FeatureKVRepo) Delete(ctx context.Context, e FeatureKVEntry) error {
 		WHERE guild_id = $1 AND command_id = $2 AND scope = $3 AND owner_id = $4 AND key = $5`,
 		e.GuildID, e.CommandID, e.Scope, e.OwnerID, e.Key)
 	return err
+}
+
+// CardLookup returns a read-only getter over the guild-SHARED KV namespace
+// (command_id ""), bound to a guild + member, for card formulas (getKV /
+// getGuildKV). scope "member" reads the member's own value; anything else reads
+// the guild-wide value. A missing key / read error / null value → ("", false).
+// This is the same namespace a custom-command kv_set writes when marked shared.
+func (r *FeatureKVRepo) CardLookup(guildID, memberID int64) func(ctx context.Context, scope, key string) (string, bool) {
+	// Memoize within a single card render: a formula may reference the same key on
+	// many layers, and each getKV would otherwise be its own DB round-trip. A
+	// distinct-key budget caps how many real queries one render can issue, so a
+	// pathological formula (a loop of unique keys) can't saturate the pool.
+	type res struct {
+		v  string
+		ok bool
+	}
+	const maxDistinct = 64
+	cache := map[string]res{}
+	distinct := 0
+	var mu sync.Mutex
+	return func(ctx context.Context, scope, key string) (string, bool) {
+		ck := scope + "\x00" + key
+		mu.Lock()
+		if r0, hit := cache[ck]; hit {
+			mu.Unlock()
+			return r0.v, r0.ok
+		}
+		if distinct >= maxDistinct {
+			mu.Unlock()
+			return "", false // over budget: stop hitting the DB
+		}
+		distinct++
+		mu.Unlock()
+
+		e := FeatureKVEntry{GuildID: guildID, CommandID: "", Scope: "guild", Key: key}
+		if scope == "member" {
+			e.Scope, e.OwnerID = "member", memberID
+		}
+		v, ok := "", false
+		if got, err := r.Get(ctx, e); err == nil && len(got.Value) > 0 {
+			// UseNumber so a stored 1_000_000 prints "1000000", not "1e+06", and big
+			// ints keep their digits (fmt.Sprint on a decoded float64 would mangle both).
+			dec := json.NewDecoder(bytes.NewReader(got.Value))
+			dec.UseNumber()
+			var jv any
+			if dec.Decode(&jv) != nil {
+				v, ok = string(got.Value), true // non-JSON payload: raw bytes
+			} else if jv != nil {
+				v, ok = fmt.Sprint(jv), true
+			}
+		}
+		mu.Lock()
+		cache[ck] = res{v, ok}
+		mu.Unlock()
+		return v, ok
+	}
 }
 
 // ── Command image templates ────────────────────────────────

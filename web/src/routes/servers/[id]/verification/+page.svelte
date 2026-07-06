@@ -14,6 +14,7 @@
 	import ModSection from '$lib/components/moderation/ModSection.svelte';
 	import ModToggleRow from '$lib/components/moderation/ModToggleRow.svelte';
 	import ModLinkRow from '$lib/components/moderation/ModLinkRow.svelte';
+	import TabSwipe from '$lib/components/page/TabSwipe.svelte';
 	import MessageEditor from '$lib/components/commands/MessageEditor.svelte';
 	import AutomationPicker from '$lib/components/commands/AutomationPicker.svelte';
 	import {
@@ -199,232 +200,234 @@
 	onsave={save}
 	onreset={reset}
 >
-	{#if tab === 'setup'}
-		<!-- ── Two-column composer: message editor (left) + settings rail (right) ── -->
-		<div class="flex flex-col gap-0 lg:flex-row lg:items-stretch">
-			<!-- LEFT — the gate message composer -->
-			<div class="min-w-0 flex-1 border-b border-line lg:border-b-0 lg:border-r">
-				<div class="px-4 py-5 sm:px-5">
-					<!-- Channel header: where the prompt is posted -->
-					<div class="mb-2 flex flex-wrap items-center gap-2 text-[12.5px] text-muted">
-						<Hash size={14} class="text-faint" />
-						<span>Posts in</span>
-						<div class="min-w-[200px] max-w-xs flex-1">
-							<ChannelSelect bind:value={cfg.channel} placeholder="Channel to post the gate in" />
-						</div>
-					</div>
-					<p class="mb-3 flex items-center gap-1.5 text-[11.5px] text-faint">
-						<ShieldCheck size={12} class="text-faint" />
-						A <span class="font-medium text-muted">Verify</span> button is added automatically as the
-						first button — you don't add it here.
-					</p>
-
-					<!-- The rich gate message: content, embeds, custom buttons / selects -->
-					<MessageEditor step={msgStep} embeds components clickPaths={false} />
-
-					<!-- Button actions: map each custom button to an automation -->
-					{#if customButtons.length > 0}
-						<div class="mt-6 border-t border-line/60 pt-5">
-							<div class="mb-1 flex items-center gap-2">
-								<Zap size={13} class="text-accent-ink" />
-								<span class="text-[12.5px] font-medium text-ink">Button actions</span>
+	<TabSwipe key={tab} index={tabs.findIndex((t) => t.key === tab)}>
+		{#if tab === 'setup'}
+			<!-- ── Two-column composer: message editor (left) + settings rail (right) ── -->
+			<div class="flex flex-col gap-0 lg:flex-row lg:items-stretch">
+				<!-- LEFT — the gate message composer -->
+				<div class="min-w-0 flex-1 border-b border-line lg:border-b-0 lg:border-r">
+					<div class="px-4 py-5 sm:px-5">
+						<!-- Channel header: where the prompt is posted -->
+						<div class="mb-2 flex flex-wrap items-center gap-2 text-[12.5px] text-muted">
+							<Hash size={14} class="text-faint" />
+							<span>Posts in</span>
+							<div class="min-w-[200px] max-w-xs flex-1">
+								<ChannelSelect bind:value={cfg.channel} placeholder="Channel to post the gate in" />
 							</div>
-							<p class="mb-3 text-[11.5px] text-muted">
-								Run an automation when one of your custom buttons is clicked. Link buttons just open
-								their URL.
-							</p>
-							<div class="space-y-3">
-								{#each customButtons as b (b.suffix)}
-									<div class="rounded-lg border border-line bg-bg p-3">
-										<div class="mb-1.5 flex items-center gap-2">
-											<MousePointerClick size={12} class="text-faint" />
-											<span class="truncate text-[12.5px] font-medium text-ink">{b.label}</span>
-											<span class="font-mono text-[10px] text-faint">{b.suffix}</span>
+						</div>
+						<p class="mb-3 flex items-center gap-1.5 text-[11.5px] text-faint">
+							<ShieldCheck size={12} class="text-faint" />
+							A <span class="font-medium text-muted">Verify</span> button is added automatically as the
+							first button — you don't add it here.
+						</p>
+
+						<!-- The rich gate message: content, embeds, custom buttons / selects -->
+						<MessageEditor step={msgStep} embeds components clickPaths={false} />
+
+						<!-- Button actions: map each custom button to an automation -->
+						{#if customButtons.length > 0}
+							<div class="mt-6 border-t border-line/60 pt-5">
+								<div class="mb-1 flex items-center gap-2">
+									<Zap size={13} class="text-accent-ink" />
+									<span class="text-[12.5px] font-medium text-ink">Button actions</span>
+								</div>
+								<p class="mb-3 text-[11.5px] text-muted">
+									Run an automation when one of your custom buttons is clicked. Link buttons just open
+									their URL.
+								</p>
+								<div class="space-y-3">
+									{#each customButtons as b (b.suffix)}
+										<div class="rounded-lg border border-line bg-bg p-3">
+											<div class="mb-1.5 flex items-center gap-2">
+												<MousePointerClick size={12} class="text-faint" />
+												<span class="truncate text-[12.5px] font-medium text-ink">{b.label}</span>
+												<span class="font-mono text-[10px] text-faint">{b.suffix}</span>
+											</div>
+											<AutomationPicker
+												value={actionFor(b.suffix)}
+												onChange={(id) => setAction(b.suffix, id)}
+											/>
+											<p class="mt-1.5 text-[10.5px] text-muted">Run this automation when clicked.</p>
 										</div>
-										<AutomationPicker
-											value={actionFor(b.suffix)}
-											onChange={(id) => setAction(b.suffix, id)}
-										/>
-										<p class="mt-1.5 text-[10.5px] text-muted">Run this automation when clicked.</p>
-									</div>
-								{/each}
+									{/each}
+								</div>
 							</div>
-						</div>
-					{/if}
-				</div>
-			</div>
-
-			<!-- RIGHT — the settings rail -->
-			<aside class="w-full shrink-0 lg:w-[22rem]">
-				<!-- Challenge mode -->
-				<ModSection label="Challenge" desc="How members prove they're human.">
-					<div class="grid gap-2.5">
-						<button
-							type="button"
-							onclick={() => setMode('button')}
-							class="flex items-start gap-2.5 rounded-xl border px-3.5 py-3 text-left text-xs transition-colors {cfg.mode ===
-							'button'
-								? 'border-line-strong bg-ink-2'
-								: 'border-line hover:border-line-strong'}"
-						>
-							<MousePointerClick size={16} class="mt-0.5 shrink-0 text-muted" />
-							<div>
-								<div class="text-sm font-medium text-ink">Button click</div>
-								<p class="mt-0.5 text-muted">
-									Lowest friction. A single button verifies instantly.
-								</p>
-							</div>
-						</button>
-						<button
-							type="button"
-							onclick={() => setMode('captcha')}
-							class="flex items-start gap-2.5 rounded-xl border px-3.5 py-3 text-left text-xs transition-colors {cfg.mode ===
-							'captcha'
-								? 'border-line-strong bg-ink-2'
-								: 'border-line hover:border-line-strong'}"
-						>
-							<ShieldQuestion size={16} class="mt-0.5 shrink-0 text-muted" />
-							<div>
-								<div class="text-sm font-medium text-ink">Captcha challenge</div>
-								<p class="mt-0.5 text-muted">
-									Adds a short human-only puzzle. Stronger against bots.
-								</p>
-							</div>
-						</button>
+						{/if}
 					</div>
-				</ModSection>
+				</div>
 
-				<!-- Roles -->
-				<ModSection label="Roles" desc="The lock-out role and the role granted on success.">
-					<Field label="Unverified role">
-						<RolePicker
-							value={cfg.unverified_role}
-							onChange={(v) => (cfg.unverified_role = v as string)}
-							placeholder="Select a role…"
-						/>
-					</Field>
-					<Field
-						label="Verified role (optional)"
-						hint="Granted on success. Handy if you open channels to a verified role rather than @everyone."
+				<!-- RIGHT — the settings rail -->
+				<aside class="w-full shrink-0 lg:w-[22rem]">
+					<!-- Challenge mode -->
+					<ModSection label="Challenge" desc="How members prove they're human.">
+						<div class="grid gap-2.5">
+							<button
+								type="button"
+								onclick={() => setMode('button')}
+								class="flex items-start gap-2.5 rounded-xl border px-3.5 py-3 text-left text-xs transition-colors {cfg.mode ===
+								'button'
+									? 'border-line-strong bg-ink-2'
+									: 'border-line hover:border-line-strong'}"
+							>
+								<MousePointerClick size={16} class="mt-0.5 shrink-0 text-muted" />
+								<div>
+									<div class="text-sm font-medium text-ink">Button click</div>
+									<p class="mt-0.5 text-muted">
+										Lowest friction. A single button verifies instantly.
+									</p>
+								</div>
+							</button>
+							<button
+								type="button"
+								onclick={() => setMode('captcha')}
+								class="flex items-start gap-2.5 rounded-xl border px-3.5 py-3 text-left text-xs transition-colors {cfg.mode ===
+								'captcha'
+									? 'border-line-strong bg-ink-2'
+									: 'border-line hover:border-line-strong'}"
+							>
+								<ShieldQuestion size={16} class="mt-0.5 shrink-0 text-muted" />
+								<div>
+									<div class="text-sm font-medium text-ink">Captcha challenge</div>
+									<p class="mt-0.5 text-muted">
+										Adds a short human-only puzzle. Stronger against bots.
+									</p>
+								</div>
+							</button>
+						</div>
+					</ModSection>
+
+					<!-- Roles -->
+					<ModSection label="Roles" desc="The lock-out role and the role granted on success.">
+						<Field label="Unverified role">
+							<RolePicker
+								value={cfg.unverified_role}
+								onChange={(v) => (cfg.unverified_role = v as string)}
+								placeholder="Select a role…"
+							/>
+						</Field>
+						<Field
+							label="Verified role (optional)"
+							hint="Granted on success. Handy if you open channels to a verified role rather than @everyone."
+						>
+							<RolePicker
+								value={cfg.verified_role}
+								onChange={(v) => (cfg.verified_role = v as string)}
+								placeholder="Select a role…"
+							/>
+						</Field>
+						<p class="-mt-2 text-[11px] text-muted">
+							<Lock size={11} class="-mt-0.5 mr-0.5 inline text-faint" />
+							The unverified role is assigned the moment a member joins. Deny it View Channel at the
+							category level, otherwise the gate does nothing.
+						</p>
+					</ModSection>
+
+					<!-- On verify -->
+					<ModSection label="On verify" desc="Optionally hand off to an automation when a member passes.">
+						<Field
+							label="Run automation"
+							hint='Launches the flow with the new member as .User. Any automation can also trigger on "Member verified" directly.'
+						>
+							<AutomationPicker
+								value={cfg.run_automation ?? ''}
+								onChange={(id) => (cfg.run_automation = id)}
+							/>
+						</Field>
+					</ModSection>
+
+					<!-- Targeting & cleanup -->
+					<ModSection
+						label="Targeting & cleanup"
+						desc="Who gets gated, and what happens to members who never verify."
 					>
-						<RolePicker
-							value={cfg.verified_role}
-							onChange={(v) => (cfg.verified_role = v as string)}
-							placeholder="Select a role…"
+						<ModToggleRow
+							title="Only challenge suspicious accounts"
+							desc="Skip the gate for established accounts and only verify brand-new ones."
+							bind:checked={cfg.only_suspicious}
+							label="Only suspicious"
 						/>
-					</Field>
-					<p class="-mt-2 text-[11px] text-muted">
-						<Lock size={11} class="-mt-0.5 mr-0.5 inline text-faint" />
-						The unverified role is assigned the moment a member joins. Deny it View Channel at the
-						category level, otherwise the gate does nothing.
-					</p>
-				</ModSection>
-
-				<!-- On verify -->
-				<ModSection label="On verify" desc="Optionally hand off to an automation when a member passes.">
-					<Field
-						label="Run automation"
-						hint='Launches the flow with the new member as .User. Any automation can also trigger on "Member verified" directly.'
-					>
-						<AutomationPicker
-							value={cfg.run_automation ?? ''}
-							onChange={(id) => (cfg.run_automation = id)}
-						/>
-					</Field>
-				</ModSection>
-
-				<!-- Targeting & cleanup -->
-				<ModSection
-					label="Targeting & cleanup"
-					desc="Who gets gated, and what happens to members who never verify."
-				>
-					<ModToggleRow
-						title="Only challenge suspicious accounts"
-						desc="Skip the gate for established accounts and only verify brand-new ones."
-						bind:checked={cfg.only_suspicious}
-						label="Only suspicious"
-					/>
-					{#if cfg.only_suspicious}
-						<div class="border-t border-line py-4">
-							<span class="label">Minimum account age</span>
+						{#if cfg.only_suspicious}
+							<div class="border-t border-line py-4">
+								<span class="label">Minimum account age</span>
+								<div class="flex items-center gap-2">
+									<div class="w-24">
+										<NumberField bind:value={cfg.min_account_age_hours} min={1} max={8760} />
+									</div>
+									<span class="text-xs text-muted">hours before an account is trusted</span>
+								</div>
+							</div>
+							<ModToggleRow
+								title="Require a profile picture"
+								desc="Treat joiners with no avatar as suspicious, so they're gated too."
+								bind:checked={cfg.require_avatar}
+								label="Require avatar"
+								divided
+							/>
+						{/if}
+						<div class="border-t border-line pt-4">
+							<span class="label">Kick if not verified within</span>
 							<div class="flex items-center gap-2">
 								<div class="w-24">
-									<NumberField bind:value={cfg.min_account_age_hours} min={1} max={8760} />
+									<NumberField bind:value={cfg.kick_after_minutes} min={0} max={1440} />
 								</div>
-								<span class="text-xs text-muted">hours before an account is trusted</span>
+								<span class="text-xs text-muted">
+									<Clock size={11} class="-mt-0.5 mr-0.5 inline text-faint" />
+									minutes ({cfg.kick_after_minutes === 0
+										? 'never kick'
+										: `${cfg.kick_after_minutes}m`})
+								</span>
 							</div>
+							<p class="hint">Set to 0 to leave unverified members in place indefinitely.</p>
 						</div>
-						<ModToggleRow
-							title="Require a profile picture"
-							desc="Treat joiners with no avatar as suspicious, so they're gated too."
-							bind:checked={cfg.require_avatar}
-							label="Require avatar"
-							divided
-						/>
-					{/if}
-					<div class="border-t border-line pt-4">
-						<span class="label">Kick if not verified within</span>
-						<div class="flex items-center gap-2">
-							<div class="w-24">
-								<NumberField bind:value={cfg.kick_after_minutes} min={0} max={1440} />
-							</div>
-							<span class="text-xs text-muted">
-								<Clock size={11} class="-mt-0.5 mr-0.5 inline text-faint" />
-								minutes ({cfg.kick_after_minutes === 0
-									? 'never kick'
-									: `${cfg.kick_after_minutes}m`})
-							</span>
-						</div>
-						<p class="hint">Set to 0 to leave unverified members in place indefinitely.</p>
-					</div>
-				</ModSection>
-			</aside>
-		</div>
-	{:else if tab === 'guide'}
-		<!-- ── How it works ── -->
-		<ModSection label="How it works">
-			<ol class="max-w-2xl space-y-4 text-xs text-muted">
-				<li class="flex items-start gap-3">
-					<span
-						class="grid size-6 shrink-0 place-items-center rounded-full border border-line-strong bg-ink-2 font-mono text-[11px] font-semibold text-muted"
-						>1</span
-					>
-					<span
-						>A member joins and is given the <strong class="text-ink">unverified role</strong>,
-						which locks them out of your channels.</span
-					>
-				</li>
-				<li class="flex items-start gap-3">
-					<span
-						class="grid size-6 shrink-0 place-items-center rounded-full border border-line-strong bg-ink-2 font-mono text-[11px] font-semibold text-muted"
-						>2</span
-					>
-					<span
-						>They complete the check posted in the <strong class="text-ink">gate channel</strong>
-						(a button tap or captcha). Any custom buttons can run an automation.</span
-					>
-				</li>
-				<li class="flex items-start gap-3">
-					<span
-						class="grid size-6 shrink-0 place-items-center rounded-full border border-line-strong bg-ink-2 font-mono text-[11px] font-semibold text-muted"
-						>3</span
-					>
-					<span
-						>The unverified role is removed (and an optional
-						<strong class="text-ink">verified role</strong> added), unlocking the server.</span
-					>
-				</li>
-			</ol>
-		</ModSection>
+					</ModSection>
+				</aside>
+			</div>
+		{:else if tab === 'guide'}
+			<!-- ── How it works ── -->
+			<ModSection label="How it works">
+				<ol class="max-w-2xl space-y-4 text-xs text-muted">
+					<li class="flex items-start gap-3">
+						<span
+							class="grid size-6 shrink-0 place-items-center rounded-full border border-line-strong bg-ink-2 font-mono text-[11px] font-semibold text-muted"
+							>1</span
+						>
+						<span
+							>A member joins and is given the <strong class="text-ink">unverified role</strong>,
+							which locks them out of your channels.</span
+						>
+					</li>
+					<li class="flex items-start gap-3">
+						<span
+							class="grid size-6 shrink-0 place-items-center rounded-full border border-line-strong bg-ink-2 font-mono text-[11px] font-semibold text-muted"
+							>2</span
+						>
+						<span
+							>They complete the check posted in the <strong class="text-ink">gate channel</strong>
+							(a button tap or captcha). Any custom buttons can run an automation.</span
+						>
+					</li>
+					<li class="flex items-start gap-3">
+						<span
+							class="grid size-6 shrink-0 place-items-center rounded-full border border-line-strong bg-ink-2 font-mono text-[11px] font-semibold text-muted"
+							>3</span
+						>
+						<span
+							>The unverified role is removed (and an optional
+							<strong class="text-ink">verified role</strong> added), unlocking the server.</span
+						>
+					</li>
+				</ol>
+			</ModSection>
 
-		<!-- ── Logging cross-link ── -->
-		<section class="border-b border-line">
-			<ModLinkRow
-				href="/servers/{store.id}/logging"
-				icon={ScrollText}
-				title="Log joins and verifications"
-				desc="Send every join and check to a channel."
-			/>
-		</section>
-	{/if}
+			<!-- ── Logging cross-link ── -->
+			<section class="border-b border-line">
+				<ModLinkRow
+					href="/servers/{store.id}/logging"
+					icon={ScrollText}
+					title="Log joins and verifications"
+					desc="Send every join and check to a channel."
+				/>
+			</section>
+		{/if}
+	</TabSwipe>
 </ModerationShell>

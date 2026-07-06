@@ -5,6 +5,7 @@ import (
 	"image"
 	"image/color"
 	"math"
+	"strconv"
 	"strings"
 	"unicode"
 
@@ -41,6 +42,327 @@ func applyVars(s string, vars map[string]string) string {
 	return s
 }
 
+// progressFraction parses a rank-card progress value into a 0..1 fraction used to
+// fill a progress-bar rect's width. It accepts the token the rank card exposes as
+// {{ .Progress }} ("64%"), a bare percent ("64"), or a 0..1 fraction ("0.64"). ok
+// is false when the value is absent or unparseable, so the caller leaves the rect
+// at full width, welcome cards, which carry no progress var, stay unaffected.
+func progressFraction(s string) (float64, bool) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0, false
+	}
+	pctForm := strings.HasSuffix(s, "%")
+	v, err := strconv.ParseFloat(strings.TrimSpace(strings.TrimSuffix(s, "%")), 64)
+	if err != nil {
+		return 0, false
+	}
+	// A "%"-suffixed value or any number above 1 is a 0..100 percent; a bare value
+	// in [0,1] is already a fraction ("0.45").
+	if pctForm || v > 1 {
+		v /= 100
+	}
+	if v < 0 {
+		v = 0
+	} else if v > 1 {
+		v = 1
+	}
+	return v, true
+}
+
+// resolveLayerBindings evaluates each layer's `bind` formulas (Go templates over
+// the card data root) and overrides the matching static fields with the results,
+// so the rest of the renderer draws data-driven values without knowing about
+// bindings. Layers with no bindings pass through untouched (and the whole slice
+// is shared unchanged when nothing is bound). A formula that errors or yields an
+// unparseable value leaves the static field in place, so a bad formula never
+// breaks a render. See internal/layout/schema.go Layer.Bind for the key list.
+func (r *Renderer) resolveLayerBindings(ctx context.Context, layers []layout.Layer, data map[string]any) []layout.Layer {
+	bound := false
+	for i := range layers {
+		if len(layers[i].Bind) > 0 {
+			bound = true
+			break
+		}
+	}
+	if !bound {
+		return layers
+	}
+	out := make([]layout.Layer, len(layers))
+	copy(out, layers)
+	for i := range out {
+		l := &out[i]
+		if len(l.Bind) == 0 {
+			continue
+		}
+		// eval renders a bound expression; ok is false when the key is absent/empty,
+		// the template errors (RenderCardStrict fails on a typo'd/out-of-scope field
+		// under missingkey=error), or it yields the "<no value>" sentinel — so a bad
+		// formula always keeps the static value instead of clobbering it.
+		eval := func(key string) (string, bool) {
+			expr, has := l.Bind[key]
+			if !has || strings.TrimSpace(expr) == "" {
+				return "", false
+			}
+			s, err := r.tmpl.RenderCardStrict(ctx, expr, data)
+			if err != nil || strings.TrimSpace(s) == "<no value>" {
+				return "", false
+			}
+			return s, true
+		}
+		num := func(key string) (float64, bool) {
+			s, ok := eval(key)
+			if !ok {
+				return 0, false
+			}
+			s = strings.TrimSuffix(strings.ReplaceAll(strings.TrimSpace(s), ",", ""), "%")
+			v, err := strconv.ParseFloat(strings.TrimSpace(s), 64)
+			if err != nil {
+				return 0, false
+			}
+			return v, true
+		}
+		if v, ok := num("x"); ok {
+			l.X = v
+		}
+		if v, ok := num("y"); ok {
+			l.Y = v
+		}
+		if v, ok := num("w"); ok {
+			l.W = v
+		}
+		if v, ok := num("h"); ok {
+			l.H = v
+		}
+		if v, ok := num("rotation"); ok {
+			l.Rotation = v
+		}
+		if v, ok := num("font_size"); ok {
+			l.FontSize = v
+		}
+		if v, ok := num("radius"); ok {
+			l.Radius = v
+			l.Corners = nil // a bound uniform radius overrides per-corner radii
+		}
+		if v, ok := num("stroke_width"); ok {
+			l.StrokeWidth = v
+		}
+		if v, ok := num("letter_spacing"); ok {
+			l.LetterSpacing = v
+		}
+		if v, ok := num("line_height"); ok {
+			l.LineHeight = v
+		}
+		if v, ok := num("font_weight"); ok {
+			l.FontWeight = int(v)
+		}
+		if v, ok := num("dash"); ok {
+			l.Dash = v
+		}
+		if v, ok := num("gap"); ok {
+			l.Gap = v
+		}
+		if v, ok := num("miter_angle"); ok {
+			l.MiterAngle = v
+		}
+		if v, ok := num("scatter_gap"); ok {
+			l.ScatterGap = v
+		}
+		if v, ok := num("scatter_wiggle"); ok {
+			l.ScatterWiggle = v
+		}
+		if v, ok := num("scatter_size"); ok {
+			l.ScatterSize = v
+		}
+		if v, ok := num("scatter_rotation"); ok {
+			l.ScatterRotation = v
+		}
+		if v, ok := num("scatter_angular"); ok {
+			l.ScatterAngular = v
+		}
+		if v, ok := num("dynamic_frequency"); ok {
+			l.DynamicFrequency = v
+		}
+		if v, ok := num("dynamic_wiggle"); ok {
+			l.DynamicWiggle = v
+		}
+		if v, ok := num("dynamic_smoothen"); ok {
+			l.DynamicSmoothen = v
+		}
+		// Per-corner radii (rect/image): corner_tl/tr/br/bl override Corners[0..3].
+		_, c1 := l.Bind["corner_tl"]
+		_, c2 := l.Bind["corner_tr"]
+		_, c3 := l.Bind["corner_br"]
+		_, c4 := l.Bind["corner_bl"]
+		if c1 || c2 || c3 || c4 {
+			c := make([]float64, 4)
+			if len(l.Corners) == 4 {
+				copy(c, l.Corners)
+			} else {
+				for i := range c {
+					c[i] = l.Radius
+				}
+			}
+			for i, k := range [4]string{"corner_tl", "corner_tr", "corner_br", "corner_bl"} {
+				if v, ok := num(k); ok {
+					c[i] = v
+				}
+			}
+			l.Corners = c
+		}
+		if v, ok := num("opacity"); ok {
+			if v < 0 {
+				v = 0
+			} else if v > 1 {
+				v = 1
+			}
+			l.Opacity = &v
+		}
+		// Colours: the rendered string is used as a hex value. A bound flat colour
+		// clears the paint stack so it actually takes effect (Fills/Strokes else win).
+		if s, ok := eval("color"); ok {
+			if s = strings.TrimSpace(s); s != "" {
+				l.Color = s
+				// Text glyphs paint from the Fills stack when present, using Color only
+				// as fallback, so a bound flat text colour must clear the stack to win.
+				if l.Type == "text" {
+					l.Fills = nil
+				}
+			}
+		}
+		if s, ok := eval("fill"); ok {
+			if s = strings.TrimSpace(s); s != "" {
+				l.Fill = s
+				l.Fills = nil
+			}
+		}
+		if s, ok := eval("stroke_color"); ok {
+			if s = strings.TrimSpace(s); s != "" {
+				l.StrokeColor = s
+				l.Strokes = nil
+			}
+		}
+		if s, ok := eval("hidden"); ok {
+			l.Hidden = truthyBind(s)
+		}
+		if s, ok := eval("progress"); ok {
+			l.Progress = truthyBind(s)
+		}
+		if s, ok := eval("closed"); ok {
+			l.Closed = truthyBind(s)
+		}
+		if s, ok := eval("clip"); ok {
+			l.Clip = truthyBind(s)
+		}
+		if s, ok := eval("clip_invert"); ok {
+			l.ClipInvert = truthyBind(s)
+		}
+		// Enum / string fields: the formula must output a valid value; the renderer
+		// falls back to its own default for anything unknown, so a bad value is safe.
+		setStr := func(key string, dst *string) {
+			if s, ok := eval(key); ok {
+				if s = strings.TrimSpace(s); s != "" {
+					*dst = s
+				}
+			}
+		}
+		setStr("align", &l.Align)
+		setStr("valign", &l.VAlign)
+		setStr("text_case", &l.TextCase)
+		setStr("text_decoration", &l.TextDecoration)
+		setStr("font_family", &l.FontFamily)
+		setStr("fit", &l.Fit)
+		setStr("stroke_align", &l.StrokeAlign)
+		setStr("stroke_style", &l.StrokeStyle)
+		setStr("stroke_cap", &l.StrokeCap)
+		setStr("stroke_join", &l.StrokeJoin)
+		setStr("width_profile", &l.WidthProfile)
+		setStr("start_cap", &l.StartCap)
+		setStr("end_cap", &l.EndCap)
+		setStr("brush_name", &l.BrushName)
+		setStr("brush_direction", &l.BrushDirection)
+		setStr("clip_mode", &l.ClipMode)
+	}
+	return out
+}
+
+// resolveBackgroundBindings evaluates the canvas background's `bind` formulas
+// (color / from / to / angle / blur) against the card data, so the whole card
+// backdrop can be data-driven (e.g. tint by level). Like the layer resolver, a
+// bad formula keeps the static value. A bound colour/gradient forces the legacy
+// solid/gradient path (clears the paint stack) so it actually takes effect.
+func (r *Renderer) resolveBackgroundBindings(ctx context.Context, bg layout.Background, data map[string]any) layout.Background {
+	if len(bg.Bind) == 0 {
+		return bg
+	}
+	eval := func(key string) (string, bool) {
+		expr, has := bg.Bind[key]
+		if !has || strings.TrimSpace(expr) == "" {
+			return "", false
+		}
+		s, err := r.tmpl.RenderCardStrict(ctx, expr, data)
+		if err != nil || strings.TrimSpace(s) == "<no value>" {
+			return "", false
+		}
+		return s, true
+	}
+	num := func(key string) (float64, bool) {
+		s, ok := eval(key)
+		if !ok {
+			return 0, false
+		}
+		s = strings.TrimSuffix(strings.ReplaceAll(strings.TrimSpace(s), ",", ""), "%")
+		v, err := strconv.ParseFloat(strings.TrimSpace(s), 64)
+		if err != nil {
+			return 0, false
+		}
+		return v, true
+	}
+	if s, ok := eval("color"); ok {
+		if s = strings.TrimSpace(s); s != "" {
+			bg.Color, bg.Type, bg.Fills = s, "solid", nil
+		}
+	}
+	if s, ok := eval("from"); ok {
+		if s = strings.TrimSpace(s); s != "" {
+			bg.From, bg.Type, bg.Fills = s, "gradient", nil
+		}
+	}
+	if s, ok := eval("to"); ok {
+		if s = strings.TrimSpace(s); s != "" {
+			bg.To, bg.Type, bg.Fills = s, "gradient", nil
+		}
+	}
+	if v, ok := num("angle"); ok {
+		bg.Angle = v
+	}
+	if v, ok := num("blur"); ok {
+		bg.Blur = v
+	}
+	// A lone bound endpoint (only from OR only to) still paints: mirror it so the
+	// gradient renders a solid of that colour instead of falling back to brand-ink
+	// (drawBackground needs both endpoints set).
+	if bg.Type == "gradient" {
+		if bg.From == "" {
+			bg.From = bg.To
+		}
+		if bg.To == "" {
+			bg.To = bg.From
+		}
+	}
+	return bg
+}
+
+// truthyBind reads a bound `hidden` formula's output as a boolean. Empty, "0",
+// "false"/"no"/"off", "null" and Go's "<no value>" are false; anything else true.
+func truthyBind(s string) bool {
+	switch strings.TrimSpace(strings.ToLower(s)) {
+	case "", "0", "false", "no", "off", "null", "<no value>":
+		return false
+	}
+	return true
+}
+
 // withAlpha multiplies the alpha channel of c by mul (clamped to [0,1]).
 func withAlpha(c color.Color, mul float64) color.Color {
 	if mul >= 1 {
@@ -71,6 +393,11 @@ func (r *Renderer) RenderLayout(ctx context.Context, in layout.Layout, vars map[
 	w, h := layout.ClampSize(in.Width, in.Height)
 
 	dc := gg.NewContext(w, h)
+
+	// Card data root (pure Go template): built up-front so BOTH the background and
+	// the layers resolve their `bind` formulas against it.
+	data := templating.DataFromVars(vars)
+	in.Background = r.resolveBackgroundBindings(ctx, in.Background, data)
 
 	fallbackBG := parseHex(BrandInk, color.Black)
 	imgFallback := parseHex("#0b0b0e", color.Black) // matches the DOM's image-bg base
@@ -150,8 +477,9 @@ func (r *Renderer) RenderLayout(ctx context.Context, in layout.Layout, vars map[
 		}
 	}
 
-	// Card data root (pure Go template): {{.User.Username}}, {{.User.Avatar}}, …
-	data := templating.DataFromVars(vars)
+	// Resolve per-layer property formulas (l.Bind) into concrete field values, so
+	// the rest of the renderer transparently draws data-driven geometry / colours.
+	in.Layers = r.resolveLayerBindings(ctx, in.Layers, data)
 
 	// paintText lays out + draws a text layer's glyphs onto c in colour col — shared by
 	// the real layer (drawRaw) and its boolean/blur silhouette (drawSilhouette, in
@@ -379,6 +707,19 @@ func (r *Renderer) RenderLayout(ctx context.Context, in layout.Layout, vars map[
 		}
 		switch l.Type {
 		case "rect":
+			// Progress-bar rect: fill the WIDTH by the member's XP progress percent,
+			// left-anchored (x/y/h and the corner radius are kept). An absent or
+			// unparseable progress var (welcome cards carry none) leaves it full width.
+			// Skip when the width is already a formula (l.Bind["w"]) so the modern
+			// bound-width progress bar isn't scaled by the fraction a second time.
+			if l.Progress && l.Bind["w"] == "" {
+				if frac, ok := progressFraction(vars["{progress}"]); ok {
+					l.W = math.Round(l.W * frac) // frac ∈ [0,1] ⇒ width ∈ [0, l.W]
+					if l.W < 0 {
+						l.W = 0
+					}
+				}
+			}
 			tl, tr, br, bl := cornerRadii(l)
 			r.fillShape(ctx, dc, l, opacity, func(c *gg.Context) {
 				drawRoundRect(c, l.X, l.Y, l.W, l.H, tl, tr, br, bl)

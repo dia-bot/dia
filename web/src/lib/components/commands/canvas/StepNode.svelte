@@ -8,6 +8,7 @@
 	import Trash2 from 'lucide-svelte/icons/trash-2';
 	import Flag from 'lucide-svelte/icons/flag';
 	import ShieldAlert from 'lucide-svelte/icons/shield-alert';
+	import Lock from 'lucide-svelte/icons/lock';
 	import EmojiGlyph from '../EmojiGlyph.svelte';
 
 	type Props = NodeProps & { data: NodeData & { hasError?: boolean; dimmed?: boolean } };
@@ -17,6 +18,11 @@
 	const meta = $derived(STEP_KIND_BY_KIND.get(step?.kind ?? ''));
 	const Icon = $derived(iconFor(meta?.icon ?? 'Square'));
 	const hasError = $derived(!!data.hasError);
+	// Managed node (read-only canvas or a feature's generated spine): edit
+	// affordances hide and its handles go inert, except a tail anchor whose out
+	// stays live so the follow-up flow can be wired.
+	const locked = $derived(!!data.locked);
+	const outUnlocked = $derived(!!data.outUnlocked);
 	const isStart = $derived(!!data.isStart);
 	const endsHere = $derived(!!data.endsHere);
 	const summary = $derived(step ? stepSummary(step) : '');
@@ -81,12 +87,14 @@
 </script>
 
 <div
-	class="step-node group/node relative w-[248px] rounded-xl border bg-card text-foreground transition-all duration-200
-		{selected
-		? 'border-foreground/40 shadow-[0_0_0_3px_hsl(var(--foreground)/0.08),0_12px_32px_-12px_rgba(0,0,0,0.5)]'
-		: hasError
-			? 'border-destructive/40 shadow-[0_1px_2px_rgba(0,0,0,0.4)]'
-			: 'border-border/50 shadow-[0_1px_2px_rgba(0,0,0,0.3)] hover:border-foreground/25 hover:shadow-[0_4px_16px_-4px_rgba(0,0,0,0.45)]'}
+	class="step-node group/node relative w-[248px] rounded-xl border text-foreground transition-all duration-200
+		{locked
+		? 'border-line/40 bg-surface/60'
+		: selected
+			? 'bg-card border-foreground/40 shadow-[0_0_0_3px_hsl(var(--foreground)/0.08),0_12px_32px_-12px_rgba(0,0,0,0.5)]'
+			: hasError
+				? 'bg-card border-destructive/40 shadow-[0_1px_2px_rgba(0,0,0,0.4)]'
+				: 'bg-card border-border/50 shadow-[0_1px_2px_rgba(0,0,0,0.3)] hover:border-foreground/25 hover:shadow-[0_4px_16px_-4px_rgba(0,0,0,0.45)]'}
 		{data.dimmed ? 'opacity-30' : ''}"
 	data-selected={selected ? 'true' : null}
 	data-step-id={id}
@@ -119,6 +127,9 @@
 		<span class="min-w-0 flex-1 truncate text-[12.5px] font-semibold leading-tight text-foreground">
 			{meta?.label ?? step?.kind}
 		</span>
+		{#if locked}
+			<Lock size={10} class="shrink-0 text-muted-foreground/50" />
+		{/if}
 		{#if isStart}
 			<span
 				class="shrink-0 rounded bg-foreground px-1.5 py-px text-[9px] font-semibold uppercase tracking-[0.12em] text-background"
@@ -129,18 +140,20 @@
 		{#if hasError}
 			<AlertTriangle class="size-3 shrink-0 text-destructive" />
 		{/if}
-		<button
-			type="button"
-			class="nodrag grid size-5 shrink-0 place-items-center rounded text-muted-foreground/50 opacity-0 transition-[color,background,opacity] hover:bg-destructive/15 hover:text-destructive group-hover/node:opacity-100"
-			title="Delete step"
-			aria-label="Delete step"
-			onclick={(e) => {
-				e.stopPropagation();
-				emit('delete', { id });
-			}}
-		>
-			<Trash2 class="size-3" />
-		</button>
+		{#if !locked}
+			<button
+				type="button"
+				class="nodrag grid size-5 shrink-0 place-items-center rounded text-muted-foreground/50 opacity-0 transition-[color,background,opacity] hover:bg-destructive/15 hover:text-destructive group-hover/node:opacity-100"
+				title="Delete step"
+				aria-label="Delete step"
+				onclick={(e) => {
+					e.stopPropagation();
+					emit('delete', { id });
+				}}
+			>
+				<Trash2 class="size-3" />
+			</button>
+		{/if}
 	</div>
 
 	<!-- Body: category eyebrow + one-line summary -->
@@ -155,6 +168,11 @@
 		{:else}
 			<div class="mt-0.5 truncate text-[11px] italic leading-relaxed text-muted-foreground/50">
 				{meta?.short ?? 'Click to configure'}
+			</div>
+		{/if}
+		{#if hasError && data.errorText}
+			<div class="mt-1 truncate font-mono text-[10px] text-destructive" title={data.errorText}>
+				{data.errorText}
 			</div>
 		{/if}
 	</div>
@@ -216,7 +234,7 @@
 			<Flag class="size-2.5" />
 			Ends here
 		</div>
-	{:else if !hasErrorHandler}
+	{:else if !hasErrorHandler && !locked}
 		<button
 			type="button"
 			class="nodrag flex w-full items-center gap-1.5 rounded-b-xl border-t border-border/40 px-2.5 py-1.5 text-[10.5px] font-medium text-muted-foreground/60 transition-colors hover:bg-destructive/10 hover:text-destructive"
@@ -236,15 +254,22 @@
 		type="source"
 		position={Position.Left}
 		id="on_error"
-		class="!size-2 !border-2 !border-card !bg-destructive/80 {hasErrorHandler
-			? ''
-			: '!opacity-0 transition-opacity group-hover/node:!opacity-100'}"
+		isConnectable={!locked}
+		class="!size-2 !border-2 !border-card !bg-destructive/80 {locked
+			? '!pointer-events-none !opacity-0'
+			: hasErrorHandler
+				? ''
+				: '!opacity-0 transition-opacity group-hover/node:!opacity-100'}"
 	/>
 	<Handle
 		type="source"
 		position={Position.Bottom}
 		id="out"
-		class="!size-2.5 !border-2 !border-card !bg-muted-foreground/70 hover:!bg-foreground"
+		isConnectable={!locked || outUnlocked}
+		class="!size-2.5 !border-2 !border-card !bg-muted-foreground/70 hover:!bg-foreground {locked &&
+		!outUnlocked
+			? '!pointer-events-none !opacity-0'
+			: ''}"
 	/>
 	{#if isWaitFor}
 		<!-- Right dot = the on-timeout path (revealed on hover until used). -->
@@ -253,9 +278,12 @@
 			position={Position.Right}
 			id="on_timeout"
 			title="Run steps if the wait times out"
-			class="!size-2 !border-2 !border-card !bg-foreground/50 {hasTimeout
-				? ''
-				: '!opacity-0 transition-opacity group-hover/node:!opacity-100'}"
+			isConnectable={!locked}
+			class="!size-2 !border-2 !border-card !bg-foreground/50 {locked
+				? '!pointer-events-none !opacity-0'
+				: hasTimeout
+					? ''
+					: '!opacity-0 transition-opacity group-hover/node:!opacity-100'}"
 		/>
 	{/if}
 </div>

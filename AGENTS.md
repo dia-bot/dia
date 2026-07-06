@@ -71,8 +71,10 @@ welcome; it is not required.
 - **Web theme is serious & technical, not gradient-heavy.** A neutral
   charcoal/paper palette (`--color-ink` near-black on `--color-bg`/`--color-surface`),
   hairline rules (`--color-line`), and a single rose accent (`--color-accent` = #ff6363, the logo's top colour; `--color-accent-ink` is the deeper rose for text/links).
-  Grotesk for UI (`--font-sans` = Hanken Grotesk), monospace for technical labels &
-  code (`--font-mono` = JetBrains Mono); `.eyebrow` is the mono label style. The
+  Native system font for UI (`--font-sans` = the OS system stack: Apple
+  system / San Francisco, Segoe UI, Roboto, etc.), sitewide across dashboard &
+  marketing; monospace for technical labels & code (`--font-mono` = JetBrains
+  Mono); `.eyebrow` is the mono label style. The
   pink→purple gradient is for the **logo mark and welcome/rank cards only** — never a
   page/section/dashboard background (use near-black `--color-ink-2` sections for
   emphasis instead). Marketing site lives in `web/src/routes` (home + `/features/*`,

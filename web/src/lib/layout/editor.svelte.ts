@@ -105,6 +105,16 @@ export class EditorStore {
 	setResolved(map: Record<string, string>) {
 		this.resolved = map;
 	}
+	// Sample template vars the host injects (the rank card's {progress}, …), kept
+	// here so the live canvas can preview a progress-bound bar exactly like the
+	// server. Empty for welcome cards (their bars render full width).
+	extraVars = $state<Record<string, string>>({});
+	// UI coordination flags shared across the chrome (Canvas / LayoutEditor / the
+	// hosting modal) so an Esc press walks edit → tool → selection → overlay →
+	// close, and Shift+/ can open the shortcuts sheet from the canvas.
+	overlayOpen = $state(false); // the server-render overlay is up (LayoutEditor owns it)
+	shortcutsOpen = $state(false); // the keyboard-shortcuts sheet is up
+	formulaOpen = $state(false); // the Formulas modal is up (FormulaModal owns it); gates canvas keys
 
 	setFonts(fonts: { family: string; url: string }[], premium: boolean) {
 		this.customFonts = fonts;

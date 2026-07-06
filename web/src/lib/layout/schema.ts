@@ -87,7 +87,8 @@ export interface Effect {
 
 // The card renders server-side on every member join, so we cap layer count to
 // keep that cheap — masking + vector shapes mean you rarely need many layers.
-export const MAX_LAYERS = 12;
+// Mirrored (and enforced) server-side in schema.go.
+export const MAX_LAYERS = 48;
 
 // Canvas size limits. The card renders server-side on every join, so the canvas
 // can be any aspect ratio but its resolution is capped to keep memory/CPU
@@ -168,6 +169,14 @@ export interface Layer {
 	// `layers`; a mask group's stencil (clip=true) sits at the run's bottom.
 	group?: string;
 	locked?: boolean; // editor-only: can't be selected/moved on the canvas
+	// Formulas: map a property name to a Go text/template expression evaluated at
+	// render time against the card data (member / level / XP / progress, plus math
+	// and if/else). A bound key OVERRIDES the matching static field below on the
+	// server render, so any scalar property can be data-driven; the static field
+	// stays the editor's drag value + DOM-preview value + fallback. Recognised keys:
+	// x y w h opacity rotation font_size radius stroke_width letter_spacing
+	// line_height color fill stroke_color hidden. Mirrored in schema.go (Layer.Bind).
+	bind?: Record<string, string>;
 	// text
 	text?: string; // supports {variables}
 	font_size?: number;
@@ -189,6 +198,10 @@ export interface Layer {
 	fills?: Paint[]; // Figma-style paint stack, BOTTOM → TOP (index 0 paints first)
 	radius?: number; // corner radius (rect / image / rounded avatar)
 	corners?: [number, number, number, number]; // independent corner radii [tl,tr,br,bl]; overrides `radius` when set (rect/image)
+	// rect-only: bind the rect's painted width to the member's XP progress. When
+	// true the renderer fills the rect to {{.Progress}} percent (an XP bar);
+	// welcome cards (no progress value) render it full width. Mirrored in schema.go.
+	progress?: boolean;
 	stroke_color?: string; // LEGACY single outline hex; superseded by `strokes` when set
 	strokes?: Paint[]; // Figma-style stroke paint stack, BOTTOM → TOP (like `fills`)
 	stroke_width?: number; // outline width in canvas px
@@ -242,6 +255,10 @@ export interface Background {
 	// legacy type/color/from/to/image_url fields; the editor migrates a legacy
 	// background into `fills` on first edit.
 	fills?: Paint[];
+	// Formulas for the canvas backdrop (keys: color from to angle blur). A bound
+	// value overrides the corresponding field on the server render, like a layer's
+	// bind. Mirrored in schema.go (Background.Bind).
+	bind?: Record<string, string>;
 }
 
 // Metadata for a soft group, keyed by the group id used on layers. Membership and

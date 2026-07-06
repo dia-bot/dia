@@ -5,15 +5,19 @@
 	// host (the standalone page or the in-welcome modal) supplies primary actions
 	// (Save / Apply) via the `actions` snippet and sizes the container.
 	import { getContext, onDestroy, type Snippet } from 'svelte';
-	import { DropdownMenu } from 'bits-ui';
+	import { DropdownMenu, Popover } from 'bits-ui';
 	import { EditorStore, EDITOR_CTX, type Tool } from '$lib/layout/editor.svelte';
-	import type { ShapeKind } from '$lib/layout/schema';
+	import type { ShapeKind, Layout } from '$lib/layout/schema';
+	import { defaultLayout } from '$lib/layout/schema';
+	import { cardTemplates, rankStarterLayout, cloneLayout, templateLayout } from '$lib/layout/templates';
 	import { layoutPreview, resolveCard } from '$lib/api';
 	import { googleFontsHref } from '$lib/layout/fonts';
 	import Canvas from '$lib/components/editor/Canvas.svelte';
 	import LayersPanel from '$lib/components/editor/LayersPanel.svelte';
 	import PropertiesPanel from '$lib/components/editor/PropertiesPanel.svelte';
-	import { Image, X, Loader2, AlertTriangle, MousePointer2, Scaling, Square, Circle, Type, PenTool, Pencil, Spline, Undo2, Redo2, Frame, Shapes, Triangle, Diamond, Pentagon, Hexagon, Star, Minus, Layers, SlidersHorizontal } from 'lucide-svelte';
+	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
+	import { Image, X, Loader2, AlertTriangle, MousePointer2, Scaling, Square, Circle, Type, PenTool, Pencil, Spline, Undo2, Redo2, Frame, Shapes, Triangle, Diamond, Pentagon, Hexagon, Star, Minus, Layers, SlidersHorizontal, LayoutTemplate, Keyboard, ChevronDown, FlaskConical } from 'lucide-svelte';
+	import { cardTestVarsFor } from '$lib/layout/vars';
 
 	const shapeItems: { kind: ShapeKind; label: string; icon: typeof Image }[] = [
 		{ kind: 'triangle', label: 'Triangle', icon: Triangle },
@@ -44,11 +48,138 @@
 		guildId,
 		title = 'Card Studio',
 		extraVars,
+		context = 'rank',
 		actions
-	}: { guildId: string; title?: string; extraVars?: Record<string, string>; actions?: Snippet } =
-		$props();
+	}: {
+		guildId: string;
+		title?: string;
+		extraVars?: Record<string, string>;
+		// Which card this studio is designing, gates the rank-only variable chips
+		// and the rank starter in the template gallery. Defaults to 'rank' (the most
+		// permissive) for the standalone editor.
+		context?: 'welcome' | 'rank';
+		actions?: Snippet;
+	} = $props();
 
 	const store = getContext<EditorStore>(EDITOR_CTX);
+
+	// Editable TEST values: overrides the host's sample vars in the live preview so
+	// formulas can be exercised (set Level 60 to watch a level-gated colour flip).
+	// Empty entries fall back to the sample default, so the preview matches the bot
+	// until you type a value. See cardTestVarsFor / the "Test values" panel below.
+	let testVars = $state<Record<string, string>>({});
+	const testFields = $derived(cardTestVarsFor(context));
+	const previewVars = $derived.by(() => {
+		const merged: Record<string, string> = { ...(extraVars ?? {}) };
+		for (const [k, v] of Object.entries(testVars)) if (v.trim() !== '') merged[k] = v;
+		return merged;
+	});
+
+	// Publish the resolved sample+test vars + the server-render overlay flag onto
+	// the store so the canvas can preview a progress bar and the Esc cascade knows
+	// the overlay is up (see the modal's Esc handler).
+	$effect(() => {
+		store.extraVars = previewVars;
+	});
+
+	// ── template gallery ────────────────────────────────────────────────────────
+	// The ready-made starters, plus the flat rank starter when designing a rank card.
+	const gallery = $derived<{ id: string; name: string; layout: Layout }[]>([
+		...cardTemplates.map((t) => ({ id: t.id, name: t.name, layout: t.layout })),
+		...(context === 'rank' ? [{ id: 'rank-starter', name: 'Rank starter', layout: rankStarterLayout() }] : [])
+	]);
+	let templatesOpen = $state(false);
+	let confirmReplace = $state(false);
+	let pendingLayout: Layout | null = null;
+
+	// A CSS swatch of a template's background, for the gallery preview.
+	function bgSwatch(l: Layout): string {
+		const b = l.background;
+		if (b.type === 'gradient' && (b.from || b.to))
+			return `background:linear-gradient(${(b.angle ?? 0) + 90}deg, ${b.from || '#000'}, ${b.to || '#000'});`;
+		if (b.type === 'image' && b.image_url)
+			return `background-image:url(${JSON.stringify(b.image_url)});background-size:cover;background-position:center;`;
+		return `background:${b.color || '#141417'};`;
+	}
+	// A structural fingerprint (ignoring non-deterministic ids) so we only warn about
+	// replacing a design the user has actually customised, not the fresh starter.
+	function seedKey(l: Layout): string {
+		return JSON.stringify(l, (k, v) => (k === 'id' || k === 'group' || k === 'groups' ? undefined : v));
+	}
+	function isPristine(): boolean {
+		const seed =
+			context === 'rank' ? rankStarterLayout() : context === 'welcome' ? templateLayout('aurora') : defaultLayout();
+		return seedKey(store.toJSON()) === seedKey(seed);
+	}
+	function chooseTemplate(l: Layout) {
+		templatesOpen = false;
+		if (isPristine()) {
+			loadTemplate(l);
+			return;
+		}
+		pendingLayout = cloneLayout(l);
+		confirmReplace = true;
+	}
+	// Load AFTER record() so the whole swap collapses into a single undo step.
+	function loadTemplate(l: Layout) {
+		store.record();
+		store.exitEdit();
+		store.select(null);
+		store.layout = cloneLayout(l);
+	}
+	function confirmReplaceNow() {
+		if (pendingLayout) loadTemplate(pendingLayout);
+		pendingLayout = null;
+	}
+	function cancelReplace() {
+		pendingLayout = null;
+	}
+
+	// ── keyboard-shortcuts sheet ────────────────────────────────────────────────
+	// Sourced from the tools array (so tool keys never drift) plus the canvas /
+	// selection / edit chords handled in Canvas.svelte.
+	const shortcutGroups: { group: string; items: [string, string][] }[] = [
+		{
+			group: 'Tools',
+			items: tools
+				.filter((t) => t.key)
+				.map((t) => [t.key, t.id[0].toUpperCase() + t.id.slice(1)] as [string, string])
+		},
+		{
+			group: 'Canvas',
+			items: [
+				['Space-drag', 'Pan'],
+				['⌘/Ctrl-scroll', 'Zoom'],
+				['⌘/Ctrl 0', 'Reset view'],
+				['⌘/Ctrl +', 'Zoom in'],
+				['⌘/Ctrl -', 'Zoom out']
+			]
+		},
+		{
+			group: 'Selection',
+			items: [
+				['⌘/Ctrl A', 'Select all'],
+				['⌘/Ctrl G', 'Group'],
+				['⇧⌘/Ctrl G', 'Ungroup'],
+				['Arrows', 'Nudge'],
+				['⇧ Arrows', 'Nudge ×10'],
+				['⌫', 'Delete']
+			]
+		},
+		{
+			group: 'Edit',
+			items: [
+				['⌘/Ctrl Z', 'Undo'],
+				['⇧⌘/Ctrl Z', 'Redo'],
+				['⌘/Ctrl C', 'Copy'],
+				['⌘/Ctrl X', 'Cut'],
+				['⌘/Ctrl V', 'Paste'],
+				['⌘/Ctrl D', 'Duplicate'],
+				['Enter / Esc', 'Finish path'],
+				['Double-click', 'Edit object']
+			]
+		}
+	];
 
 	// Unified control variants (shadcn-on-Dia) — identical strings per variant so
 	// every editor control reads the same. See PropertiesPanel for the full set.
@@ -68,8 +199,10 @@
 	});
 
 	let previewUrl = $state('');
-	let previewing = $state(false);
+	let previewing = $state(false); // a render is in flight (header spinner)
 	let previewError = $state('');
+	let renderOpen = $state(false); // the docked, live server-render panel is up
+	let testOpen = $state(false); // the "Test values" inputs are expanded
 
 	// On mobile the two side rails become off-canvas drawers (only one open at a
 	// time), toggled by floating buttons on the canvas. On md+ they're static panes.
@@ -88,25 +221,68 @@
 		propsOpen = false;
 	}
 
-	async function renderServer() {
-		if (previewing) return;
+	// The docked server-render panel is LIVE: once open it re-renders as you edit,
+	// swapping the blob URL under a header spinner. A generation counter discards
+	// out-of-order responses (mirrors the resolve effect below).
+	let renderGen = 0;
+	async function doRender() {
+		if (!renderOpen) return;
+		const my = ++renderGen;
 		previewing = true;
-		previewError = '';
 		try {
-			const url = await layoutPreview(guildId, store.toJSON(), extraVars);
+			const url = await layoutPreview(guildId, store.toJSON(), previewVars);
+			if (my !== renderGen) {
+				URL.revokeObjectURL(url); // superseded by a newer edit / close
+				return;
+			}
 			if (previewUrl) URL.revokeObjectURL(previewUrl);
 			previewUrl = url;
+			previewError = '';
 		} catch (e) {
+			if (my !== renderGen) return;
 			previewError = e instanceof Error ? e.message : 'Render failed';
 		} finally {
-			previewing = false;
+			if (my === renderGen) previewing = false;
 		}
 	}
+	function renderServer() {
+		if (renderOpen) return; // already open and live-updating
+		renderOpen = true; // the live effect fires the first render
+	}
 	function closePreview() {
+		renderOpen = false;
+		renderGen++; // discard any in-flight render
+		previewing = false;
+		clearTimeout(liveTimer);
 		if (previewUrl) URL.revokeObjectURL(previewUrl);
 		previewUrl = '';
 		previewError = '';
 	}
+	// Live re-render: while the panel is open, deep-touch the layout (register deps
+	// WITHOUT stringifying every frame) and debounce a re-render ~700ms after edits
+	// settle. The first open renders immediately; edits then coalesce. Reads no state
+	// doRender writes, so it never self-triggers. `didFirstRender` is deliberately
+	// non-reactive (a plain flag, not a dep).
+	let liveTimer: ReturnType<typeof setTimeout>;
+	let didFirstRender = false;
+	$effect(() => {
+		if (!renderOpen) {
+			didFirstRender = false;
+			clearTimeout(liveTimer);
+			return;
+		}
+		touch(store.layout);
+		void previewVars; // re-render when the sample/test vars change too
+		clearTimeout(liveTimer);
+		const delay = didFirstRender ? 700 : 0;
+		didFirstRender = true;
+		liveTimer = setTimeout(() => doRender(), delay);
+	});
+	// Mirror the panel's open state onto the store so the hosting modal's Esc handler
+	// treats an open render panel as the last thing to dismiss before it closes.
+	$effect(() => {
+		store.overlayOpen = renderOpen;
+	});
 	// Load the guild's custom (premium) fonts into the document via the FontFace
 	// API so the live preview renders them (the static roster comes from Google
 	// Fonts above). Tracked by URL so each loads once.
@@ -180,11 +356,14 @@
 	onDestroy(() => {
 		clearTimeout(histTimer);
 		clearTimeout(resolveTimer);
+		clearTimeout(liveTimer);
 		if (previewUrl) URL.revokeObjectURL(previewUrl);
 	});
 
 	function onKeydown(e: KeyboardEvent) {
-		if (e.key === 'Escape' && (previewUrl || previewError)) {
+		if (e.key === 'Escape' && renderOpen) {
+			// Consume Esc: dismiss the overlay, not the whole studio.
+			e.preventDefault();
 			e.stopPropagation();
 			closePreview();
 		}
@@ -232,17 +411,82 @@
 				<Redo2 size={14} />
 			</button>
 		</div>
+		<!-- Template gallery: pick a ready-made starter (portalled so it never clips). -->
+		<Popover.Root bind:open={templatesOpen}>
+			<Popover.Trigger title="Start from a template" class="{btnSecondary} ml-1 h-7 gap-1.5 px-2">
+				<LayoutTemplate size={13} />
+				<span class="hidden sm:inline">Templates</span>
+			</Popover.Trigger>
+			<Popover.Portal>
+				<Popover.Content
+					side="bottom"
+					align="start"
+					sideOffset={8}
+					class="menu-pop z-50 w-72 rounded-xl border border-line-strong bg-surface p-2 shadow-2xl outline-none"
+				>
+					<div class="px-1 pb-1.5 pt-0.5 text-[11px] font-semibold text-ink">Templates</div>
+					<div class="grid grid-cols-2 gap-1.5">
+						{#each gallery as t (t.id)}
+							<button
+								type="button"
+								onclick={() => chooseTemplate(t.layout)}
+								class="group flex flex-col gap-1.5 rounded-lg border border-line p-1.5 text-left transition-colors hover:border-line-strong hover:bg-ink-2"
+							>
+								<span class="block h-12 w-full rounded-md border border-line-strong" style={bgSwatch(t.layout)}></span>
+								<span class="flex items-center justify-between gap-1">
+									<span class="truncate text-[11px] font-medium text-ink">{t.name}</span>
+									<span class="shrink-0 font-mono text-[10px] tabular-nums text-faint">{t.layout.layers.length}</span>
+								</span>
+							</button>
+						{/each}
+					</div>
+				</Popover.Content>
+			</Popover.Portal>
+		</Popover.Root>
+
 		<div class="flex-1"></div>
 		<button
 			type="button"
-			onclick={renderServer}
-			disabled={previewing}
-			title="Server render"
-			class="{btnSecondary} h-8 px-2.5"
+			onclick={() => (renderOpen ? closePreview() : renderServer())}
+			title="Live server render"
+			aria-pressed={renderOpen}
+			class="{btnSecondary} h-8 px-2.5 {renderOpen ? 'border-faint bg-ink-2 text-ink' : ''}"
 		>
 			{#if previewing}<Loader2 size={13} class="animate-spin" />{:else}<Image size={13} />{/if}
 			<span class="hidden sm:inline">Server render</span>
 		</button>
+		<!-- Keyboard-shortcuts sheet (also opened by Shift+/ on the canvas). -->
+		<Popover.Root bind:open={() => store.shortcutsOpen, (v) => (store.shortcutsOpen = v)}>
+			<Popover.Trigger title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts" class="{iconGhost} h-8 w-8">
+				<Keyboard size={15} />
+			</Popover.Trigger>
+			<Popover.Portal>
+				<Popover.Content
+					side="bottom"
+					align="end"
+					sideOffset={8}
+					class="menu-pop z-50 w-80 rounded-xl border border-line-strong bg-surface p-3 shadow-2xl outline-none"
+				>
+					<div class="pb-2 text-[11px] font-semibold text-ink">Keyboard shortcuts</div>
+					<div class="grid grid-cols-2 gap-x-4 gap-y-3">
+						{#each shortcutGroups as grp (grp.group)}
+							<div>
+								<div class="mb-1 font-mono text-[9.5px] uppercase tracking-[0.14em] text-faint">{grp.group}</div>
+								<dl class="space-y-1">
+									{#each grp.items as [key, label] (label)}
+										<div class="flex items-center justify-between gap-2">
+											<dt class="truncate text-[11px] text-muted">{label}</dt>
+											<dd class="shrink-0 rounded border border-line-strong bg-ink-2 px-1.5 py-0.5 font-mono text-[10px] text-faint">{key}</dd>
+										</div>
+									{/each}
+								</dl>
+							</div>
+						{/each}
+					</div>
+				</Popover.Content>
+			</Popover.Portal>
+		</Popover.Root>
+
 		{@render actions?.()}
 	</div>
 
@@ -348,33 +592,70 @@
 				</div>
 			</div>
 
-			{#if previewUrl || previewError}
-				<div class="absolute inset-0 z-20 grid place-items-center bg-ink-2/80 p-8 backdrop-blur-sm">
-					<div class="card w-full max-w-3xl overflow-hidden bg-surface shadow-2xl">
-						<div class="flex items-center justify-between gap-4 border-b border-line px-4 py-3">
-							<div>
-								<div class="text-[13px] font-semibold text-ink">Server render</div>
-								<div class="mt-0.5 text-[11px] text-muted">The exact PNG the bot would post.</div>
-							</div>
-							<button
-								type="button"
-								onclick={closePreview}
-								class="grid h-7 w-7 place-items-center rounded-md text-muted transition-colors hover:bg-ink-2 hover:text-ink"
-								aria-label="Close render"
-							>
-								<X size={15} />
-							</button>
+			<!-- Live server-render panel: docked bottom-right (non-blocking) so the canvas
+			     stays editable; it re-renders as you edit, with a header spinner. -->
+			{#if renderOpen}
+				<div class="absolute bottom-4 right-4 z-20 w-[min(26rem,calc(100%-2rem))] overflow-hidden rounded-xl border border-line-strong bg-surface shadow-2xl">
+					<div class="flex items-center justify-between gap-3 border-b border-line px-3 py-2">
+						<div class="flex min-w-0 items-center gap-2">
+							<span class="truncate text-[12px] font-semibold text-ink">Server render</span>
+							{#if previewing}<Loader2 size={12} class="shrink-0 animate-spin text-faint" />{/if}
 						</div>
-						<div class="grid place-items-center bg-ink-2 p-4">
-							{#if previewError}
-								<div class="flex items-center gap-2 py-10 text-[13px] text-danger">
-									<AlertTriangle size={15} /> {previewError}
-								</div>
-							{:else}
-								<img src={previewUrl} alt="Server-rendered card" class="max-h-[60vh] w-auto max-w-full rounded-lg border border-line" />
-							{/if}
-						</div>
+						<button
+							type="button"
+							onclick={closePreview}
+							class="grid h-6 w-6 shrink-0 place-items-center rounded-md text-muted transition-colors hover:bg-ink-2 hover:text-ink"
+							aria-label="Close render"
+						>
+							<X size={14} />
+						</button>
 					</div>
+					<div class="grid place-items-center bg-ink-2 p-3">
+						{#if previewError}
+							<div class="flex items-center gap-2 py-6 text-[12px] text-danger">
+								<AlertTriangle size={14} /> {previewError}
+							</div>
+						{:else if previewUrl}
+							<img src={previewUrl} alt="Server-rendered card" class="max-h-[42vh] w-auto max-w-full rounded-lg border border-line" />
+						{:else}
+							<div class="flex items-center gap-2 py-6 text-[12px] text-muted">
+								<Loader2 size={14} class="animate-spin" /> Rendering…
+							</div>
+						{/if}
+					</div>
+					<!-- Test values: override the sample data so formulas can be exercised
+					     (e.g. bump Level to see a level-gated colour flip). Empty = default. -->
+					<div class="border-t border-line">
+						<button
+							type="button"
+							onclick={() => (testOpen = !testOpen)}
+							aria-expanded={testOpen}
+							class="flex w-full items-center gap-1.5 px-3 py-1.5 text-[11px] font-medium text-muted transition-colors hover:text-ink"
+						>
+							<FlaskConical size={12} /> Test values
+							<ChevronDown size={12} class="ml-auto transition-transform {testOpen ? 'rotate-180' : ''}" />
+						</button>
+						{#if testOpen}
+							<div class="grid grid-cols-2 gap-x-2 gap-y-1.5 px-3 pb-2">
+								{#each testFields as f (f.token)}
+									<label class="block min-w-0">
+										<span class="mb-0.5 block truncate text-[10px] text-faint">{f.label}</span>
+										<input
+											value={testVars[f.token] ?? ''}
+											oninput={(e) => (testVars = { ...testVars, [f.token]: e.currentTarget.value })}
+											placeholder={extraVars?.[f.token] ?? '—'}
+											inputmode={f.numeric ? 'numeric' : undefined}
+											class="w-full rounded border border-line bg-ink-2 px-2 py-1 text-[11px] text-ink outline-none transition-colors placeholder:text-faint/70 focus:border-faint"
+										/>
+									</label>
+								{/each}
+							</div>
+							<div class="px-3 pb-2 text-[10px] leading-relaxed text-faint">
+								Empty = sample default. The render above updates with these values.
+							</div>
+						{/if}
+					</div>
+					<div class="border-t border-line px-3 py-1.5 text-[10.5px] text-faint">The exact PNG the bot would post, updated as you edit.</div>
 				</div>
 			{/if}
 		</div>
@@ -384,10 +665,21 @@
 				? 'translate-x-0'
 				: ''}"
 		>
-			<PropertiesPanel />
+			<PropertiesPanel {context} />
 		</aside>
 	</div>
 </div>
+
+<!-- Replacing a customised design with a template is confirmed here. -->
+<ConfirmDialog
+	bind:open={confirmReplace}
+	title="Replace current design?"
+	description="Loading this template replaces the card you've designed. You can undo it afterwards."
+	cancelLabel="Keep editing"
+	confirmLabel="Replace"
+	oncancel={cancelReplace}
+	onconfirm={confirmReplaceNow}
+/>
 
 <style>
 	/* The studio uses the dashboard's own clean palette (white text on neutral

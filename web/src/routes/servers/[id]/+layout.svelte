@@ -1,6 +1,9 @@
 <script lang="ts">
 	import { page } from '$app/stores';
-	import { onDestroy, setContext, type Snippet } from 'svelte';
+	import { onDestroy, onMount, tick, setContext, type Snippet } from 'svelte';
+	import { fly } from 'svelte/transition';
+	import { cubicOut } from 'svelte/easing';
+	import { dur } from '$lib/motion';
 	import { GuildStore, GUILD_CTX } from '$lib/guild.svelte';
 	import type { User } from '$lib/types';
 	import Logo from '$lib/components/Logo.svelte';
@@ -93,9 +96,51 @@
 	const currentSeg = $derived($page.url.pathname.replace(base, '').replace(/^\//, '').split('/')[0]);
 	const pageTitle = $derived(flatPages.find((p) => p.path === currentSeg)?.label ?? 'Overview');
 
+	// Vertical page-slide direction, from the sidebar order: moving DOWN the
+	// sidebar (a later item) slides the new page up from below; moving UP slides
+	// it down from above. `prevSeg` is non-reactive so the derived can read the
+	// incoming seg and advance it within the same render that re-keys the panel.
+	// svelte-ignore state_referenced_locally
+	let prevSeg = currentSeg;
+	const pageDir = $derived.by(() => {
+		const order = flatPages.map((p) => p.path);
+		const a = order.indexOf(prevSeg);
+		const b = order.indexOf(currentSeg);
+		prevSeg = currentSeg;
+		if (a === -1 || b === -1 || a === b) return 1;
+		return b > a ? 1 : -1;
+	});
+
+	// Sliding sidebar highlight. A single element sits BEHIND the nav items and
+	// animates its position/size to the active item, so the background glides
+	// while the icons and labels stay perfectly still. Measured off the active
+	// <a>'s offset box within the (positioned) nav.
+	let navEl = $state<HTMLElement>();
+	let hl = $state({ x: 0, y: 0, w: 0, h: 0, shown: false });
+	let hlReady = $state(false); // gate the slide so it doesn't fly in from 0,0 on load
+	$effect(() => {
+		currentSeg; // reposition whenever the active route changes
+		if (!navEl) return;
+		const el = navEl.querySelector<HTMLElement>('a[aria-current="page"]');
+		if (!el) {
+			// Write without reading `hl`, so the effect never depends on its own
+			// output (which would loop).
+			hl = { x: 0, y: 0, w: 0, h: 0, shown: false };
+			return;
+		}
+		hl = { x: el.offsetLeft, y: el.offsetTop, w: el.offsetWidth, h: el.offsetHeight, shown: true };
+	});
+	onMount(() => {
+		// Enable the transition only after the first position is applied.
+		tick().then(() => (hlReady = true));
+	});
+
 	// A few builder pages want the whole content width (no centered column).
 	const fullWidthPages = [
 		'welcome',
+		'leveling',
+		'reaction-roles',
+		'auto-roles',
 		'editor',
 		'commands',
 		'automations',
@@ -109,6 +154,9 @@
 	// Used by the dashboard surfaces that draw their own slab topbar / rows.
 	const flushPages = [
 		'welcome',
+		'leveling',
+		'reaction-roles',
+		'auto-roles',
 		'commands',
 		'automations',
 		'moderation',
@@ -219,7 +267,18 @@
 				</button>
 			</div>
 
-			<nav class="flex-1 overflow-y-auto px-3 py-3">
+			<nav bind:this={navEl} class="relative isolate flex-1 overflow-y-auto px-3 py-3">
+				<!-- Sliding highlight: sits BEHIND the items (`-z-10` inside the isolated
+				     nav) and glides/resizes to the active item, so the background moves
+				     while every icon and label stays put. -->
+				{#if hl.shown}
+					<div
+						class="pointer-events-none absolute left-0 top-0 -z-10 rounded-md bg-surface shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] {hlReady
+							? 'transition-[transform,width,height] duration-300 ease-out motion-reduce:transition-none'
+							: ''}"
+						style="transform: translate({hl.x}px, {hl.y}px); width: {hl.w}px; height: {hl.h}px;"
+					></div>
+				{/if}
 				{#each nav as group, gi (group.section ?? gi)}
 					{#if group.section}
 						<div
@@ -235,7 +294,9 @@
 								href={item.path ? `${base}/${item.path}` : base}
 								aria-current={active ? 'page' : undefined}
 								class="group flex h-8 items-center gap-2.5 rounded-md px-2.5 text-[13px] transition-colors duration-100 {active
-									? 'bg-surface font-medium text-ink shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]'
+									? hl.shown
+										? 'font-medium text-ink'
+										: 'bg-surface font-medium text-ink'
 									: 'font-medium text-muted hover:bg-surface/50 hover:text-ink'}"
 							>
 								<item.icon
@@ -257,7 +318,8 @@
 		</aside>
 
 		<!-- Content: the lighter framed work surface. `relative` so an in-context
-		     overlay (e.g. the Card Studio) can fill exactly this area, not the page. -->
+		     overlay (e.g. the Card Studio) can fill exactly this area, not the page.
+		     The keyed child below plays the vertical page slide on each navigation. -->
 		<main
 			class="relative min-w-0 flex-1 overflow-auto border-line bg-bg md:rounded-tl-2xl md:border-l md:border-t"
 		>
@@ -319,13 +381,19 @@
 					</div>
 				</div>
 			{:else}
-				<div
-					class="{fullWidth ? 'max-w-none' : 'mx-auto max-w-3xl'} {flush
-						? 'h-full'
-						: 'px-6 py-7'}"
-				>
-					{@render children()}
-				</div>
+				<!-- Vertical page slide: re-keyed per feature so the new page flies in
+				     from the travel direction. Live-DOM (not a view transition) so it
+				     plays in step with the sliding sidebar highlight. -->
+				{#key currentSeg}
+					<div
+						class="{fullWidth ? 'max-w-none' : 'mx-auto max-w-3xl'} {flush
+							? 'h-full'
+							: 'px-6 py-7'}"
+						in:fly={{ y: pageDir * 18, duration: dur(300), easing: cubicOut }}
+					>
+						{@render children()}
+					</div>
+				{/key}
 			{/if}
 		</main>
 	</div>

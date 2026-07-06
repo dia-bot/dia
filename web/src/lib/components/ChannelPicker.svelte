@@ -114,7 +114,7 @@
 		<div class="mb-2 flex flex-wrap gap-1.5">
 			{#each selected as id (id)}
 				<span
-					class="inline-flex items-center gap-1 rounded-full bg-blush py-1 pl-2 pr-1 text-xs font-medium text-accent-ink"
+					class="inline-flex items-center gap-1 rounded-full border border-line bg-surface py-1 pl-2 pr-1 text-xs font-medium text-ink"
 				>
 					{#if isVoice(id)}<Volume2 size={11} class="opacity-70" />{:else}<Hash
 							size={11}
@@ -123,7 +123,7 @@
 					<span class="max-w-[12rem] truncate">{labelOf(id)}</span>
 					<button
 						type="button"
-						class="grid size-4 place-items-center rounded-full opacity-70 transition hover:bg-accent/20 hover:opacity-100"
+						class="grid size-4 place-items-center rounded-full opacity-70 transition hover:bg-ink-2 hover:opacity-100"
 						onclick={() => removeChip(id)}
 						aria-label="Remove {labelOf(id)}"
 					>
@@ -188,7 +188,7 @@
 									class="shrink-0 text-faint"
 								/>{/if}
 							<span class="flex-1 truncate">{ch.label}</span>
-							{#if selectedSet.has(ch.value)}<Check size={14} class="shrink-0 text-accent-ink" />{/if}
+							{#if selectedSet.has(ch.value)}<Check size={14} class="shrink-0 text-muted" />{/if}
 						</button>
 					{/each}
 				{:else}

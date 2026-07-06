@@ -1,11 +1,13 @@
 package api
 
 import (
+	"fmt"
 	"net/http"
 
 	"github.com/dia-bot/dia/internal/discord"
 	"github.com/dia-bot/dia/internal/event"
 	"github.com/dia-bot/dia/internal/layout"
+	"github.com/dia-bot/dia/internal/templating"
 	"github.com/gin-gonic/gin"
 )
 
@@ -28,15 +30,24 @@ func (s *Server) handleLayoutPreview(c *gin.Context) {
 		fail(c, http.StatusBadRequest, "invalid body")
 		return
 	}
+	if len(req.Layout.Layers) > layout.MaxLayers {
+		fail(c, http.StatusBadRequest, fmt.Sprintf("layout has too many layers (max %d)", layout.MaxLayers))
+		return
+	}
 
 	vars := s.cardSampleVars(c, req.UserID, req.Avatar, req.ExtraVars)
 
+	ctx := c.Request.Context()
 	var fonts map[string]string
 	if gid, ok := event.ParseID(guildID(c)); ok {
-		fonts, _ = s.store.Uploads.FontMap(c.Request.Context(), gid)
+		fonts, _ = s.store.Uploads.FontMap(ctx, gid)
+		// So getKV / getGuildKV resolve real stored values in the studio preview
+		// (the sample user stands in for the member).
+		memberID, _ := event.ParseID(vars["{user.id}"])
+		ctx = templating.WithCardKV(ctx, s.store.FeatureKV.CardLookup(gid, memberID))
 	}
 
-	png, err := s.imaging.RenderLayout(c.Request.Context(), req.Layout, vars, fonts)
+	png, err := s.imaging.RenderLayout(ctx, req.Layout, vars, fonts)
 	if err != nil {
 		fail(c, http.StatusInternalServerError, "render failed")
 		return

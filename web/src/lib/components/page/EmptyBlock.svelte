@@ -11,7 +11,7 @@
 	} = $props();
 </script>
 
-<div class="px-5 py-16 text-center">
+<div class="px-5 py-12 text-center">
 	<p class="mb-1 text-[12.5px] font-medium text-ink">{title}</p>
 	{#if body}
 		<p class="mx-auto mb-4 max-w-[34ch] text-[11.5px] leading-relaxed text-muted">{body}</p>

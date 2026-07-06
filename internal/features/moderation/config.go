@@ -1,5 +1,11 @@
 package moderation
 
+import (
+	"encoding/json"
+
+	cc "github.com/dia-bot/dia/internal/features/customcommands"
+)
+
 // FeatureKey is the stable identifier for the core moderation feature (matches
 // guild_feature_configs.feature_key and the dashboard route).
 const FeatureKey = "moderation"
@@ -113,6 +119,11 @@ type AutomodRule struct {
 	Exempt RuleExempt `json:"exempt"`
 	// Actions run in order when the trigger fires.
 	Actions []RuleAction `json:"actions"`
+	// Tail is the canvas-owned follow-up flow, run as a durable automation run
+	// after the rule's actions apply. It is authored on the automation canvas
+	// and saved via /automod/rules/:rid/actions, never by the Automod settings
+	// page (whose saves pass through MergeStoredRuleTails to preserve it).
+	Tail []cc.Step `json:"tail,omitempty"`
 }
 
 // RuleExempt is a per-rule allowance set.
@@ -304,4 +315,34 @@ func DefaultAutomod() AutomodConfig {
 			NewAccountHours: 72,
 		},
 	}
+}
+
+// MergeStoredRuleTails returns the incoming automod config JSON with each
+// rule's canvas-owned field (the follow-up flow, Tail) replaced by the stored
+// config's, matched by rule ID. The Automod page owns the rule list, triggers
+// and actions; the follow-up flows are owned by the automation canvas (saved
+// via /automod/rules/:rid/actions), so a settings save must not overwrite them
+// with its (possibly stale, or absent) copies. Incoming rules with no stored
+// counterpart get an empty tail; stored rules that vanished are dropped along
+// with their tails. On any decode/encode error the incoming config is returned
+// unchanged.
+func MergeStoredRuleTails(incoming, stored []byte) []byte {
+	var in, st AutomodConfig
+	if json.Unmarshal(incoming, &in) != nil || json.Unmarshal(stored, &st) != nil {
+		return incoming
+	}
+	tails := make(map[string][]cc.Step, len(st.Rules))
+	for _, r := range st.Rules {
+		if len(r.Tail) > 0 {
+			tails[r.ID] = r.Tail
+		}
+	}
+	for i := range in.Rules {
+		in.Rules[i].Tail = tails[in.Rules[i].ID]
+	}
+	out, err := json.Marshal(in)
+	if err != nil {
+		return incoming
+	}
+	return out
 }

@@ -54,10 +54,12 @@ var Triggers = []TriggerKind{
 	{Key: "member_update", Label: "Member updated", Description: "A member's roles, nickname or boost status changes.", Event: event.TypeMemberUpdate, Category: CatMembers, Actor: "the updated member", Filters: []Filter{FilterCooldown}},
 	{Key: "verification_passed", Label: "Member verified", Description: "A member passes verification (button or captcha).", Event: event.TypeVerificationPassed, Category: CatMembers, Actor: "the verified member", Filters: []Filter{FilterCooldown}},
 	{Key: "verification_failed", Label: "Verification failed", Description: "A member fails the captcha, or is removed for not verifying in time.", Event: event.TypeVerificationFailed, Category: CatMembers, Actor: "the member who failed", Filters: []Filter{FilterCooldown}},
+	{Key: "level_up", Label: "Member levels up", Description: "A member reaches a new level.", Event: event.TypeLevelUp, Category: CatMembers, Actor: "the member who leveled up", HasChannel: true, Filters: []Filter{FilterChannels, FilterCooldown}},
 
 	// Roles (derived from member updates)
 	{Key: "role_added", Label: "Role added", Description: "A specific role is granted to a member (use for boost detection: watch the Server Booster role).", Event: event.TypeMemberUpdate, Category: CatRoles, Actor: "the member who got the role", Filters: []Filter{FilterRole, FilterCooldown}},
 	{Key: "role_removed", Label: "Role removed", Description: "A specific role is removed from a member.", Event: event.TypeMemberUpdate, Category: CatRoles, Actor: "the member who lost the role", Filters: []Filter{FilterRole, FilterCooldown}},
+	{Key: "reaction_role_pick", Label: "Reaction role picked", Description: "A member picks roles from a reaction-role menu.", Event: event.TypeReactionRolePick, Category: CatRoles, Actor: "the member who picked", HasChannel: true, Filters: []Filter{FilterChannels, FilterCooldown}},
 
 	// Messages
 	{Key: "message_create", Label: "Message sent", Description: "A message is posted in the server.", Event: event.TypeMessageCreate, Category: CatMessages, Actor: "the message author", HasChannel: true, Filters: []Filter{FilterChannels, FilterRoles, FilterIgnoreBots, FilterKeywords, FilterCooldown}},

@@ -59,7 +59,7 @@
 	const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 	onMount(async () => {
 		await load();
-		// After returning from checkout the webhook may not have landed yet —
+		// After returning from checkout the webhook may not have landed yet;
 		// poll briefly until premium flips on.
 		if (checkoutResult === 'success') {
 			for (let i = 0; i < 6 && !premium; i++) {
@@ -110,11 +110,11 @@
 
 {#if checkoutResult === 'success'}
 	<div class="mb-4 flex items-center gap-2 rounded-lg border border-success/30 bg-success/10 px-4 py-2.5 text-sm text-success">
-		<Check size={15} /> Subscription active — thanks for going Premium!
+		<Check size={15} /> Subscription active. Thanks for going Premium!
 	</div>
 {:else if checkoutResult === 'cancel'}
 	<div class="mb-4 rounded-lg border border-line bg-surface px-4 py-2.5 text-sm text-muted">
-		Checkout cancelled — no charge was made.
+		Checkout cancelled. No charge was made.
 	</div>
 {/if}
 
@@ -146,7 +146,7 @@
 						{#if premium}
 							Custom fonts, 5 GB storage{#if bill?.current_period_end}, renews {new Date(bill.current_period_end * 1000).toLocaleDateString()}{/if}.
 						{:else}
-							500 MB storage. Upgrade for custom fonts and 5 GB — {bill?.price ?? '$3.99/mo'}.
+							500 MB storage. Upgrade to get custom fonts and 5 GB for {bill?.price ?? '$3.99/mo'}.
 						{/if}
 					</p>
 				</div>
@@ -161,8 +161,8 @@
 						{#if acting}<Loader2 size={14} class="animate-spin" />{:else}<CreditCard size={14} />{/if} Manage plan
 					</button>
 				{:else}
-					<button type="button" onclick={upgrade} disabled={acting} class="flex h-9 items-center gap-1.5 rounded-lg bg-accent px-3.5 text-[13px] font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50">
-						{#if acting}<Loader2 size={14} class="animate-spin" />{:else}<Crown size={14} />{/if} Upgrade — {bill?.price ?? '$3.99/mo'}
+					<button type="button" onclick={upgrade} disabled={acting} class="flex h-9 items-center gap-1.5 rounded-lg bg-ink px-3.5 text-[13px] font-medium text-bg transition-colors hover:bg-ink/90 disabled:opacity-50">
+						{#if acting}<Loader2 size={14} class="animate-spin" />{:else}<Crown size={14} />{/if} Upgrade for {bill?.price ?? '$3.99/mo'}
 					</button>
 				{/if}
 			</div>

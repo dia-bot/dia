@@ -10,7 +10,9 @@ import (
 
 	"github.com/dia-bot/dia/internal/discord"
 	"github.com/dia-bot/dia/internal/event"
+	"github.com/dia-bot/dia/internal/features/leveling"
 	"github.com/dia-bot/dia/internal/features/moderation"
+	"github.com/dia-bot/dia/internal/features/roles"
 	"github.com/dia-bot/dia/internal/features/welcome"
 	"github.com/dia-bot/dia/internal/imaging"
 	"github.com/dia-bot/dia/pkg/discordgo"
@@ -342,12 +344,24 @@ func (s *Server) handlePutFeature(c *gin.Context) {
 	}
 	gid := guildID(c)
 	gidInt, _ := event.ParseID(gid)
-	// Welcome's button click actions are owned by the automation flow (saved via
-	// /welcome/actions), not the composer. Keep the stored actions authoritative
-	// so a composer save can't clobber actions wired meanwhile on the flow.
-	if key == welcome.FeatureKey && len(req.Config) > 0 {
+	// Welcome's, leveling's, auto-roles' and automod's canvas-owned programs
+	// (button click actions and/or the follow-up flows) are owned by the
+	// automation flow (saved via /welcome/actions, /leveling/actions,
+	// /autorole/actions or /automod/rules/:rid/actions), not the settings page.
+	// Keep the stored copy authoritative so a settings save can't clobber a flow
+	// wired meanwhile on the canvas.
+	if len(req.Config) > 0 && (key == welcome.FeatureKey || key == leveling.FeatureKey || key == roles.FeatureKey || key == moderation.AutomodKey) {
 		if existing, err := s.store.Features.Get(c.Request.Context(), gidInt, key); err == nil && len(existing.Config) > 0 {
-			req.Config = welcome.MergeStoredActions(req.Config, existing.Config)
+			switch key {
+			case welcome.FeatureKey:
+				req.Config = welcome.MergeStoredActions(req.Config, existing.Config)
+			case leveling.FeatureKey:
+				req.Config = leveling.MergeStoredActions(req.Config, existing.Config)
+			case roles.FeatureKey:
+				req.Config = roles.MergeStoredActions(req.Config, existing.Config)
+			case moderation.AutomodKey:
+				req.Config = moderation.MergeStoredRuleTails(req.Config, existing.Config)
+			}
 		}
 	}
 	if err := s.store.Features.Upsert(c.Request.Context(), gidInt, key, req.Enabled, req.Config); err != nil {

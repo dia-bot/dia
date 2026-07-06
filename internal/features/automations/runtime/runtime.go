@@ -354,6 +354,39 @@ func (p *Plugin) prepare(ctx context.Context, et event.Type, env *event.Envelope
 			"actions":      a.Actions,
 		}
 
+	case event.TypeLevelUp:
+		l, err := plugin.DecodeData[event.LevelUp](env)
+		if err != nil {
+			return nil, false
+		}
+		ec.user = l.User
+		ec.member = l.Member
+		ec.channelID = l.ChannelID
+		ec.eventMap = map[string]any{
+			"level":      l.Level,
+			"new_level":  l.NewLevel,
+			"xp":         l.XP,
+			"rank":       l.Rank,
+			"channel_id": l.ChannelID,
+		}
+
+	case event.TypeReactionRolePick:
+		r, err := plugin.DecodeData[event.ReactionRolePick](env)
+		if err != nil {
+			return nil, false
+		}
+		ec.user = r.Member.User
+		ec.member = &r.Member
+		ec.channelID = r.ChannelID
+		ec.eventMap = map[string]any{
+			"menu_id":    r.MenuID,
+			"menu_title": r.MenuTitle,
+			"mode":       r.Mode,
+			"values":     r.Values,
+			"added":      r.Added,
+			"removed":    r.Removed,
+		}
+
 	case event.TypeMessageCreate, event.TypeMessageUpdate:
 		m, err := decodeMessage(et, env)
 		if err != nil {

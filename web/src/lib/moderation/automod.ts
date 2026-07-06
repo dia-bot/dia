@@ -52,6 +52,9 @@ export interface AutomodRule {
 	trigger: RuleTrigger;
 	exempt: RuleExempt;
 	actions: RuleAction[];
+	// Follow-up flow wired on the automations canvas (the automod.rule.<id>
+	// builtin). Saved through its own endpoint; read-only on the automod page.
+	tail?: unknown[];
 }
 
 export interface EscalationTier {

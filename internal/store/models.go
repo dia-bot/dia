@@ -83,7 +83,10 @@ type Offender struct {
 	LastAt      time.Time
 }
 
-// ReactionRoleMenu is a self-assign role menu (buttons/select).
+// ReactionRoleMenu is a self-assign role menu (buttons/select). Tail is the
+// canvas-owned follow-up flow (a []cc.Step JSONB array) run after a member
+// picks roles; it is saved via SetTail only, so the dashboard's menu upsert
+// (Create/Update) can never clobber it.
 type ReactionRoleMenu struct {
 	ID        int64
 	GuildID   int64
@@ -92,6 +95,7 @@ type ReactionRoleMenu struct {
 	Title     string
 	Mode      string
 	Options   json.RawMessage
+	Tail      json.RawMessage
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }

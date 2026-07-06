@@ -9,6 +9,7 @@
 	import ModerationShell, { type ModTab } from '$lib/components/moderation/ModerationShell.svelte';
 	import ModSection from '$lib/components/moderation/ModSection.svelte';
 	import ModToggleRow from '$lib/components/moderation/ModToggleRow.svelte';
+	import TabSwipe from '$lib/components/page/TabSwipe.svelte';
 	import { ScrollText, SlidersHorizontal } from 'lucide-svelte';
 
 	const store = getContext<GuildStore>(GUILD_CTX);
@@ -102,64 +103,66 @@
 	onsave={save}
 	onreset={reset}
 >
-	{#if tab === 'events'}
-		<!-- ── Events catalogue ── -->
-		<ModSection label="Events" count={`${enabledCount} / ${LOG_CATEGORIES.length} on`}>
-			<div class="grid gap-x-8 sm:grid-cols-2">
-				{#each LOG_CATEGORIES as cat (cat.key)}
-					<ModToggleRow
-						title={cat.label}
-						desc={cat.hint}
-						bind:checked={cfg[boolKey(cat.key)]}
-						label={cat.label}
-						divided
-					/>
-				{/each}
-			</div>
-		</ModSection>
-	{:else if tab === 'routing'}
-		<!-- ── Destination ── -->
-		<ModSection label="Destination">
-			<div class="max-w-xl">
-				<Field
-					label="Default log channel"
-					hint="Every enabled event lands here unless you route it elsewhere under Advanced."
-				>
-					<ChannelSelect bind:value={cfg.channel} />
-				</Field>
-			</div>
-		</ModSection>
+	<TabSwipe key={tab} index={tabs.findIndex((t) => t.key === tab)}>
+		{#if tab === 'events'}
+			<!-- ── Events catalogue ── -->
+			<ModSection label="Events" count={`${enabledCount} / ${LOG_CATEGORIES.length} on`}>
+				<div class="grid gap-x-8 sm:grid-cols-2">
+					{#each LOG_CATEGORIES as cat (cat.key)}
+						<ModToggleRow
+							title={cat.label}
+							desc={cat.hint}
+							bind:checked={cfg[boolKey(cat.key)]}
+							label={cat.label}
+							divided
+						/>
+					{/each}
+				</div>
+			</ModSection>
+		{:else if tab === 'routing'}
+			<!-- ── Destination ── -->
+			<ModSection label="Destination">
+				<div class="max-w-xl">
+					<Field
+						label="Default log channel"
+						hint="Every enabled event lands here unless you route it elsewhere under Advanced."
+					>
+						<ChannelSelect bind:value={cfg.channel} />
+					</Field>
+				</div>
+			</ModSection>
 
-		<!-- ── Advanced routing: per-category overrides + ignored channels ── -->
-		<ModSection
-			label="Advanced routing"
-			desc="Split logs across channels and silence noisy ones."
-		>
-			<div class="max-w-xl">
-				<Field
-					label="Message log channel (override)"
-					hint="Routes deleted and edited message logs here instead of the default."
-				>
-					<ChannelSelect bind:value={cfg.message_channel} placeholder="Use default channel…" />
-				</Field>
-				<Field
-					label="Member log channel (override)"
-					hint="Routes joins, leaves, bans and role changes here instead of the default."
-				>
-					<ChannelSelect bind:value={cfg.member_channel} placeholder="Use default channel…" />
-				</Field>
-				<Field
-					label="Ignored channels"
-					hint="Activity in these channels is never logged (e.g. a busy spam or bot-command channel)."
-				>
-					<ChannelPicker
-						multiple
-						value={cfg.ignored_channels ?? []}
-						onChange={(v) => (cfg.ignored_channels = v as string[])}
-						placeholder="Add a channel…"
-					/>
-				</Field>
-			</div>
-		</ModSection>
-	{/if}
+			<!-- ── Advanced routing: per-category overrides + ignored channels ── -->
+			<ModSection
+				label="Advanced routing"
+				desc="Split logs across channels and silence noisy ones."
+			>
+				<div class="max-w-xl">
+					<Field
+						label="Message log channel (override)"
+						hint="Routes deleted and edited message logs here instead of the default."
+					>
+						<ChannelSelect bind:value={cfg.message_channel} placeholder="Use default channel…" />
+					</Field>
+					<Field
+						label="Member log channel (override)"
+						hint="Routes joins, leaves, bans and role changes here instead of the default."
+					>
+						<ChannelSelect bind:value={cfg.member_channel} placeholder="Use default channel…" />
+					</Field>
+					<Field
+						label="Ignored channels"
+						hint="Activity in these channels is never logged (e.g. a busy spam or bot-command channel)."
+					>
+						<ChannelPicker
+							multiple
+							value={cfg.ignored_channels ?? []}
+							onChange={(v) => (cfg.ignored_channels = v as string[])}
+							placeholder="Add a channel…"
+						/>
+					</Field>
+				</div>
+			</ModSection>
+		{/if}
+	</TabSwipe>
 </ModerationShell>

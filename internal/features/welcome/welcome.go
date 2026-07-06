@@ -17,9 +17,13 @@ import (
 	"github.com/dia-bot/dia/internal/imaging"
 	"github.com/dia-bot/dia/internal/interactions"
 	"github.com/dia-bot/dia/internal/plugin"
+	"github.com/dia-bot/dia/internal/templating"
 	"github.com/dia-bot/dia/internal/tmpllookup"
 	"github.com/dia-bot/dia/pkg/discordgo"
 )
+
+// pid parses a snowflake string to int64 (0 on failure), for KV owner ids.
+func pid(s string) int64 { id, _ := event.ParseID(s); return id }
 
 // Plugin implements the welcome feature.
 type Plugin struct {
@@ -114,7 +118,7 @@ func (p *Plugin) handleJoin(ctx context.Context, d plugin.Deps, env *event.Envel
 		return err
 	}
 	name, count, icon := guildInfo(ctx, d, gid, ma.MemberCount)
-	v := Vars{user: ma.Member.User, guildID: ma.GuildID, server: name, serverIcon: discord.GuildIconURL(ma.GuildID, icon, 256), count: count, lookup: tmpllookup.New(ctx, d.GuildState, ma.GuildID), fonts: guildFonts(ctx, d, gid)}
+	v := Vars{user: ma.Member.User, guildID: ma.GuildID, server: name, serverIcon: discord.GuildIconURL(ma.GuildID, icon, 256), count: count, lookup: tmpllookup.New(ctx, d.GuildState, ma.GuildID), fonts: guildFonts(ctx, d, gid), kv: d.Store.FeatureKV.CardLookup(gid, pid(ma.Member.User.ID))}
 	if err := sendConfigured(ctx, d, cfg.Welcome, v, tabWelcome); err != nil {
 		return err
 	}
@@ -134,7 +138,7 @@ func (p *Plugin) handleLeave(ctx context.Context, d plugin.Deps, env *event.Enve
 		return err
 	}
 	name, count, icon := guildInfo(ctx, d, gid, mr.MemberCount)
-	v := Vars{user: mr.User, guildID: mr.GuildID, server: name, serverIcon: discord.GuildIconURL(mr.GuildID, icon, 256), count: count, lookup: tmpllookup.New(ctx, d.GuildState, mr.GuildID), fonts: guildFonts(ctx, d, gid)}
+	v := Vars{user: mr.User, guildID: mr.GuildID, server: name, serverIcon: discord.GuildIconURL(mr.GuildID, icon, 256), count: count, lookup: tmpllookup.New(ctx, d.GuildState, mr.GuildID), fonts: guildFonts(ctx, d, gid), kv: d.Store.FeatureKV.CardLookup(gid, pid(mr.User.ID))}
 	if err := sendConfigured(ctx, d, cfg.Goodbye, v, tabGoodbye); err != nil {
 		return err
 	}
@@ -180,7 +184,7 @@ func handleTest(c *interactions.Context, d plugin.Deps) error {
 		return err
 	}
 	name, count, icon := guildInfo(c.Ctx, d, gid, 0)
-	v := Vars{user: c.User, guildID: c.GuildID, server: name, serverIcon: discord.GuildIconURL(c.GuildID, icon, 256), count: count, lookup: tmpllookup.New(c.Ctx, d.GuildState, c.GuildID), fonts: guildFonts(c.Ctx, d, gid)}
+	v := Vars{user: c.User, guildID: c.GuildID, server: name, serverIcon: discord.GuildIconURL(c.GuildID, icon, 256), count: count, lookup: tmpllookup.New(c.Ctx, d.GuildState, c.GuildID), fonts: guildFonts(c.Ctx, d, gid), kv: d.Store.FeatureKV.CardLookup(gid, pid(c.User.ID))}
 	if err := sendConfigured(c.Ctx, d, cfg.Welcome, v, tabWelcome); err != nil {
 		_, e := c.FollowupContent("Failed to send test welcome: " + err.Error())
 		return e
@@ -190,16 +194,30 @@ func handleTest(c *interactions.Context, d plugin.Deps) error {
 }
 
 // sendConfigured posts one configured message (optionally DMing the member),
-// then sending the channel message built by BuildMessage. tab ("welcome" /
-// "goodbye") namespaces the component custom_ids so clicks route to the right
-// per-button actions.
+// then sending the composed channel message. tab ("welcome" / "goodbye")
+// namespaces the component custom_ids so clicks route to the right per-button
+// actions.
 func sendConfigured(ctx context.Context, d plugin.Deps, mc MessageConfig, v Vars, tab string) error {
+	// Render the card once per event and share the PNG across surfaces: the
+	// channel message attaches it whenever the card is on, and the DM attaches
+	// the same image when DM.AttachCard is on (there is no separate DM card).
+	var card []byte
+	dmWantsCard := mc.DM.Enabled && mc.DM.AttachCard
+	if mc.Card.Enabled && d.Imaging != nil && (mc.ChannelID != "" || dmWantsCard) {
+		if png, err := renderCard(ctx, d.Imaging, mc.Card, v); err == nil {
+			card = png
+		}
+	}
 	if mc.DM.Enabled {
 		// Build first, then send only if the DM actually rendered to something:
 		// a config can pass the "has content/components/embeds" test yet render
 		// empty (a template that yields "", a disabled embed, a zero-option select),
 		// and an empty message is a 400 from Discord.
-		if dm := BuildDM(mc, v, tab, v.guildID); dm.Content != "" || len(dm.Embeds) > 0 || len(dm.Components) > 0 {
+		dm := BuildDM(mc, v, tab, v.guildID)
+		if dmWantsCard {
+			attachCard(dm, card)
+		}
+		if dm.Content != "" || len(dm.Embeds) > 0 || len(dm.Components) > 0 || len(dm.Files) > 0 {
 			if ch, err := d.Discord.Session().UserChannelCreate(v.user.ID); err == nil {
 				if _, err := d.Discord.SendMessage(ch.ID, dm); err != nil {
 					d.Log.Warn("welcome DM send failed", "tab", tab, "err", err)
@@ -210,28 +228,31 @@ func sendConfigured(ctx context.Context, d plugin.Deps, mc MessageConfig, v Vars
 	if mc.ChannelID == "" {
 		return nil
 	}
-	send, err := BuildMessage(ctx, d.Imaging, mc, v, tab)
-	if err != nil {
-		return err
-	}
-	_, err = d.Discord.SendMessage(mc.ChannelID, send)
+	_, err := d.Discord.SendMessage(mc.ChannelID, composeMessage(mc, v, tab, card))
 	return err
 }
 
 // BuildMessage composes the channel message (content + optional embed + optional
-// card image + components) for one MessageConfig. tab namespaces component
-// custom_ids ("welcome:<tab>:<suffix>"). Exported so the dashboard's Test
-// endpoint reuses the exact same rendering the bot uses at runtime.
+// card image + components) for one MessageConfig, rendering the card itself. tab
+// namespaces component custom_ids ("welcome:<tab>:<suffix>"). Exported so the
+// dashboard's Test endpoint reuses the exact same rendering the bot uses at
+// runtime.
 func BuildMessage(ctx context.Context, img *imaging.Renderer, mc MessageConfig, v Vars, tab string) (*discordgo.MessageSend, error) {
-	send := &discordgo.MessageSend{}
-
-	cardAttached := false
+	var card []byte
 	if mc.Card.Enabled && img != nil {
 		if png, err := renderCard(ctx, img, mc.Card, v); err == nil {
-			send.Files = []*discordgo.File{{Name: "card.png", ContentType: "image/png", Reader: bytes.NewReader(png)}}
-			cardAttached = true
+			card = png
 		}
 	}
+	return composeMessage(mc, v, tab, card), nil
+}
+
+// composeMessage assembles the channel message from pre-rendered card bytes
+// (nil = card off or its render failed): content + embeds (whose {card} image
+// token resolves against the attachment) + components.
+func composeMessage(mc MessageConfig, v Vars, tab string, card []byte) *discordgo.MessageSend {
+	send := &discordgo.MessageSend{}
+	cardAttached := attachCard(send, card)
 
 	if c := v.render(mc.Content); c != "" {
 		send.Content = c
@@ -249,14 +270,25 @@ func BuildMessage(ctx context.Context, img *imaging.Renderer, mc MessageConfig, 
 		// Render mentions as text without pinging anyone.
 		send.AllowedMentions = &discordgo.MessageAllowedMentions{Parse: []discordgo.AllowedMentionType{}}
 	}
-	return send, nil
+	return send
+}
+
+// attachCard attaches pre-rendered card bytes to a message as "card.png",
+// reporting whether it did; nil/empty bytes attach nothing.
+func attachCard(send *discordgo.MessageSend, png []byte) bool {
+	if len(png) == 0 {
+		return false
+	}
+	send.Files = append(send.Files, &discordgo.File{Name: "card.png", ContentType: "image/png", Reader: bytes.NewReader(png)})
+	return true
 }
 
 // BuildDM composes the private DM (content + optional embeds + optional
 // components) for one MessageConfig's DM. Its components route to this feature's
 // handler with the DM custom_id scheme (the guild id is embedded so a guild-less
-// DM click can still be resolved). The card image is intentionally not attached
-// to DMs.
+// DM click can still be resolved). The card image is not rendered here: when
+// DM.AttachCard is on, sendConfigured attaches the channel message's
+// pre-rendered card after building, so the PNG is rendered once per event.
 func BuildDM(mc MessageConfig, v Vars, tab, guildID string) *discordgo.MessageSend {
 	send := &discordgo.MessageSend{}
 	if c := v.render(mc.DM.Content); c != "" {
@@ -639,7 +671,7 @@ func renderCard(ctx context.Context, img *imaging.Renderer, card CardConfig, v V
 	// Card Studio layout is the primary path; the legacy preset model only
 	// renders for configs created before the studio existed.
 	if card.Layout != nil {
-		return img.RenderLayout(ctx, *card.Layout, v.Map(), v.fonts)
+		return img.RenderLayout(templating.WithCardKV(ctx, v.kv), *card.Layout, v.Map(), v.fonts)
 	}
 	return img.RenderWelcome(ctx, imaging.WelcomeInput{
 		Background:   card.Background,

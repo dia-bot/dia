@@ -11,12 +11,17 @@
    primary CTA — never a page or section background.
    ───────────────────────────────────────────────────────────── */
 @theme {
-	--font-sans: 'Hanken Grotesk', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+	/* Sitewide UI type is the native system stack (Apple San Francisco, Segoe UI,
+	   Roboto, …), so the app renders in each OS's own font. --font-mono stays
+	   JetBrains Mono for technical labels & code. */
+	--font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro Display',
+		'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
 	--font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', 'Menlo', monospace;
-	/* Big display headlines are set in the heavy sans now — no serif.
-	   --font-display is repointed to Hanken so any leftover
-	   `var(--font-display)` references keep rendering a clean grotesk. */
-	--font-display: 'Hanken Grotesk', ui-sans-serif, system-ui, -apple-system, sans-serif;
+	/* Big display headlines share the native system stack now (no serif, no
+	   grotesk). --font-display is repointed to the same stack so any leftover
+	   `var(--font-display)` references keep rendering the system font. */
+	--font-display: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro Display',
+		'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
 
 	/* ── Clean dark, near-monochrome canvas ── */
 	--color-bg: #0a0a0c; /* near-black page canvas, faint cool tint */
@@ -42,6 +47,12 @@
 	--color-danger: #ff6166; /* lifted for AA on dark */
 
 	--radius-card: 16px;
+
+	/* Shared control geometry, the one knob for every interactive control
+	   (buttons, text/number inputs, selects, pickers). 8px radius matches the
+	   selector triggers; 36px height keeps controls compact and aligned. */
+	--radius-control: 0.5rem; /* 8px, Tailwind rounded-lg */
+	--height-control: 2.25rem; /* 36px, Tailwind h-9 */
 
 	/* Page container width — the one knob for overall site width.
 	   Used via `max-w-page` on every section/nav/footer wrapper. */
@@ -183,9 +194,9 @@ body {
 		align-items: center;
 		justify-content: center;
 		gap: 0.5rem;
-		height: 2.5rem;
-		padding: 0 1rem;
-		border-radius: 12px;
+		height: var(--height-control);
+		padding: 0 0.875rem;
+		border-radius: var(--radius-control);
 		font-size: 0.875rem;
 		font-weight: 600;
 		white-space: nowrap;
@@ -199,6 +210,14 @@ body {
 	.btn:disabled {
 		opacity: 0.5;
 		cursor: not-allowed;
+	}
+	/* Small tier for modal footers and inline confirms: 32px, matching the
+	   compact scale dialogs already use (ConfirmDialog, Card Studio). Same
+	   radius, one size down. Pages and forms keep the full-size .btn. */
+	.btn-sm {
+		height: 2rem;
+		padding: 0 0.75rem;
+		font-size: 0.8125rem;
 	}
 	/* On dark, the neutral "primary" is a near-white pill with dark text. */
 	.btn-primary {
@@ -230,9 +249,9 @@ body {
 
 	.input {
 		width: 100%;
-		height: 2.5rem;
+		height: var(--height-control);
 		padding: 0 0.75rem;
-		border-radius: 12px;
+		border-radius: var(--radius-control);
 		border: 1px solid var(--color-line-strong);
 		background: var(--color-ink-2);
 		font-size: 0.875rem;

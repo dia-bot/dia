@@ -148,6 +148,8 @@ func (s *Server) Handler() http.Handler {
 	g.POST("/layout/resolve", s.handleResolveCard)
 	g.POST("/templating/preview", s.handleTemplatingPreview)
 	g.GET("/leveling/variables", s.handleLevelingVariables)
+	g.POST("/leveling/actions", s.handleLevelingActions)
+	g.POST("/autorole/actions", s.handleAutoroleActions)
 
 	g.GET("/leaderboard", s.handleLeaderboard)
 	g.GET("/level-rewards", s.handleListRewards)
@@ -183,6 +185,8 @@ func (s *Server) Handler() http.Handler {
 	g.GET("/reaction-roles", s.handleListMenus)
 	g.PUT("/reaction-roles", s.handleUpsertMenu)
 	g.DELETE("/reaction-roles/:mid", s.handleDeleteMenu)
+	g.POST("/reaction-roles/:mid/post", s.handlePostMenu)
+	g.POST("/reaction-roles/:mid/actions", s.handleMenuActions)
 
 	g.GET("/cases", s.handleListCases)
 	g.GET("/infractions", s.handleListInfractions)
@@ -191,6 +195,10 @@ func (s *Server) Handler() http.Handler {
 	g.GET("/automod-rules", s.handleListAutoModRules)
 	g.PUT("/automod-rules", s.handleUpsertAutoModRule)
 	g.DELETE("/automod-rules/:ruleId", s.handleDeleteAutoModRule)
+
+	// Dia automod rules (the "automod" feature config), not the Discord-native
+	// /automod-rules above: the per-rule canvas-owned follow-up flow.
+	g.POST("/automod/rules/:rid/actions", s.handleAutomodRuleActions)
 
 	return r
 }

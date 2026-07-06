@@ -23,7 +23,7 @@
 	const interactive = $derived(!!href || !!onclick);
 	const cls = $derived(
 		[
-			'group px-5 py-4 transition-colors',
+			'group px-5 py-3.5 transition-colors',
 			last ? '' : 'border-r border-line',
 			interactive ? 'hover:bg-ink-2/30 cursor-pointer' : '',
 			active ? 'bg-ink-2/40' : ''
@@ -43,7 +43,7 @@
 			<span class="ml-auto text-[10px] text-faint transition-colors group-hover:text-muted">→</span>
 		{/if}
 	</div>
-	<div class="mt-2 font-light leading-none text-ink tabular-nums" style="font-size: 26px;">
+	<div class="mt-2 font-light leading-none text-ink tabular-nums" style="font-size: 22px;">
 		{displayValue}
 	</div>
 	{#if sub}

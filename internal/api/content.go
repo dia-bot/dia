@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"regexp"
 	"sort"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/dia-bot/dia/internal/event"
 	cc "github.com/dia-bot/dia/internal/features/customcommands"
+	"github.com/dia-bot/dia/internal/features/roles"
 	"github.com/dia-bot/dia/internal/store"
 	"github.com/dia-bot/dia/pkg/discordgo"
 	"github.com/gin-gonic/gin"
@@ -724,6 +726,90 @@ func (s *Server) handleDeleteMenu(c *gin.Context) {
 	}
 	s.audit(c, gidInt, "reactionrole.delete", gin.H{"id": id})
 	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+type menuActionsReq struct {
+	Tail []cc.Step `json:"tail"` // the post-pick follow-up flow
+}
+
+// handleMenuActions persists the canvas-authored follow-up flow for one
+// reaction-role menu's built-in automation ("connect a new action after the
+// roles are applied"). Only the menu's tail is written (via SetTail); the
+// title, mode and options stay authoritative from the reaction-roles page,
+// whose upsert never carries the tail. The tail is validated as an event flow
+// (it runs on the bare pick event), so an unrunnable step is rejected here.
+// Mirrors handleAutoroleActions, but stores per menu row instead of in the
+// feature config.
+func (s *Server) handleMenuActions(c *gin.Context) {
+	menuID, err := strconv.ParseInt(c.Param("mid"), 10, 64)
+	if err != nil {
+		fail(c, http.StatusBadRequest, "invalid id")
+		return
+	}
+	var req menuActionsReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		fail(c, http.StatusBadRequest, "invalid body")
+		return
+	}
+	if res := cc.ValidateEventFlow(cc.Definition{Steps: req.Tail}, false); !res.OK {
+		fail(c, http.StatusBadRequest, "the follow-up flow has an invalid step: "+firstValidationError(res))
+		return
+	}
+	gidInt, _ := event.ParseID(guildID(c))
+	menu, err := s.store.ReactionRoles.Get(c.Request.Context(), menuID)
+	if err != nil || menu.GuildID != gidInt {
+		fail(c, http.StatusNotFound, "menu not found")
+		return
+	}
+	if req.Tail == nil {
+		req.Tail = []cc.Step{} // marshal to [], never null
+	}
+	raw, err := json.Marshal(req.Tail)
+	if err != nil {
+		fail(c, http.StatusInternalServerError, "could not encode flow")
+		return
+	}
+	if err := s.store.ReactionRoles.SetTail(c.Request.Context(), gidInt, menuID, raw); err != nil {
+		fail(c, http.StatusInternalServerError, "could not save")
+		return
+	}
+	s.audit(c, gidInt, "reactionrole.actions", gin.H{"id": menuID})
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+type postMenuReq struct {
+	ChannelID string `json:"channel_id"`
+}
+
+// handlePostMenu posts a saved reaction-role menu to a channel from the
+// dashboard, reusing the same build + send + record path as /reactionroles post.
+func (s *Server) handlePostMenu(c *gin.Context) {
+	menuID, err := strconv.ParseInt(c.Param("mid"), 10, 64)
+	if err != nil {
+		fail(c, http.StatusBadRequest, "invalid id")
+		return
+	}
+	var req postMenuReq
+	if err := c.ShouldBindJSON(&req); err != nil || req.ChannelID == "" {
+		fail(c, http.StatusBadRequest, "channel_id is required")
+		return
+	}
+	gid := guildID(c)
+	gidInt, _ := event.ParseID(gid)
+	msgID, err := roles.PostMenu(c.Request.Context(), s.discord, s.store, gid, req.ChannelID, menuID)
+	if err != nil {
+		switch {
+		case errors.Is(err, roles.ErrMenuWrongGuild), errors.Is(err, roles.ErrMenuNoOptions):
+			fail(c, http.StatusBadRequest, err.Error())
+		case errors.Is(err, store.ErrNotFound):
+			fail(c, http.StatusNotFound, "menu not found")
+		default:
+			fail(c, http.StatusBadGateway, "could not post menu: "+err.Error())
+		}
+		return
+	}
+	s.audit(c, gidInt, "reactionrole.post", gin.H{"menu": menuID, "channel": req.ChannelID})
+	c.JSON(http.StatusOK, gin.H{"ok": true, "message_id": msgID})
 }
 
 // ── Moderation ───────────────────────────────────────────────
