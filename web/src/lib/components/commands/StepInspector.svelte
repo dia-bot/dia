@@ -614,6 +614,15 @@
 				{#if spec.scope === 'member'}
 					<Field label="Owner id" hint="Defaults to the invoker"><ExprField {...exprBind('owner_id')} placeholder={'{{ .User.ID }}'} /></Field>
 				{/if}
+				<label class="flex items-center justify-between gap-3">
+					<span class="text-sm"
+						>Card-readable
+						<span class="text-[12px] text-faint"
+							>— readable by Card Studio formulas (getKV/getGuildKV)</span
+						></span
+					>
+					<Toggle checked={!!spec.shared} onchange={(v) => set('shared', v)} />
+				</label>
 				{#if step.kind === 'kv_set'}
 					<Field label="Value"><ExprField {...exprBind('value')} /></Field>
 					<Field label="Expires after" hint="Optional — like 1h or 7d. Blank = never expires.">

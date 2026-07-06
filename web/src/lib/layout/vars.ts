@@ -85,6 +85,16 @@ export const CARD_FUNCS: CardFunc[] = [
 		snippet: '{{ if gt .LevelNum 50 }}A{{ else }}B{{ end }}',
 		label: 'if / else',
 		hint: 'pick A or B by a condition (gt, lt, eq, ge, le)'
+	},
+	{
+		snippet: '{{ getKV "" }}',
+		label: 'getKV',
+		hint: "this member's stored value (set it with a shared kv_set in a command/automation)"
+	},
+	{
+		snippet: '{{ getGuildKV "" }}',
+		label: 'getGuildKV',
+		hint: 'a guild-wide stored value (from a shared kv_set)'
 	}
 ];
 
