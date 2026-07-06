@@ -30,6 +30,49 @@ function step(kind: string, spec: Record<string, unknown>): Step {
 
 export const AUTOMATION_TEMPLATES: AutomationTemplate[] = [
 	{
+		key: 'ticket-open-log',
+		name: 'Log opened tickets',
+		description: 'Post an embed to a staff channel whenever a support ticket is opened.',
+		trigger_type: 'ticket_opened',
+		trigger_config: {},
+		definition: () => ({
+			steps: [
+				step('send_message', {
+					channel: { src: '' },
+					embeds: [
+						{
+							title: 'Ticket #{{ .Event.number }} opened',
+							description: '{{ .User.Mention }} opened a **{{ .Event.category_label }}** ticket in {{ .Channel.Mention }}.',
+							color: '#57F287',
+							fields: [{ name: 'Subject', value: '{{ default "(none)" .Event.subject }}', inline: false }],
+							timestamp: true
+						}
+					]
+				})
+			]
+		})
+	},
+	{
+		key: 'ticket-low-rating-alert',
+		name: 'Alert on low ticket rating',
+		description: 'When a closed ticket is rated 2 stars or fewer, ping the team so they can follow up.',
+		trigger_type: 'ticket_rated',
+		trigger_config: {},
+		definition: () => ({
+			steps: [
+				{
+					...step('if', { cond: { src: '{{ le .Event.rating 2 }}' } }),
+					then: [
+						step('send_message', {
+							channel: { src: '' },
+							content: 'Ticket #{{ .Event.number }} was rated {{ .Event.rating }}/5. Consider following up with {{ .User.Mention }}.'
+						})
+					]
+				}
+			]
+		})
+	},
+	{
 		key: 'thank-booster',
 		name: 'Thank a booster',
 		description: 'When a member gets the Server Booster role, post a public thank-you.',
