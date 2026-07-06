@@ -114,6 +114,7 @@ export class EditorStore {
 	// close, and Shift+/ can open the shortcuts sheet from the canvas.
 	overlayOpen = $state(false); // the server-render overlay is up (LayoutEditor owns it)
 	shortcutsOpen = $state(false); // the keyboard-shortcuts sheet is up
+	formulaOpen = $state(false); // the Formulas modal is up (FormulaModal owns it); gates canvas keys
 
 	setFonts(fonts: { family: string; url: string }[], premium: boolean) {
 		this.customFonts = fonts;

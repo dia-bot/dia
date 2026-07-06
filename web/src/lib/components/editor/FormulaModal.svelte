@@ -36,14 +36,33 @@
 	const vars = $derived(cardFormulaVarsFor(context));
 
 	let selectedKey = $state('');
-	// Keep a valid selection: on open (or when the layer's property set changes),
-	// prefer the requested key, then the first bound property, then the first one.
+	// Keep a valid selection. On the moment of OPENING, honour an explicit
+	// initialKey (the chip you clicked) even though the modal instance persists
+	// across opens; otherwise only re-pick when the current selection is no longer
+	// a valid property for this layer. `wasOpen` is a plain (non-reactive) latch so
+	// this doesn't fight the user clicking a different property in the left list.
+	let wasOpen = false;
 	$effect(() => {
+		const justOpened = open && !wasOpen;
+		wasOpen = open;
 		if (!open) return;
-		if (fields.some((p) => p.key === selectedKey)) return;
 		const want = fields.find((p) => p.key === initialKey);
+		if (justOpened && want) {
+			selectedKey = want.key;
+			return;
+		}
+		if (fields.some((p) => p.key === selectedKey)) return;
 		const firstBound = fields.find((p) => layer?.bind && p.key in layer.bind);
 		selectedKey = (want ?? firstBound ?? fields[0])?.key ?? '';
+	});
+	// Mirror the dialog's open state onto the editor so Canvas suppresses its
+	// window key handlers while this modal is up (a keypress here must not mutate
+	// the layer underneath). Reset on unmount so the flag can't stick.
+	$effect(() => {
+		editor.formulaOpen = open;
+		return () => {
+			editor.formulaOpen = false;
+		};
 	});
 	const selected = $derived(fields.find((p) => p.key === selectedKey) ?? null);
 

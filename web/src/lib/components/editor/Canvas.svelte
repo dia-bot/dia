@@ -2489,6 +2489,7 @@
 	async function onPaste(e: ClipboardEvent) {
 		const t = e.target as HTMLElement | null;
 		if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+		if (editor.formulaOpen) return; // don't paste a layer while the Formulas modal is up
 		const dt = e.clipboardData;
 		if (!dt) return;
 		const item = Array.from(dt.items).find((it) => it.type.startsWith('image/'));
@@ -2541,6 +2542,10 @@
 	function onKeydown(e: KeyboardEvent) {
 		const t = e.target as HTMLElement | null;
 		if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+		// The Formulas modal is a separate dialog over the canvas; let it own every
+		// key (its own Escape closes it) so a keypress there can't delete/nudge/
+		// tool-switch the layer being edited underneath.
+		if (editor.formulaOpen) return;
 
 		// hold Space to pan the canvas
 		if (e.key === ' ') {
