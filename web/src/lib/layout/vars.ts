@@ -188,6 +188,16 @@ export function bindablePropsFor(type: LayerType): BindableProp[] {
 	return BINDABLE_PROPS.filter((p) => !p.types || p.types.includes(type));
 }
 
+// Formula-drivable CANVAS BACKGROUND properties (Background.bind on the Go side).
+// A bound colour/gradient forces the legacy solid/gradient path server-side.
+export const BG_BINDABLE_PROPS: BindableProp[] = [
+	{ key: 'color', label: 'Background color', kind: 'color', group: 'Appearance' },
+	{ key: 'from', label: 'Gradient from', kind: 'color', group: 'Appearance' },
+	{ key: 'to', label: 'Gradient to', kind: 'color', group: 'Appearance' },
+	{ key: 'angle', label: 'Gradient angle°', kind: 'number', group: 'Appearance' },
+	{ key: 'blur', label: 'Blur', kind: 'number', group: 'Appearance' }
+];
+
 // Editable TEST values for the live server-render preview: overriding a {token}
 // re-renders the card AS IF the member had that value, so formulas can be tested
 // (set Level 60 to watch a level-gated colour flip). `token` is the flat {brace}

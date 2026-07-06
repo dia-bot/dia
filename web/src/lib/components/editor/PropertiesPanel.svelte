@@ -40,6 +40,7 @@
 	import ImageInput from '$lib/components/editor/ImageInput.svelte';
 	import InspectorSection from '$lib/components/editor/InspectorSection.svelte';
 	import FormulaSection from '$lib/components/editor/FormulaSection.svelte';
+	import FormulaModal from '$lib/components/editor/FormulaModal.svelte';
 	import StrokeStyleSelect from '$lib/components/editor/StrokeStyleSelect.svelte';
 	import BrushSelect from '$lib/components/editor/BrushSelect.svelte';
 	import StrokeSidesSelect from '$lib/components/editor/StrokeSidesSelect.svelte';
@@ -103,7 +104,8 @@
 		Activity,
 		Waves,
 		ArrowLeft,
-		ArrowRight
+		ArrowRight,
+		FunctionSquare
 	} from 'lucide-svelte';
 	import { slide, fade } from 'svelte/transition';
 	import { cubicOut } from 'svelte/easing';
@@ -114,6 +116,12 @@
 	// (welcome hides the rank-only level/XP/progress tokens). Defaults to 'rank'.
 	let { context = 'rank' }: { context?: 'welcome' | 'rank' } = $props();
 	const varChips = $derived(cardVarsFor(context));
+
+	// Canvas-background formulas (opened from the no-selection Canvas inspector).
+	let canvasFormulaOpen = $state(false);
+	const bgFormulaCount = $derived(
+		Object.values(editor.layout.background.bind ?? {}).filter((v) => (v ?? '').trim() !== '').length
+	);
 
 	// The Typography <textarea>, so a variable chip can insert its token at the
 	// caret (keeping focus) instead of appending to the end.
@@ -1926,6 +1934,31 @@
 						{/if}
 					</div>
 				</InspectorSection>
+
+				<!-- Canvas formulas: drive the backdrop (colour / gradient / blur) from data. -->
+				<InspectorSection title="Formulas">
+					{#snippet action()}
+						{#if bgFormulaCount}
+							<span
+								class="rounded-full border border-line px-1.5 font-mono text-[10px] leading-[1.5] tabular-nums text-muted"
+							>
+								{bgFormulaCount}
+							</span>
+						{/if}
+					{/snippet}
+					<button
+						type="button"
+						onclick={() => (canvasFormulaOpen = true)}
+						class="inline-flex h-7 w-full items-center justify-center gap-1.5 rounded-md border border-line-strong text-xs font-medium text-ink transition-colors hover:bg-ink-2"
+					>
+						<FunctionSquare size={13} />
+						{bgFormulaCount ? 'Edit canvas formulas' : 'Add a canvas formula'}
+					</button>
+					<p class="mt-2 text-[11px] leading-relaxed text-faint">
+						Tint the background or drive its blur from member data (e.g. by level).
+					</p>
+				</InspectorSection>
+				<FormulaModal bind:open={canvasFormulaOpen} target="background" {context} />
 			{/if}
 		</div>
 	{/key}

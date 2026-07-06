@@ -163,3 +163,32 @@ func TestResolveBindingsEverything(t *testing.T) {
 		}
 	}
 }
+
+// TestResolveBackgroundBindings covers the canvas backdrop: a level-gated solid
+// colour (clearing the paint stack), a numeric blur, and the unbound fast path.
+func TestResolveBackgroundBindings(t *testing.T) {
+	r := &Renderer{tmpl: templating.New()}
+	data := templating.DataFromVars(map[string]string{"{level}": "80"})
+
+	bg := layout.Background{
+		Type: "gradient", From: "#000", To: "#111",
+		Fills: []layout.Paint{{Type: "solid", Color: "#222"}},
+		Bind: map[string]string{
+			"color": "{{ if gt .LevelNum 50 }}#101018{{ else }}#050507{{ end }}",
+			"blur":  "{{ .LevelNum }}",
+		},
+	}
+	got := r.resolveBackgroundBindings(context.Background(), bg, data)
+	if got.Color != "#101018" || got.Type != "solid" || got.Fills != nil {
+		t.Errorf("bound bg color: color=%q type=%q fills=%v, want #101018/solid/nil", got.Color, got.Type, got.Fills)
+	}
+	if got.Blur != 80 {
+		t.Errorf("bound bg blur = %v, want 80", got.Blur)
+	}
+
+	// No bindings → returned unchanged.
+	plain := layout.Background{Type: "solid", Color: "#abcabc"}
+	if out := r.resolveBackgroundBindings(context.Background(), plain, data); out.Color != "#abcabc" {
+		t.Errorf("unbound background should be untouched")
+	}
+}

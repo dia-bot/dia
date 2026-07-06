@@ -255,6 +255,10 @@ export interface Background {
 	// legacy type/color/from/to/image_url fields; the editor migrates a legacy
 	// background into `fills` on first edit.
 	fills?: Paint[];
+	// Formulas for the canvas backdrop (keys: color from to angle blur). A bound
+	// value overrides the corresponding field on the server render, like a layer's
+	// bind. Mirrored in schema.go (Background.Bind).
+	bind?: Record<string, string>;
 }
 
 // Metadata for a soft group, keyed by the group id used on layers. Membership and

@@ -186,6 +186,11 @@ type Background struct {
 	// survive a Go round-trip (feature configs embed Layout); nil ↔ null keeps
 	// legacy documents on the legacy fields.
 	Fills []Paint `json:"fills"`
+	// Bind maps a background property to a Go template formula, so the whole card
+	// backdrop can be data-driven (e.g. tint by level). Recognised keys: color from
+	// to (hex) angle blur (numbers). A bound colour/gradient forces the legacy
+	// solid/gradient path. Same fallback rules as Layer.Bind. Mirrored in schema.ts.
+	Bind map[string]string `json:"bind,omitempty"`
 }
 
 // LayoutGroup is metadata for a soft group, keyed by Layer.Group id. Name

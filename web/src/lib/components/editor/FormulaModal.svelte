@@ -14,6 +14,7 @@
 		cardFormulaVarsFor,
 		CARD_FUNCS,
 		BIND_GROUPS,
+		BG_BINDABLE_PROPS,
 		type BindableProp
 	} from '$lib/layout/vars';
 	import { X, FunctionSquare, Trash2 } from 'lucide-svelte';
@@ -21,13 +22,24 @@
 	let {
 		open = $bindable(false),
 		context = 'rank',
-		initialKey = ''
-	}: { open?: boolean; context?: 'welcome' | 'rank'; initialKey?: string } = $props();
+		initialKey = '',
+		target = 'layer'
+	}: {
+		open?: boolean;
+		context?: 'welcome' | 'rank';
+		initialKey?: string;
+		target?: 'layer' | 'background';
+	} = $props();
 
 	const editor = getContext<EditorStore>(EDITOR_CTX);
 
-	const layer = $derived(editor.selectedIds.length === 1 ? editor.selected : null);
-	const fields = $derived(layer ? bindablePropsFor(layer.type) : []);
+	const isBg = $derived(target === 'background');
+	// The bind object being edited: the canvas background's, or the single
+	// selected layer's. `subject` is truthy whenever there is something to edit.
+	const layer = $derived(isBg ? null : editor.selectedIds.length === 1 ? editor.selected : null);
+	const subject = $derived(isBg ? editor.layout.background : layer);
+	const bindObj = $derived(isBg ? editor.layout.background.bind : layer?.bind);
+	const fields = $derived(isBg ? BG_BINDABLE_PROPS : layer ? bindablePropsFor(layer.type) : []);
 	const groups = $derived(
 		BIND_GROUPS.map((name) => ({ name, items: fields.filter((p) => p.group === name) })).filter(
 			(g) => g.items.length
@@ -52,7 +64,7 @@
 			return;
 		}
 		if (fields.some((p) => p.key === selectedKey)) return;
-		const firstBound = fields.find((p) => layer?.bind && p.key in layer.bind);
+		const firstBound = fields.find((p) => bindObj && p.key in bindObj);
 		selectedKey = (want ?? firstBound ?? fields[0])?.key ?? '';
 	});
 	// Mirror the dialog's open state onto the editor so Canvas suppresses its
@@ -67,20 +79,29 @@
 	const selected = $derived(fields.find((p) => p.key === selectedKey) ?? null);
 
 	function isBound(key: string): boolean {
-		return !!(layer?.bind && key in layer.bind && (layer.bind[key] ?? '').trim() !== '');
+		return !!(bindObj && key in bindObj && (bindObj[key] ?? '').trim() !== '');
+	}
+	// Mutate a bind map in place: set the key, or delete it (nulling the map when
+	// empty) for an empty formula. Shared by the layer and background targets.
+	function writeBind(holder: { bind?: Record<string, string> }, key: string, val: string) {
+		if (val.trim() === '') {
+			if (holder.bind) {
+				delete holder.bind[key];
+				if (Object.keys(holder.bind).length === 0) holder.bind = undefined;
+			}
+		} else {
+			if (!holder.bind) holder.bind = {};
+			holder.bind[key] = val;
+		}
 	}
 	function setFormula(key: string, val: string) {
-		editor.setAll((l) => {
-			if (val.trim() === '') {
-				if (l.bind) {
-					delete l.bind[key];
-					if (Object.keys(l.bind).length === 0) l.bind = undefined;
-				}
-			} else {
-				if (!l.bind) l.bind = {};
-				l.bind[key] = val;
-			}
-		});
+		if (isBg) {
+			// Same reactive layout mutation as setAll (which just mutates in place),
+			// so the studio's dirty/undo tracking picks it up.
+			writeBind(editor.layout.background, key, val);
+		} else {
+			editor.setAll((l) => writeBind(l, key, val));
+		}
 	}
 
 	let ta = $state<HTMLTextAreaElement | null>(null);
@@ -127,7 +148,9 @@
 				<FunctionSquare size={11} />
 			</div>
 			<span class="text-[12.5px] font-medium text-ink">Formulas</span>
-			{#if layer}
+			{#if isBg}
+				<span class="truncate text-[11.5px] text-muted">· canvas background</span>
+			{:else if layer}
 				<span class="truncate text-[11.5px] text-muted">· {layer.name || layer.type}</span>
 			{/if}
 			<button
@@ -167,7 +190,7 @@
 
 			<!-- Right: the selected property's editor. -->
 			<div class="min-w-0 flex-1 overflow-y-auto">
-				{#if selected && layer}
+				{#if selected && subject}
 					<div class="space-y-4 p-5">
 						<div class="flex items-center gap-2">
 							<h3 class="text-[13px] font-semibold text-ink">{selected.label}</h3>
@@ -194,7 +217,7 @@
 							bind:this={ta}
 							rows="6"
 							spellcheck="false"
-							value={layer.bind?.[selected.key] ?? ''}
+							value={bindObj?.[selected.key] ?? ''}
 							placeholder={'{{ round (fmul .ProgressFrac 618) }}'}
 							oninput={(e) => setFormula(selected.key, e.currentTarget.value)}
 							class="w-full resize-y rounded-lg border border-line bg-ink-2 px-3 py-2.5 font-mono text-[12px] leading-relaxed text-ink outline-none transition-all placeholder:text-faint/70 hover:border-faint focus:border-faint focus:ring-2 focus:ring-line-strong"

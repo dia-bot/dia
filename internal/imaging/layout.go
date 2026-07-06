@@ -286,6 +286,62 @@ func (r *Renderer) resolveLayerBindings(ctx context.Context, layers []layout.Lay
 	return out
 }
 
+// resolveBackgroundBindings evaluates the canvas background's `bind` formulas
+// (color / from / to / angle / blur) against the card data, so the whole card
+// backdrop can be data-driven (e.g. tint by level). Like the layer resolver, a
+// bad formula keeps the static value. A bound colour/gradient forces the legacy
+// solid/gradient path (clears the paint stack) so it actually takes effect.
+func (r *Renderer) resolveBackgroundBindings(ctx context.Context, bg layout.Background, data map[string]any) layout.Background {
+	if len(bg.Bind) == 0 {
+		return bg
+	}
+	eval := func(key string) (string, bool) {
+		expr, has := bg.Bind[key]
+		if !has || strings.TrimSpace(expr) == "" {
+			return "", false
+		}
+		s, err := r.tmpl.RenderCardStrict(ctx, expr, data)
+		if err != nil || strings.TrimSpace(s) == "<no value>" {
+			return "", false
+		}
+		return s, true
+	}
+	num := func(key string) (float64, bool) {
+		s, ok := eval(key)
+		if !ok {
+			return 0, false
+		}
+		s = strings.TrimSuffix(strings.ReplaceAll(strings.TrimSpace(s), ",", ""), "%")
+		v, err := strconv.ParseFloat(strings.TrimSpace(s), 64)
+		if err != nil {
+			return 0, false
+		}
+		return v, true
+	}
+	if s, ok := eval("color"); ok {
+		if s = strings.TrimSpace(s); s != "" {
+			bg.Color, bg.Type, bg.Fills = s, "solid", nil
+		}
+	}
+	if s, ok := eval("from"); ok {
+		if s = strings.TrimSpace(s); s != "" {
+			bg.From, bg.Type, bg.Fills = s, "gradient", nil
+		}
+	}
+	if s, ok := eval("to"); ok {
+		if s = strings.TrimSpace(s); s != "" {
+			bg.To, bg.Type, bg.Fills = s, "gradient", nil
+		}
+	}
+	if v, ok := num("angle"); ok {
+		bg.Angle = v
+	}
+	if v, ok := num("blur"); ok {
+		bg.Blur = v
+	}
+	return bg
+}
+
 // truthyBind reads a bound `hidden` formula's output as a boolean. Empty, "0",
 // "false"/"no"/"off", "null" and Go's "<no value>" are false; anything else true.
 func truthyBind(s string) bool {
@@ -326,6 +382,11 @@ func (r *Renderer) RenderLayout(ctx context.Context, in layout.Layout, vars map[
 	w, h := layout.ClampSize(in.Width, in.Height)
 
 	dc := gg.NewContext(w, h)
+
+	// Card data root (pure Go template): built up-front so BOTH the background and
+	// the layers resolve their `bind` formulas against it.
+	data := templating.DataFromVars(vars)
+	in.Background = r.resolveBackgroundBindings(ctx, in.Background, data)
 
 	fallbackBG := parseHex(BrandInk, color.Black)
 	imgFallback := parseHex("#0b0b0e", color.Black) // matches the DOM's image-bg base
@@ -404,9 +465,6 @@ func (r *Renderer) RenderLayout(ctx context.Context, in layout.Layout, vars map[
 			}
 		}
 	}
-
-	// Card data root (pure Go template): {{.User.Username}}, {{.User.Avatar}}, …
-	data := templating.DataFromVars(vars)
 
 	// Resolve per-layer property formulas (l.Bind) into concrete field values, so
 	// the rest of the renderer transparently draws data-driven geometry / colours.
