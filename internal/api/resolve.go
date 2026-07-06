@@ -42,7 +42,7 @@ func (s *Server) handleResolveCard(c *gin.Context) {
 	// (the sample user stands in for the member).
 	if gid, ok := event.ParseID(guildID(c)); ok {
 		memberID, _ := event.ParseID(sv["{user.id}"])
-		ctx = templating.WithCardKV(ctx, s.store.FeatureKV.CardLookup(ctx, gid, memberID))
+		ctx = templating.WithCardKV(ctx, s.store.FeatureKV.CardLookup(gid, memberID))
 	}
 	out := make([]string, len(req.Strings))
 	for i, str := range req.Strings {

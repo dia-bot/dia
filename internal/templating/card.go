@@ -11,8 +11,10 @@ import (
 
 // KVFunc reads a stored value for the card being rendered. scope is "member"
 // (the member the card is about) or "guild" (guild-wide). ok is false when the
-// key is absent, so getKV falls back to "".
-type KVFunc func(scope, key string) (string, bool)
+// key is absent, so getKV falls back to "". It takes the render-scoped ctx so a
+// slow lookup is cancelled by the render timeout (not left dangling on a pooled
+// connection), and enforces its own per-render read budget.
+type KVFunc func(ctx context.Context, scope, key string) (string, bool)
 
 type cardKVKey struct{}
 
@@ -55,6 +57,11 @@ func (e *Engine) renderCard(ctx context.Context, src string, data map[string]any
 	if src == "" {
 		return "", nil
 	}
+	// The render deadline: created up-front so the KV closures below use it for
+	// their DB reads (a slow getKV is cancelled with the render, not left blocking
+	// a pooled connection past the timeout).
+	cctx, cancel := context.WithTimeout(ctx, e.timeout)
+	defer cancel()
 	fm := make(template.FuncMap, len(baseFuncs))
 	for k, fn := range baseFuncs {
 		fm[k] = fn
@@ -104,14 +111,14 @@ func (e *Engine) renderCard(ctx context.Context, src string, data map[string]any
 		if kv == nil {
 			return ""
 		}
-		v, _ := kv("member", key)
+		v, _ := kv(cctx, "member", key)
 		return v
 	}
 	fm["getGuildKV"] = func(key string) string {
 		if kv == nil {
 			return ""
 		}
-		v, _ := kv("guild", key)
+		v, _ := kv(cctx, "guild", key)
 		return v
 	}
 	tmpl, err := template.New("card").Funcs(fm).Option("missingkey=" + missingkey).Parse(src)
@@ -119,8 +126,6 @@ func (e *Engine) renderCard(ctx context.Context, src string, data map[string]any
 		return "", fmt.Errorf("card template parse error: %w", err)
 	}
 
-	cctx, cancel := context.WithTimeout(ctx, e.timeout)
-	defer cancel()
 	buf := &limitedBuffer{max: e.maxOutput}
 	done := make(chan error, 1)
 	go func() { done <- tmpl.Execute(buf, data) }()

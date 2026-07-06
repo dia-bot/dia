@@ -44,7 +44,7 @@ func (s *Server) handleLayoutPreview(c *gin.Context) {
 		// So getKV / getGuildKV resolve real stored values in the studio preview
 		// (the sample user stands in for the member).
 		memberID, _ := event.ParseID(vars["{user.id}"])
-		ctx = templating.WithCardKV(ctx, s.store.FeatureKV.CardLookup(ctx, gid, memberID))
+		ctx = templating.WithCardKV(ctx, s.store.FeatureKV.CardLookup(gid, memberID))
 	}
 
 	png, err := s.imaging.RenderLayout(ctx, req.Layout, vars, fonts)

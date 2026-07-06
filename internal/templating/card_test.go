@@ -51,7 +51,7 @@ func TestRenderCardEmpty(t *testing.T) {
 func TestRenderCardKV(t *testing.T) {
 	e := New()
 	data := DataFromVars(map[string]string{})
-	kv := func(scope, key string) (string, bool) {
+	kv := func(_ context.Context, scope, key string) (string, bool) {
 		switch scope + "/" + key {
 		case "member/coins":
 			return "150", true

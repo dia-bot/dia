@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -309,22 +310,31 @@ func (r *FeatureKVRepo) Delete(ctx context.Context, e FeatureKVEntry) error {
 // getGuildKV). scope "member" reads the member's own value; anything else reads
 // the guild-wide value. A missing key / read error / null value → ("", false).
 // This is the same namespace a custom-command kv_set writes when marked shared.
-func (r *FeatureKVRepo) CardLookup(ctx context.Context, guildID, memberID int64) func(scope, key string) (string, bool) {
+func (r *FeatureKVRepo) CardLookup(guildID, memberID int64) func(ctx context.Context, scope, key string) (string, bool) {
 	// Memoize within a single card render: a formula may reference the same key on
-	// many layers, and each getKV would otherwise be its own DB round-trip.
+	// many layers, and each getKV would otherwise be its own DB round-trip. A
+	// distinct-key budget caps how many real queries one render can issue, so a
+	// pathological formula (a loop of unique keys) can't saturate the pool.
 	type res struct {
 		v  string
 		ok bool
 	}
+	const maxDistinct = 64
 	cache := map[string]res{}
+	distinct := 0
 	var mu sync.Mutex
-	return func(scope, key string) (string, bool) {
+	return func(ctx context.Context, scope, key string) (string, bool) {
 		ck := scope + "\x00" + key
 		mu.Lock()
 		if r0, hit := cache[ck]; hit {
 			mu.Unlock()
 			return r0.v, r0.ok
 		}
+		if distinct >= maxDistinct {
+			mu.Unlock()
+			return "", false // over budget: stop hitting the DB
+		}
+		distinct++
 		mu.Unlock()
 
 		e := FeatureKVEntry{GuildID: guildID, CommandID: "", Scope: "guild", Key: key}
@@ -333,8 +343,12 @@ func (r *FeatureKVRepo) CardLookup(ctx context.Context, guildID, memberID int64)
 		}
 		v, ok := "", false
 		if got, err := r.Get(ctx, e); err == nil && len(got.Value) > 0 {
+			// UseNumber so a stored 1_000_000 prints "1000000", not "1e+06", and big
+			// ints keep their digits (fmt.Sprint on a decoded float64 would mangle both).
+			dec := json.NewDecoder(bytes.NewReader(got.Value))
+			dec.UseNumber()
 			var jv any
-			if json.Unmarshal(got.Value, &jv) != nil {
+			if dec.Decode(&jv) != nil {
 				v, ok = string(got.Value), true // non-JSON payload: raw bytes
 			} else if jv != nil {
 				v, ok = fmt.Sprint(jv), true

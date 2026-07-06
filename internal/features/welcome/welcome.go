@@ -118,7 +118,7 @@ func (p *Plugin) handleJoin(ctx context.Context, d plugin.Deps, env *event.Envel
 		return err
 	}
 	name, count, icon := guildInfo(ctx, d, gid, ma.MemberCount)
-	v := Vars{user: ma.Member.User, guildID: ma.GuildID, server: name, serverIcon: discord.GuildIconURL(ma.GuildID, icon, 256), count: count, lookup: tmpllookup.New(ctx, d.GuildState, ma.GuildID), fonts: guildFonts(ctx, d, gid), kv: d.Store.FeatureKV.CardLookup(ctx, gid, pid(ma.Member.User.ID))}
+	v := Vars{user: ma.Member.User, guildID: ma.GuildID, server: name, serverIcon: discord.GuildIconURL(ma.GuildID, icon, 256), count: count, lookup: tmpllookup.New(ctx, d.GuildState, ma.GuildID), fonts: guildFonts(ctx, d, gid), kv: d.Store.FeatureKV.CardLookup(gid, pid(ma.Member.User.ID))}
 	if err := sendConfigured(ctx, d, cfg.Welcome, v, tabWelcome); err != nil {
 		return err
 	}
@@ -138,7 +138,7 @@ func (p *Plugin) handleLeave(ctx context.Context, d plugin.Deps, env *event.Enve
 		return err
 	}
 	name, count, icon := guildInfo(ctx, d, gid, mr.MemberCount)
-	v := Vars{user: mr.User, guildID: mr.GuildID, server: name, serverIcon: discord.GuildIconURL(mr.GuildID, icon, 256), count: count, lookup: tmpllookup.New(ctx, d.GuildState, mr.GuildID), fonts: guildFonts(ctx, d, gid), kv: d.Store.FeatureKV.CardLookup(ctx, gid, pid(mr.User.ID))}
+	v := Vars{user: mr.User, guildID: mr.GuildID, server: name, serverIcon: discord.GuildIconURL(mr.GuildID, icon, 256), count: count, lookup: tmpllookup.New(ctx, d.GuildState, mr.GuildID), fonts: guildFonts(ctx, d, gid), kv: d.Store.FeatureKV.CardLookup(gid, pid(mr.User.ID))}
 	if err := sendConfigured(ctx, d, cfg.Goodbye, v, tabGoodbye); err != nil {
 		return err
 	}
@@ -184,7 +184,7 @@ func handleTest(c *interactions.Context, d plugin.Deps) error {
 		return err
 	}
 	name, count, icon := guildInfo(c.Ctx, d, gid, 0)
-	v := Vars{user: c.User, guildID: c.GuildID, server: name, serverIcon: discord.GuildIconURL(c.GuildID, icon, 256), count: count, lookup: tmpllookup.New(c.Ctx, d.GuildState, c.GuildID), fonts: guildFonts(c.Ctx, d, gid), kv: d.Store.FeatureKV.CardLookup(c.Ctx, gid, pid(c.User.ID))}
+	v := Vars{user: c.User, guildID: c.GuildID, server: name, serverIcon: discord.GuildIconURL(c.GuildID, icon, 256), count: count, lookup: tmpllookup.New(c.Ctx, d.GuildState, c.GuildID), fonts: guildFonts(c.Ctx, d, gid), kv: d.Store.FeatureKV.CardLookup(gid, pid(c.User.ID))}
 	if err := sendConfigured(c.Ctx, d, cfg.Welcome, v, tabWelcome); err != nil {
 		_, e := c.FollowupContent("Failed to send test welcome: " + err.Error())
 		return e
