@@ -124,3 +124,42 @@ func TestResolveBindingsExpanded(t *testing.T) {
 		t.Errorf("stroke_align = %q, want outside", out[0].StrokeAlign)
 	}
 }
+
+// TestResolveBindingsEverything covers the remaining "everything bindable" keys:
+// a bool (clip), an enum (end_cap), per-corner radii, and a scatter number.
+func TestResolveBindingsEverything(t *testing.T) {
+	r := &Renderer{tmpl: templating.New()}
+	data := templating.DataFromVars(map[string]string{"{level}": "80"})
+
+	in := []layout.Layer{{
+		ID: "p", Type: "path", Radius: 8,
+		Bind: map[string]string{
+			"clip":         "{{ if gt .LevelNum 50 }}true{{ else }}false{{ end }}",
+			"end_cap":      "arrow",
+			"scatter_size": "{{ .LevelNum }}",
+			"corner_tl":    "20",
+			"corner_br":    "4",
+		},
+	}}
+	out := r.resolveLayerBindings(context.Background(), in, data)
+
+	if !out[0].Clip {
+		t.Errorf("clip bind (level 80 > 50) should be true")
+	}
+	if out[0].EndCap != "arrow" {
+		t.Errorf("end_cap = %q, want arrow", out[0].EndCap)
+	}
+	if out[0].ScatterSize != 80 {
+		t.Errorf("scatter_size = %v, want 80", out[0].ScatterSize)
+	}
+	// corner_tl=20, corner_br=4 set; the untouched tr/bl fall back to Radius (8).
+	want := []float64{20, 8, 4, 8}
+	if len(out[0].Corners) != 4 {
+		t.Fatalf("corners len = %d, want 4", len(out[0].Corners))
+	}
+	for i, w := range want {
+		if out[0].Corners[i] != w {
+			t.Errorf("corners[%d] = %v, want %v (full=%v)", i, out[0].Corners[i], w, out[0].Corners)
+		}
+	}
+}

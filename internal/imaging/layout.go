@@ -165,6 +165,51 @@ func (r *Renderer) resolveLayerBindings(ctx context.Context, layers []layout.Lay
 		if v, ok := num("miter_angle"); ok {
 			l.MiterAngle = v
 		}
+		if v, ok := num("scatter_gap"); ok {
+			l.ScatterGap = v
+		}
+		if v, ok := num("scatter_wiggle"); ok {
+			l.ScatterWiggle = v
+		}
+		if v, ok := num("scatter_size"); ok {
+			l.ScatterSize = v
+		}
+		if v, ok := num("scatter_rotation"); ok {
+			l.ScatterRotation = v
+		}
+		if v, ok := num("scatter_angular"); ok {
+			l.ScatterAngular = v
+		}
+		if v, ok := num("dynamic_frequency"); ok {
+			l.DynamicFrequency = v
+		}
+		if v, ok := num("dynamic_wiggle"); ok {
+			l.DynamicWiggle = v
+		}
+		if v, ok := num("dynamic_smoothen"); ok {
+			l.DynamicSmoothen = v
+		}
+		// Per-corner radii (rect/image): corner_tl/tr/br/bl override Corners[0..3].
+		_, c1 := l.Bind["corner_tl"]
+		_, c2 := l.Bind["corner_tr"]
+		_, c3 := l.Bind["corner_br"]
+		_, c4 := l.Bind["corner_bl"]
+		if c1 || c2 || c3 || c4 {
+			c := make([]float64, 4)
+			if len(l.Corners) == 4 {
+				copy(c, l.Corners)
+			} else {
+				for i := range c {
+					c[i] = l.Radius
+				}
+			}
+			for i, k := range [4]string{"corner_tl", "corner_tr", "corner_br", "corner_bl"} {
+				if v, ok := num(k); ok {
+					c[i] = v
+				}
+			}
+			l.Corners = c
+		}
 		if v, ok := num("opacity"); ok {
 			if v < 0 {
 				v = 0
@@ -200,6 +245,18 @@ func (r *Renderer) resolveLayerBindings(ctx context.Context, layers []layout.Lay
 		if s, ok := eval("hidden"); ok {
 			l.Hidden = truthyBind(s)
 		}
+		if s, ok := eval("progress"); ok {
+			l.Progress = truthyBind(s)
+		}
+		if s, ok := eval("closed"); ok {
+			l.Closed = truthyBind(s)
+		}
+		if s, ok := eval("clip"); ok {
+			l.Clip = truthyBind(s)
+		}
+		if s, ok := eval("clip_invert"); ok {
+			l.ClipInvert = truthyBind(s)
+		}
 		// Enum / string fields: the formula must output a valid value; the renderer
 		// falls back to its own default for anything unknown, so a bad value is safe.
 		setStr := func(key string, dst *string) {
@@ -220,6 +277,11 @@ func (r *Renderer) resolveLayerBindings(ctx context.Context, layers []layout.Lay
 		setStr("stroke_cap", &l.StrokeCap)
 		setStr("stroke_join", &l.StrokeJoin)
 		setStr("width_profile", &l.WidthProfile)
+		setStr("start_cap", &l.StartCap)
+		setStr("end_cap", &l.EndCap)
+		setStr("brush_name", &l.BrushName)
+		setStr("brush_direction", &l.BrushDirection)
+		setStr("clip_mode", &l.ClipMode)
 	}
 	return out
 }

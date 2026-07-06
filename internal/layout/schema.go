@@ -31,10 +31,15 @@ type Layer struct {
 	// untouched, so legacy documents and bad formulas never break a render; the
 	// static field stays the editor's drag value and the fallback. Recognised keys:
 	//   numbers: x y w h opacity rotation font_size font_weight radius stroke_width
-	//            letter_spacing line_height dash gap miter_angle
-	//   colours: color fill stroke_color        bool: hidden
+	//            letter_spacing line_height dash gap miter_angle corner_tl corner_tr
+	//            corner_br corner_bl scatter_gap scatter_wiggle scatter_size
+	//            scatter_rotation scatter_angular dynamic_frequency dynamic_wiggle
+	//            dynamic_smoothen
+	//   colours: color fill stroke_color
+	//   bools:   hidden progress closed clip clip_invert
 	//   enums:   align valign text_case text_decoration font_family fit stroke_align
-	//            stroke_style stroke_cap stroke_join width_profile
+	//            stroke_style stroke_cap stroke_join width_profile start_cap end_cap
+	//            brush_name brush_direction clip_mode
 	// (enum formulas must output a valid value; the renderer defaults on unknown.)
 	// Mirrored in schema.ts (BINDABLE_PROPS in web/src/lib/layout/vars.ts).
 	Bind map[string]string `json:"bind,omitempty"`

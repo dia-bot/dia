@@ -94,7 +94,14 @@ export const CARD_FUNCS: CardFunc[] = [
 // `values` lists the valid outputs for an enum (shown as hints). Keep in lockstep
 // with the resolver keys in internal/imaging/layout.go resolveLayerBindings.
 export type BindKind = 'number' | 'color' | 'bool' | 'enum' | 'string';
-export type BindGroup = 'Size & position' | 'Appearance' | 'Text' | 'Stroke';
+export type BindGroup =
+	| 'Size & position'
+	| 'Appearance'
+	| 'Text'
+	| 'Stroke'
+	| 'Brush'
+	| 'Mask'
+	| 'Path';
 export interface BindableProp {
 	key: string;
 	label: string;
@@ -116,7 +123,12 @@ export const BINDABLE_PROPS: BindableProp[] = [
 	{ key: 'hidden', label: 'Hidden', kind: 'bool', group: 'Appearance' },
 	{ key: 'fill', label: 'Fill color', kind: 'color', group: 'Appearance', types: VECTOR },
 	{ key: 'radius', label: 'Corner radius', kind: 'number', group: 'Appearance', types: ['rect', 'image'] },
+	{ key: 'corner_tl', label: 'Corner ↖', kind: 'number', group: 'Appearance', types: ['rect', 'image'] },
+	{ key: 'corner_tr', label: 'Corner ↗', kind: 'number', group: 'Appearance', types: ['rect', 'image'] },
+	{ key: 'corner_br', label: 'Corner ↘', kind: 'number', group: 'Appearance', types: ['rect', 'image'] },
+	{ key: 'corner_bl', label: 'Corner ↙', kind: 'number', group: 'Appearance', types: ['rect', 'image'] },
 	{ key: 'fit', label: 'Image fit', kind: 'enum', group: 'Appearance', types: ['image'], values: ['cover', 'contain'] },
+	{ key: 'progress', label: 'XP progress bar', kind: 'bool', group: 'Appearance', types: ['rect'] },
 	// Text.
 	{ key: 'color', label: 'Text color', kind: 'color', group: 'Text', types: ['text'] },
 	{ key: 'font_size', label: 'Font size', kind: 'number', group: 'Text', types: ['text'] },
@@ -136,11 +148,40 @@ export const BINDABLE_PROPS: BindableProp[] = [
 	{ key: 'dash', label: 'Dash length', kind: 'number', group: 'Stroke', types: VECTOR },
 	{ key: 'gap', label: 'Dash gap', kind: 'number', group: 'Stroke', types: VECTOR },
 	{ key: 'stroke_cap', label: 'Stroke cap', kind: 'enum', group: 'Stroke', types: VECTOR, values: ['butt', 'round', 'square'] },
-	{ key: 'stroke_join', label: 'Stroke join', kind: 'enum', group: 'Stroke', types: VECTOR, values: ['miter', 'bevel', 'round'] }
+	{ key: 'stroke_join', label: 'Stroke join', kind: 'enum', group: 'Stroke', types: VECTOR, values: ['miter', 'bevel', 'round'] },
+	{ key: 'miter_angle', label: 'Miter angle°', kind: 'number', group: 'Stroke', types: VECTOR },
+	{ key: 'start_cap', label: 'Start arrow', kind: 'enum', group: 'Stroke', types: ['path'], values: ['none', 'line', 'arrow', 'triangle', 'circle', 'diamond'] },
+	{ key: 'end_cap', label: 'End arrow', kind: 'enum', group: 'Stroke', types: ['path'], values: ['none', 'line', 'arrow', 'triangle', 'circle', 'diamond'] },
+	// Brush — path-only advanced stroke.
+	{ key: 'brush_name', label: 'Brush', kind: 'string', group: 'Brush', types: ['path'] },
+	{ key: 'brush_direction', label: 'Brush direction', kind: 'enum', group: 'Brush', types: ['path'], values: ['forward', 'backward'] },
+	{ key: 'width_profile', label: 'Width profile', kind: 'enum', group: 'Brush', types: ['path'], values: ['uniform', 'taper_start', 'taper_end', 'taper', 'lens'] },
+	{ key: 'scatter_gap', label: 'Scatter gap', kind: 'number', group: 'Brush', types: ['path'] },
+	{ key: 'scatter_wiggle', label: 'Scatter wiggle %', kind: 'number', group: 'Brush', types: ['path'] },
+	{ key: 'scatter_size', label: 'Scatter size %', kind: 'number', group: 'Brush', types: ['path'] },
+	{ key: 'scatter_rotation', label: 'Scatter rotation°', kind: 'number', group: 'Brush', types: ['path'] },
+	{ key: 'scatter_angular', label: 'Scatter jitter°', kind: 'number', group: 'Brush', types: ['path'] },
+	{ key: 'dynamic_frequency', label: 'Wobble frequency', kind: 'number', group: 'Brush', types: ['path'] },
+	{ key: 'dynamic_wiggle', label: 'Wobble amount %', kind: 'number', group: 'Brush', types: ['path'] },
+	{ key: 'dynamic_smoothen', label: 'Wobble smoothing', kind: 'number', group: 'Brush', types: ['path'] },
+	// Mask — any layer can act as a stencil.
+	{ key: 'clip', label: 'Use as mask', kind: 'bool', group: 'Mask' },
+	{ key: 'clip_mode', label: 'Mask mode', kind: 'enum', group: 'Mask', values: ['alpha', 'vector', 'luminance'] },
+	{ key: 'clip_invert', label: 'Invert mask', kind: 'bool', group: 'Mask' },
+	// Path.
+	{ key: 'closed', label: 'Closed path', kind: 'bool', group: 'Path', types: ['path'] }
 ];
 
 // Order the groups appear in the Formulas editor.
-export const BIND_GROUPS: BindGroup[] = ['Size & position', 'Appearance', 'Text', 'Stroke'];
+export const BIND_GROUPS: BindGroup[] = [
+	'Size & position',
+	'Appearance',
+	'Text',
+	'Stroke',
+	'Brush',
+	'Mask',
+	'Path'
+];
 
 // bindablePropsFor returns the properties offered for a given layer type.
 export function bindablePropsFor(type: LayerType): BindableProp[] {
