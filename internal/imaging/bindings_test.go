@@ -97,3 +97,30 @@ func TestResolveBindingsSupersede(t *testing.T) {
 		t.Errorf("typo formula width = %v, want 200 (static kept via missingkey=error)", out[2].W)
 	}
 }
+
+// TestResolveBindingsExpanded covers the expanded key set: an int (font_weight),
+// a float (dash), and an enum/string (stroke_align) driven by a conditional.
+func TestResolveBindingsExpanded(t *testing.T) {
+	r := &Renderer{tmpl: templating.New()}
+	data := templating.DataFromVars(map[string]string{"{level}": "80"})
+
+	in := []layout.Layer{{
+		ID: "t", Type: "text", FontWeight: 400, Dash: 1, StrokeAlign: "center",
+		Bind: map[string]string{
+			"font_weight":  "{{ if gt .LevelNum 50 }}700{{ else }}400{{ end }}",
+			"dash":         "{{ fmul .LevelNum 0.5 }}", // 80 * 0.5 = 40
+			"stroke_align": "{{ if gt .LevelNum 50 }}outside{{ else }}center{{ end }}",
+		},
+	}}
+	out := r.resolveLayerBindings(context.Background(), in, data)
+
+	if out[0].FontWeight != 700 {
+		t.Errorf("font_weight = %d, want 700", out[0].FontWeight)
+	}
+	if out[0].Dash != 40 {
+		t.Errorf("dash = %v, want 40", out[0].Dash)
+	}
+	if out[0].StrokeAlign != "outside" {
+		t.Errorf("stroke_align = %q, want outside", out[0].StrokeAlign)
+	}
+}

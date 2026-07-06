@@ -90,34 +90,57 @@ export const CARD_FUNCS: CardFunc[] = [
 
 // A property that can be driven by a formula. `key` matches Layer.bind on the Go
 // side; `kind` is the value the formula must produce; `types` scopes which layer
-// types offer it (undefined = all). Drives the Formulas inspector section.
+// types offer it (undefined = all); `group` buckets it in the Formulas editor;
+// `values` lists the valid outputs for an enum (shown as hints). Keep in lockstep
+// with the resolver keys in internal/imaging/layout.go resolveLayerBindings.
+export type BindKind = 'number' | 'color' | 'bool' | 'enum' | 'string';
+export type BindGroup = 'Size & position' | 'Appearance' | 'Text' | 'Stroke';
 export interface BindableProp {
 	key: string;
 	label: string;
-	kind: 'number' | 'color' | 'bool';
+	kind: BindKind;
+	group: BindGroup;
 	types?: LayerType[];
+	values?: string[]; // enum: the valid outputs a formula must produce
 }
+const VECTOR: LayerType[] = ['rect', 'ellipse', 'path'];
 export const BINDABLE_PROPS: BindableProp[] = [
-	{ key: 'w', label: 'Width', kind: 'number' },
-	{ key: 'h', label: 'Height', kind: 'number' },
-	{ key: 'x', label: 'X', kind: 'number' },
-	{ key: 'y', label: 'Y', kind: 'number' },
-	{ key: 'opacity', label: 'Opacity (0–1)', kind: 'number' },
-	{ key: 'rotation', label: 'Rotation°', kind: 'number' },
-	{ key: 'hidden', label: 'Hidden (true/false)', kind: 'bool' },
-	{ key: 'radius', label: 'Corner radius', kind: 'number', types: ['rect', 'image'] },
-	{ key: 'font_size', label: 'Font size', kind: 'number', types: ['text'] },
-	{ key: 'letter_spacing', label: 'Letter spacing', kind: 'number', types: ['text'] },
-	{ key: 'line_height', label: 'Line height', kind: 'number', types: ['text'] },
-	{ key: 'color', label: 'Text color', kind: 'color', types: ['text'] },
-	{ key: 'fill', label: 'Fill color', kind: 'color', types: ['rect', 'ellipse', 'path'] },
-	{
-		key: 'stroke_color',
-		label: 'Stroke color',
-		kind: 'color',
-		types: ['rect', 'ellipse', 'path', 'text']
-	}
+	// Size & position — every layer.
+	{ key: 'w', label: 'Width', kind: 'number', group: 'Size & position' },
+	{ key: 'h', label: 'Height', kind: 'number', group: 'Size & position' },
+	{ key: 'x', label: 'X', kind: 'number', group: 'Size & position' },
+	{ key: 'y', label: 'Y', kind: 'number', group: 'Size & position' },
+	{ key: 'rotation', label: 'Rotation°', kind: 'number', group: 'Size & position' },
+	// Appearance.
+	{ key: 'opacity', label: 'Opacity (0–1)', kind: 'number', group: 'Appearance' },
+	{ key: 'hidden', label: 'Hidden', kind: 'bool', group: 'Appearance' },
+	{ key: 'fill', label: 'Fill color', kind: 'color', group: 'Appearance', types: VECTOR },
+	{ key: 'radius', label: 'Corner radius', kind: 'number', group: 'Appearance', types: ['rect', 'image'] },
+	{ key: 'fit', label: 'Image fit', kind: 'enum', group: 'Appearance', types: ['image'], values: ['cover', 'contain'] },
+	// Text.
+	{ key: 'color', label: 'Text color', kind: 'color', group: 'Text', types: ['text'] },
+	{ key: 'font_size', label: 'Font size', kind: 'number', group: 'Text', types: ['text'] },
+	{ key: 'font_weight', label: 'Font weight', kind: 'number', group: 'Text', types: ['text'] },
+	{ key: 'letter_spacing', label: 'Letter spacing', kind: 'number', group: 'Text', types: ['text'] },
+	{ key: 'line_height', label: 'Line height', kind: 'number', group: 'Text', types: ['text'] },
+	{ key: 'align', label: 'Align', kind: 'enum', group: 'Text', types: ['text'], values: ['left', 'center', 'right'] },
+	{ key: 'valign', label: 'Vertical align', kind: 'enum', group: 'Text', types: ['text'], values: ['top', 'middle', 'bottom'] },
+	{ key: 'text_case', label: 'Case', kind: 'enum', group: 'Text', types: ['text'], values: ['none', 'upper', 'lower', 'title'] },
+	{ key: 'text_decoration', label: 'Decoration', kind: 'enum', group: 'Text', types: ['text'], values: ['none', 'underline', 'strike'] },
+	{ key: 'font_family', label: 'Font family', kind: 'string', group: 'Text', types: ['text'] },
+	// Stroke.
+	{ key: 'stroke_color', label: 'Stroke color', kind: 'color', group: 'Stroke', types: [...VECTOR, 'text'] },
+	{ key: 'stroke_width', label: 'Stroke weight', kind: 'number', group: 'Stroke', types: [...VECTOR, 'text'] },
+	{ key: 'stroke_align', label: 'Stroke position', kind: 'enum', group: 'Stroke', types: VECTOR, values: ['inside', 'center', 'outside'] },
+	{ key: 'stroke_style', label: 'Stroke style', kind: 'enum', group: 'Stroke', types: VECTOR, values: ['solid', 'dashed'] },
+	{ key: 'dash', label: 'Dash length', kind: 'number', group: 'Stroke', types: VECTOR },
+	{ key: 'gap', label: 'Dash gap', kind: 'number', group: 'Stroke', types: VECTOR },
+	{ key: 'stroke_cap', label: 'Stroke cap', kind: 'enum', group: 'Stroke', types: VECTOR, values: ['butt', 'round', 'square'] },
+	{ key: 'stroke_join', label: 'Stroke join', kind: 'enum', group: 'Stroke', types: VECTOR, values: ['miter', 'bevel', 'round'] }
 ];
+
+// Order the groups appear in the Formulas editor.
+export const BIND_GROUPS: BindGroup[] = ['Size & position', 'Appearance', 'Text', 'Stroke'];
 
 // bindablePropsFor returns the properties offered for a given layer type.
 export function bindablePropsFor(type: LayerType): BindableProp[] {

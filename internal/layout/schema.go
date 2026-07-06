@@ -30,8 +30,13 @@ type Layer struct {
 	// A missing key or an expression that fails to parse leaves the static value
 	// untouched, so legacy documents and bad formulas never break a render; the
 	// static field stays the editor's drag value and the fallback. Recognised keys:
-	// x y w h opacity rotation font_size radius stroke_width letter_spacing
-	// line_height color fill stroke_color hidden. Mirrored in schema.ts.
+	//   numbers: x y w h opacity rotation font_size font_weight radius stroke_width
+	//            letter_spacing line_height dash gap miter_angle
+	//   colours: color fill stroke_color        bool: hidden
+	//   enums:   align valign text_case text_decoration font_family fit stroke_align
+	//            stroke_style stroke_cap stroke_join width_profile
+	// (enum formulas must output a valid value; the renderer defaults on unknown.)
+	// Mirrored in schema.ts (BINDABLE_PROPS in web/src/lib/layout/vars.ts).
 	Bind map[string]string `json:"bind,omitempty"`
 
 	// text

@@ -153,6 +153,18 @@ func (r *Renderer) resolveLayerBindings(ctx context.Context, layers []layout.Lay
 		if v, ok := num("line_height"); ok {
 			l.LineHeight = v
 		}
+		if v, ok := num("font_weight"); ok {
+			l.FontWeight = int(v)
+		}
+		if v, ok := num("dash"); ok {
+			l.Dash = v
+		}
+		if v, ok := num("gap"); ok {
+			l.Gap = v
+		}
+		if v, ok := num("miter_angle"); ok {
+			l.MiterAngle = v
+		}
 		if v, ok := num("opacity"); ok {
 			if v < 0 {
 				v = 0
@@ -188,6 +200,26 @@ func (r *Renderer) resolveLayerBindings(ctx context.Context, layers []layout.Lay
 		if s, ok := eval("hidden"); ok {
 			l.Hidden = truthyBind(s)
 		}
+		// Enum / string fields: the formula must output a valid value; the renderer
+		// falls back to its own default for anything unknown, so a bad value is safe.
+		setStr := func(key string, dst *string) {
+			if s, ok := eval(key); ok {
+				if s = strings.TrimSpace(s); s != "" {
+					*dst = s
+				}
+			}
+		}
+		setStr("align", &l.Align)
+		setStr("valign", &l.VAlign)
+		setStr("text_case", &l.TextCase)
+		setStr("text_decoration", &l.TextDecoration)
+		setStr("font_family", &l.FontFamily)
+		setStr("fit", &l.Fit)
+		setStr("stroke_align", &l.StrokeAlign)
+		setStr("stroke_style", &l.StrokeStyle)
+		setStr("stroke_cap", &l.StrokeCap)
+		setStr("stroke_join", &l.StrokeJoin)
+		setStr("width_profile", &l.WidthProfile)
 	}
 	return out
 }
