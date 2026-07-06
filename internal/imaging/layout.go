@@ -339,6 +339,17 @@ func (r *Renderer) resolveBackgroundBindings(ctx context.Context, bg layout.Back
 	if v, ok := num("blur"); ok {
 		bg.Blur = v
 	}
+	// A lone bound endpoint (only from OR only to) still paints: mirror it so the
+	// gradient renders a solid of that colour instead of falling back to brand-ink
+	// (drawBackground needs both endpoints set).
+	if bg.Type == "gradient" {
+		if bg.From == "" {
+			bg.From = bg.To
+		}
+		if bg.To == "" {
+			bg.To = bg.From
+		}
+	}
 	return bg
 }
 
