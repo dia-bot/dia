@@ -70,6 +70,130 @@ func progressFraction(s string) (float64, bool) {
 	return v, true
 }
 
+// resolveLayerBindings evaluates each layer's `bind` formulas (Go templates over
+// the card data root) and overrides the matching static fields with the results,
+// so the rest of the renderer draws data-driven values without knowing about
+// bindings. Layers with no bindings pass through untouched (and the whole slice
+// is shared unchanged when nothing is bound). A formula that errors or yields an
+// unparseable value leaves the static field in place, so a bad formula never
+// breaks a render. See internal/layout/schema.go Layer.Bind for the key list.
+func (r *Renderer) resolveLayerBindings(ctx context.Context, layers []layout.Layer, data map[string]any) []layout.Layer {
+	bound := false
+	for i := range layers {
+		if len(layers[i].Bind) > 0 {
+			bound = true
+			break
+		}
+	}
+	if !bound {
+		return layers
+	}
+	out := make([]layout.Layer, len(layers))
+	copy(out, layers)
+	for i := range out {
+		l := &out[i]
+		if len(l.Bind) == 0 {
+			continue
+		}
+		// eval renders a bound expression; ok is false when the key is absent/empty
+		// or the template errors, so callers keep the static value.
+		eval := func(key string) (string, bool) {
+			expr, has := l.Bind[key]
+			if !has || strings.TrimSpace(expr) == "" {
+				return "", false
+			}
+			s, err := r.tmpl.RenderCard(ctx, expr, data)
+			if err != nil {
+				return "", false
+			}
+			return s, true
+		}
+		num := func(key string) (float64, bool) {
+			s, ok := eval(key)
+			if !ok {
+				return 0, false
+			}
+			s = strings.TrimSuffix(strings.ReplaceAll(strings.TrimSpace(s), ",", ""), "%")
+			v, err := strconv.ParseFloat(strings.TrimSpace(s), 64)
+			if err != nil {
+				return 0, false
+			}
+			return v, true
+		}
+		if v, ok := num("x"); ok {
+			l.X = v
+		}
+		if v, ok := num("y"); ok {
+			l.Y = v
+		}
+		if v, ok := num("w"); ok {
+			l.W = v
+		}
+		if v, ok := num("h"); ok {
+			l.H = v
+		}
+		if v, ok := num("rotation"); ok {
+			l.Rotation = v
+		}
+		if v, ok := num("font_size"); ok {
+			l.FontSize = v
+		}
+		if v, ok := num("radius"); ok {
+			l.Radius = v
+		}
+		if v, ok := num("stroke_width"); ok {
+			l.StrokeWidth = v
+		}
+		if v, ok := num("letter_spacing"); ok {
+			l.LetterSpacing = v
+		}
+		if v, ok := num("line_height"); ok {
+			l.LineHeight = v
+		}
+		if v, ok := num("opacity"); ok {
+			if v < 0 {
+				v = 0
+			} else if v > 1 {
+				v = 1
+			}
+			l.Opacity = &v
+		}
+		// Colours: the rendered string is used as a hex value. A bound flat colour
+		// clears the paint stack so it actually takes effect (Fills/Strokes else win).
+		if s, ok := eval("color"); ok {
+			if s = strings.TrimSpace(s); s != "" {
+				l.Color = s
+			}
+		}
+		if s, ok := eval("fill"); ok {
+			if s = strings.TrimSpace(s); s != "" {
+				l.Fill = s
+				l.Fills = nil
+			}
+		}
+		if s, ok := eval("stroke_color"); ok {
+			if s = strings.TrimSpace(s); s != "" {
+				l.StrokeColor = s
+				l.Strokes = nil
+			}
+		}
+		if s, ok := eval("hidden"); ok {
+			l.Hidden = truthyBind(s)
+		}
+	}
+	return out
+}
+
+// truthyBind reads a bound `hidden` formula's output as a boolean. Empty, "0",
+// "false"/"no"/"off", "null" and Go's "<no value>" are false; anything else true.
+func truthyBind(s string) bool {
+	switch strings.TrimSpace(strings.ToLower(s)) {
+	case "", "0", "false", "no", "off", "null", "<no value>":
+		return false
+	}
+	return true
+}
+
 // withAlpha multiplies the alpha channel of c by mul (clamped to [0,1]).
 func withAlpha(c color.Color, mul float64) color.Color {
 	if mul >= 1 {
@@ -181,6 +305,10 @@ func (r *Renderer) RenderLayout(ctx context.Context, in layout.Layout, vars map[
 
 	// Card data root (pure Go template): {{.User.Username}}, {{.User.Avatar}}, …
 	data := templating.DataFromVars(vars)
+
+	// Resolve per-layer property formulas (l.Bind) into concrete field values, so
+	// the rest of the renderer transparently draws data-driven geometry / colours.
+	in.Layers = r.resolveLayerBindings(ctx, in.Layers, data)
 
 	// paintText lays out + draws a text layer's glyphs onto c in colour col — shared by
 	// the real layer (drawRaw) and its boolean/blur silhouette (drawSilhouette, in

@@ -21,6 +21,19 @@ type Layer struct {
 	Group    string   `json:"group,omitempty"`  // soft-group id; scopes a mask group (read by the mask loop). Members must be contiguous.
 	Locked   bool     `json:"locked,omitempty"` // editor-only; ignored when rendering
 
+	// Bind maps a property name to a Go text/template expression evaluated at
+	// render time against the same card data root as text/image sources (see
+	// internal/templating/card.go). When a key is present its computed value
+	// OVERRIDES the corresponding static field below, so any scalar property can be
+	// data-driven (e.g. bind["w"] = "{{ round (fmul .ProgressFrac 618) }}",
+	// bind["fill"] = "{{ if gt .LevelNum 50 }}#FFD700{{ else }}#FF6363{{ end }}").
+	// A missing key or an expression that fails to parse leaves the static value
+	// untouched, so legacy documents and bad formulas never break a render; the
+	// static field stays the editor's drag value and the fallback. Recognised keys:
+	// x y w h opacity rotation font_size radius stroke_width letter_spacing
+	// line_height color fill stroke_color hidden. Mirrored in schema.ts.
+	Bind map[string]string `json:"bind,omitempty"`
+
 	// text
 	Text       string  `json:"text,omitempty"`
 	FontSize   float64 `json:"font_size,omitempty"`
