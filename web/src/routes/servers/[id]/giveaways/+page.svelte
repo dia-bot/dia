@@ -17,6 +17,7 @@
 	import ModSection from '$lib/components/moderation/ModSection.svelte';
 	import Field from '$lib/components/Field.svelte';
 	import RolePicker from '$lib/components/RolePicker.svelte';
+	import AccessPreview from '$lib/components/giveaway/AccessPreview.svelte';
 	import {
 		Gift,
 		Settings,
@@ -30,6 +31,7 @@
 		Pencil,
 		Star,
 		Copy,
+		Lock,
 		ExternalLink
 	} from 'lucide-svelte';
 
@@ -42,6 +44,7 @@
 	let saving = $state(false);
 	let baseline = $state('');
 	let tab = $state('list');
+	let showAccessPreview = $state(false);
 
 	const dirty = $derived(loaded && JSON.stringify({ enabled, cfg }) !== baseline);
 
@@ -412,8 +415,20 @@
 					onChange={(v) => (cfg.manager_roles = v as string[])}
 				/>
 			</Field>
+			<div class="mt-3 flex items-center gap-3">
+				<button
+					type="button"
+					onclick={() => (showAccessPreview = true)}
+					class="inline-flex h-8 items-center gap-1.5 rounded-md border border-line px-3 text-[12px] font-medium text-ink hover:border-line-strong"
+				>
+					<Lock size={13} /> Preview restricted view
+				</button>
+				<span class="text-[11px] text-muted">See what members without a manager role get.</span>
+			</div>
 		</ModSection>
 	{/if}
 	</div>
 	{/key}
 </ModerationShell>
+
+<AccessPreview bind:open={showAccessPreview} featureName="Giveaways" />
