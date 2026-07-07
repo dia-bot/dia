@@ -1,62 +1,78 @@
-// Package giveaway runs fully-customizable prize draws: a hosted giveaway posts
-// a live embed with an Enter button and a countdown, accumulates weighted
-// entries, and at its deadline draws random winners (biased by role bonus
-// entries), announces them, optionally DMs them, and publishes a GIVEAWAY_ENDED
-// event so Automations can react. Timers are durable — a background sweeper ends
-// giveaways whose deadline passed, so a restart never drops a draw.
+// Package giveaway runs fully-customizable prize draws. Each giveaway is
+// composed on the dashboard (or from a reusable preset, or by a custom-command
+// "Start giveaway" step) with the same message editor as every other tab: its
+// content + embeds are the shared MessageEditor shape (cc.EmbedSpec), rendered
+// server-side against the giveaway scope. A hosted giveaway posts a live
+// message with an Enter button and a countdown, accumulates weighted entries,
+// and at its deadline draws random winners (biased by role bonus entries),
+// announces them, optionally DMs them, and publishes a GIVEAWAY_ENDED event so
+// Automations can react. Timers are durable: a background sweeper posts
+// scheduled giveaways and ends due ones, so a restart never drops a draw.
 //
-// Every user-facing string (embed title/description/footer, the winner
-// announcement, the winner DM) is a Go text/template rendered against the
-// giveaway scope (see embeds.go), matching the repo-wide templating contract.
+// Every user-facing string is a Go text/template rendered against the giveaway
+// scope (see render.go), matching the repo-wide templating contract.
 package giveaway
+
+import (
+	cc "github.com/dia-bot/dia/internal/features/customcommands"
+)
 
 // FeatureKey is the stable identifier used in guild_feature_configs and as the
 // dashboard route segment.
 const FeatureKey = "giveaway"
 
-// Config is the giveaway feature's per-guild configuration (stored as JSONB,
-// edited from the dashboard). Individual giveaways live in their own table; this
-// holds the defaults, styling and behaviour every giveaway inherits.
+// Config is the giveaway feature's per-guild configuration (JSONB in
+// guild_feature_configs). It no longer holds a single shared style: it's a
+// library of reusable presets plus the roles allowed to run giveaways. Every
+// giveaway stores its OWN composed Spec on the giveaway row, so presets only
+// seed new giveaways and later config edits never change a live giveaway.
 type Config struct {
 	// ManagerRoles may create and manage giveaways in addition to admins
 	// (members with Manage Server always can).
 	ManagerRoles []string `json:"manager_roles,omitempty"`
 
-	// Defaults pre-fill new giveaways when the command doesn't override them.
-	DefaultChannelID   string `json:"default_channel_id,omitempty"`
-	DefaultWinnerCount int    `json:"default_winner_count"`
-	DefaultDuration    string `json:"default_duration"` // e.g. "24h", "3d", "1w"
+	// Presets is the library of reusable giveaway templates the dashboard and
+	// the custom-command step start new giveaways from.
+	Presets []Preset `json:"presets,omitempty"`
 
-	// PingRoleID, when set, is pinged above the giveaway embed on start.
-	PingRoleID string `json:"ping_role_id,omitempty"`
+	// DefaultPresetID selects the preset used when none is named (the "New
+	// giveaway" starting point and the step's default).
+	DefaultPresetID string `json:"default_preset_id,omitempty"`
+}
 
-	Embed        EmbedConfig       `json:"embed"`
-	Button       ButtonConfig      `json:"button"`
-	Announce     AnnounceConfig    `json:"announce"`
-	Requirements RequirementConfig `json:"requirements"`
+// Preset is a reusable giveaway template. It bundles the composed message Spec,
+// the default entry requirements, and the pre-filled channel/duration/winners a
+// new giveaway starts from.
+type Preset struct {
+	ID                 string            `json:"id"`
+	Name               string            `json:"name"`
+	DefaultChannelID   string            `json:"default_channel_id,omitempty"`
+	DefaultDuration    string            `json:"default_duration,omitempty"` // e.g. "24h", "3d", "1w"
+	DefaultWinnerCount int               `json:"default_winner_count,omitempty"`
+	Spec               Spec              `json:"spec"`
+	Requirements       RequirementConfig `json:"requirements"`
+}
 
-	// Display toggles for the live embed.
-	ShowEntryCount   bool `json:"show_entry_count"`
+// Spec is one giveaway's composed presentation + behaviour. It is stored on the
+// giveaway row (store.Giveaway.Spec) and also embedded in a Preset. The message
+// (Content + Embeds) is the same shape the shared MessageEditor produces and
+// that Welcome/Leveling render server-side, so a giveaway is edited exactly like
+// a message in any other tab. The Enter button is system-managed (its custom_id
+// routes clicks back to this feature); the user only styles it via Button.
+type Spec struct {
+	Content    string         `json:"content,omitempty"`
+	Embeds     []cc.EmbedSpec `json:"embeds,omitempty"`
+	Button     ButtonConfig   `json:"button"`
+	Announce   AnnounceConfig `json:"announce"`
+	PingRoleID string         `json:"ping_role_id,omitempty"` // pinged above the live message on start
+
+	// ShowRequirements appends a rendered requirement summary field to the
+	// primary embed (the rules are dynamic, so this saves hand-authoring them).
 	ShowRequirements bool `json:"show_requirements"`
 
 	// Draw behaviour.
-	AllowBotsToWin bool `json:"allow_bots_to_win"`
 	ExcludeHost    bool `json:"exclude_host"` // the host can't win their own giveaway
-}
-
-// EmbedConfig styles the live giveaway embed. Title/Description/FooterText are
-// templated; the *Label fields rename the inline fields.
-type EmbedConfig struct {
-	Color         string `json:"color"` // hex, "" = brand accent
-	Title         string `json:"title"`
-	Description   string `json:"description"`
-	FooterText    string `json:"footer_text"`
-	Thumbnail     string `json:"thumbnail"` // url, "" = none
-	HostedByLabel string `json:"hosted_by_label"`
-	EndsLabel     string `json:"ends_label"`
-	WinnersLabel  string `json:"winners_label"`
-	EntriesLabel  string `json:"entries_label"`
-	ShowTimestamp bool   `json:"show_timestamp"`
+	AllowBotsToWin bool `json:"allow_bots_to_win"`
 }
 
 // ButtonConfig customizes the Enter button.
@@ -66,7 +82,9 @@ type ButtonConfig struct {
 	Style string `json:"style"` // primary | secondary | success | danger
 }
 
-// AnnounceConfig controls how winners are announced and DMed.
+// AnnounceConfig controls how winners are announced and DMed. The ended embed is
+// a compact system card (title + winners + footer) built from the giveaway's
+// colour/image, keeping the ended state tidy without hand-authoring it.
 type AnnounceConfig struct {
 	Message          string `json:"message"`            // in-channel congrats, templated
 	PingWinners      bool   `json:"ping_winners"`       // ping the winners in the announcement
@@ -78,9 +96,9 @@ type AnnounceConfig struct {
 	DMMessage        string `json:"dm_message"` // templated winner DM
 }
 
-// RequirementConfig is the entry-eligibility spec. It is both the feature-level
-// default and the per-giveaway resolved requirements (stored on each giveaway
-// row), so a giveaway keeps its rules even if the defaults later change.
+// RequirementConfig is the entry-eligibility spec. It is both the preset default
+// and the per-giveaway resolved requirements (stored on each giveaway row), so a
+// giveaway keeps its rules even if the preset later changes.
 type RequirementConfig struct {
 	// RequiredRoles: the member must hold at least one (empty = no requirement).
 	RequiredRoles []string `json:"required_roles,omitempty"`
@@ -104,23 +122,46 @@ type BonusEntry struct {
 	Entries int    `json:"entries"`
 }
 
-// Default returns sensible, ready-to-use defaults. The templates use the
-// giveaway scope documented in embeds.go.
+// defaultPresetID is the stable id of the built-in preset.
+const defaultPresetID = "default"
+
+// Default returns a ready-to-use config with one built-in preset that reproduces
+// the classic giveaway look (a rose-accent embed with Host/Ends/Winners/Entries
+// fields). The templates use the giveaway scope documented in render.go.
 func Default() Config {
 	return Config{
-		DefaultWinnerCount: 1,
+		DefaultPresetID: defaultPresetID,
+		Presets:         []Preset{defaultPreset()},
+	}
+}
+
+// defaultPreset is the built-in starting template.
+func defaultPreset() Preset {
+	return Preset{
+		ID:                 defaultPresetID,
+		Name:               "Classic",
 		DefaultDuration:    "24h",
-		Embed: EmbedConfig{
-			Color:         "#FF6363",
-			Title:         "🎉 {{ .Prize }}",
-			Description:   "Click the button below to enter!",
-			FooterText:    "{{ .WinnerCount }} winner(s) · ends",
-			HostedByLabel: "Hosted by",
-			EndsLabel:     "Ends",
-			WinnersLabel:  "Winners",
-			EntriesLabel:  "Entries",
-			ShowTimestamp: true,
-		},
+		DefaultWinnerCount: 1,
+		Spec:               defaultSpec(),
+		Requirements:       RequirementConfig{},
+	}
+}
+
+// defaultSpec is the composed message + button + announce a fresh giveaway
+// starts from.
+func defaultSpec() Spec {
+	return Spec{
+		Embeds: []cc.EmbedSpec{{
+			Color:       "#FF6363",
+			Title:       "🎉 {{ .Prize }}",
+			Description: "Click the button below to enter!",
+			Fields: []cc.EmbedField{
+				{Name: "Hosted by", Value: "{{ .Host }}", Inline: true},
+				{Name: "Ends", Value: "{{ .Ends }}", Inline: true},
+				{Name: "Winners", Value: "{{ .WinnerCount }}", Inline: true},
+				{Name: "Entries", Value: "{{ .EntryCount }}", Inline: true},
+			},
+		}},
 		Button: ButtonConfig{
 			Label: "Enter Giveaway",
 			Emoji: "🎉",
@@ -136,15 +177,36 @@ func Default() Config {
 			DMWinners:        false,
 			DMMessage:        "🎉 You won **{{ .Prize }}** in {{ .Server }}! Contact the host {{ .Host }} to claim your prize.",
 		},
-		Requirements:     RequirementConfig{},
-		ShowEntryCount:   true,
 		ShowRequirements: true,
-		AllowBotsToWin:   false,
 		ExcludeHost:      false,
+		AllowBotsToWin:   false,
 	}
 }
 
-// buttonStyle maps a config style string to Discord's button style.
+// preset returns the preset with the given id, falling back to the configured
+// default (then the built-in) so a start always has a usable template.
+func (c Config) preset(id string) Preset {
+	if id != "" {
+		for _, p := range c.Presets {
+			if p.ID == id {
+				return p
+			}
+		}
+	}
+	if c.DefaultPresetID != "" && c.DefaultPresetID != id {
+		for _, p := range c.Presets {
+			if p.ID == c.DefaultPresetID {
+				return p
+			}
+		}
+	}
+	if len(c.Presets) > 0 {
+		return c.Presets[0]
+	}
+	return defaultPreset()
+}
+
+// buttonComponentStyle normalizes a config style string.
 func buttonComponentStyle(s string) string {
 	switch s {
 	case "primary", "secondary", "success", "danger":
@@ -152,36 +214,4 @@ func buttonComponentStyle(s string) string {
 	default:
 		return "primary"
 	}
-}
-
-// resolveRequirements merges the feature defaults with per-command overrides.
-// A nil override slice inherits the default; a non-nil (possibly empty) one
-// replaces it, so a giveaway can explicitly clear a requirement.
-func (c Config) resolveRequirements(override *RequirementConfig) RequirementConfig {
-	r := c.Requirements
-	if override == nil {
-		return r
-	}
-	if override.RequiredRoles != nil {
-		r.RequiredRoles = override.RequiredRoles
-	}
-	if override.BlockedRoles != nil {
-		r.BlockedRoles = override.BlockedRoles
-	}
-	if override.BypassRoles != nil {
-		r.BypassRoles = override.BypassRoles
-	}
-	if override.BonusEntries != nil {
-		r.BonusEntries = override.BonusEntries
-	}
-	if override.MinAccountAgeDays > 0 {
-		r.MinAccountAgeDays = override.MinAccountAgeDays
-	}
-	if override.MinMemberAgeDays > 0 {
-		r.MinMemberAgeDays = override.MinMemberAgeDays
-	}
-	if override.MinLevel > 0 {
-		r.MinLevel = override.MinLevel
-	}
-	return r
 }

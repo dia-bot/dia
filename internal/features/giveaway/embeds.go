@@ -7,23 +7,25 @@ import (
 	"time"
 
 	"github.com/dia-bot/dia/internal/event"
+	cc "github.com/dia-bot/dia/internal/features/customcommands"
 	"github.com/dia-bot/dia/internal/store"
 	"github.com/dia-bot/dia/internal/templating"
 	"github.com/dia-bot/dia/pkg/discordgo"
 )
 
 // brandAccent is the fallback embed colour (the rose logo accent) when neither
-// the giveaway nor the feature config sets one.
+// the giveaway nor its embed sets one.
 const brandAccent = 0xFF6363
 
 // renderEngine is the shared, sandboxed text/template engine used for every
-// giveaway string. RenderCard executes a pure template against a data map with
-// the safe base funcs (no side effects, output + time capped).
+// giveaway string. RenderCardStrict executes a pure template against a data map
+// with the safe base funcs (no side effects, output + time capped).
 var renderEngine = templating.New()
 
 // scopeData builds the template scope shared by every giveaway string. Winner
 // mentions are pre-joined so {{ .Winners }} renders ready-to-post; timestamps are
-// pre-formatted as Discord relative/absolute tokens.
+// pre-formatted as Discord relative/absolute tokens. These are the variables the
+// composed embed/announcement templates reference.
 func scopeData(g store.Giveaway, entryCount int, winnerMentions []string, guildName string, memberCount int) map[string]any {
 	host := ""
 	if g.HostID != 0 {
@@ -68,64 +70,102 @@ func discordTS(t time.Time, style string) string {
 	return "<t:" + strconv.FormatInt(t.Unix(), 10) + ":" + style + ">"
 }
 
-// buildLiveMessage composes the full giveaway message (embed + Enter button) for
-// a running giveaway.
-func buildLiveMessage(ctx context.Context, cfg Config, g store.Giveaway, entryCount int, guildName string, memberCount int) *discordgo.MessageSend {
+// ── Live message ─────────────────────────────────────────────────────────────
+
+// buildLiveMessage composes the full giveaway message (content + embeds + Enter
+// button) for a running giveaway from its own Spec.
+func buildLiveMessage(ctx context.Context, spec Spec, g store.Giveaway, entryCount int, guildName string, memberCount int) *discordgo.MessageSend {
 	data := scopeData(g, entryCount, nil, guildName, memberCount)
 	send := &discordgo.MessageSend{
-		Embeds:     []*discordgo.MessageEmbed{buildLiveEmbed(ctx, cfg, g, data, entryCount)},
-		Components: enterComponents(cfg, g.ID),
+		Embeds:     buildLiveEmbeds(ctx, spec, g, data),
+		Components: enterComponents(spec, g.ID),
+	}
+	if c := renderText(ctx, spec.Content, data); c != "" {
+		send.Content = c
 	}
 	return send
 }
 
-// buildLiveEmbed renders the live giveaway embed with its inline info grid.
-func buildLiveEmbed(ctx context.Context, cfg Config, g store.Giveaway, data map[string]any, entryCount int) *discordgo.MessageEmbed {
-	e := cfg.Embed
-	em := &discordgo.MessageEmbed{
-		Title:       fallback(renderText(ctx, e.Title, data), g.Prize),
-		Description: renderText(ctx, e.Description, data),
-		Color:       giveawayColor(g, cfg),
+// buildLiveEmbeds renders every embed the giveaway composes, appending the
+// requirement summary to the primary embed when enabled and applying the
+// giveaway's image override. Always returns at least one embed so a giveaway is
+// never posted as a bare (or empty) message.
+func buildLiveEmbeds(ctx context.Context, spec Spec, g store.Giveaway, data map[string]any) []*discordgo.MessageEmbed {
+	var out []*discordgo.MessageEmbed
+	for i, e := range spec.Embeds {
+		em := buildEmbed(ctx, e, data, g.Color)
+		if i == 0 && spec.ShowRequirements {
+			if s := requirementSummary(decodeRequirements(g.Requirements)); s != "" {
+				em.Fields = append(em.Fields, &discordgo.MessageEmbedField{Name: "Requirements", Value: s, Inline: false})
+			}
+		}
+		if g.ImageURL != "" && em.Image == nil {
+			em.Image = &discordgo.MessageEmbedImage{URL: g.ImageURL}
+		}
+		if embedEmpty(em) {
+			continue
+		}
+		out = append(out, em)
 	}
-	if e.Thumbnail != "" {
-		em.Thumbnail = &discordgo.MessageEmbedThumbnail{URL: e.Thumbnail}
+	if len(out) == 0 {
+		out = append(out, &discordgo.MessageEmbed{Title: fallback(g.Prize, "Giveaway"), Color: embedAccent(spec, g.Color)})
 	}
-	if g.ImageURL != "" {
-		em.Image = &discordgo.MessageEmbedImage{URL: g.ImageURL}
-	}
+	return out
+}
 
-	if g.HostID != 0 {
-		em.Fields = append(em.Fields, inlineField(orLabel(e.HostedByLabel, "Hosted by"), "<@"+event.FormatID(g.HostID)+">"))
+// buildEmbed renders one composed embed (cc.EmbedSpec) against the giveaway
+// scope. Mirrors leveling/customcommands embed rendering, but templates every
+// string and skips fields whose name or value renders empty (Discord rejects
+// empty field parts). overrideColor (the giveaway's colour column) wins over the
+// embed's own colour when set.
+func buildEmbed(ctx context.Context, e cc.EmbedSpec, data map[string]any, overrideColor string) *discordgo.MessageEmbed {
+	em := &discordgo.MessageEmbed{
+		Title:       renderText(ctx, e.Title, data),
+		Description: renderText(ctx, e.Description, data),
+		URL:         renderText(ctx, e.URL, data),
+		Color:       resolveColor(overrideColor, e.Color, brandAccent),
 	}
-	em.Fields = append(em.Fields, inlineField(orLabel(e.EndsLabel, "Ends"), discordTS(g.EndsAt, "R")))
-	em.Fields = append(em.Fields, inlineField(orLabel(e.WinnersLabel, "Winners"), strconv.Itoa(g.WinnerCount)))
-	if cfg.ShowEntryCount {
-		em.Fields = append(em.Fields, inlineField(orLabel(e.EntriesLabel, "Entries"), strconv.Itoa(entryCount)))
-	}
-	if cfg.ShowRequirements {
-		if s := requirementSummary(decodeRequirements(g.Requirements)); s != "" {
-			em.Fields = append(em.Fields, &discordgo.MessageEmbedField{Name: "Requirements", Value: s, Inline: false})
+	if strings.TrimSpace(e.AuthorName) != "" {
+		em.Author = &discordgo.MessageEmbedAuthor{
+			Name:    renderText(ctx, e.AuthorName, data),
+			IconURL: renderText(ctx, e.AuthorIcon, data),
+			URL:     renderText(ctx, e.AuthorURL, data),
 		}
 	}
-
-	if ft := renderText(ctx, e.FooterText, data); ft != "" {
-		em.Footer = &discordgo.MessageEmbedFooter{Text: ft}
+	if t := renderText(ctx, e.Thumbnail, data); t != "" {
+		em.Thumbnail = &discordgo.MessageEmbedThumbnail{URL: t}
 	}
-	if e.ShowTimestamp {
-		em.Timestamp = g.EndsAt.Format(time.RFC3339)
+	if u := renderText(ctx, e.ImageURL, data); u != "" {
+		em.Image = &discordgo.MessageEmbedImage{URL: u}
+	}
+	if strings.TrimSpace(e.FooterText) != "" {
+		em.Footer = &discordgo.MessageEmbedFooter{Text: renderText(ctx, e.FooterText, data), IconURL: renderText(ctx, e.FooterIcon, data)}
+	}
+	if e.Timestamp {
+		em.Timestamp = time.Now().Format(time.RFC3339)
+	}
+	for _, f := range e.Fields {
+		name := renderText(ctx, f.Name, data)
+		val := renderText(ctx, f.Value, data)
+		if name == "" || val == "" {
+			continue
+		}
+		em.Fields = append(em.Fields, &discordgo.MessageEmbedField{Name: name, Value: val, Inline: f.Inline})
 	}
 	return em
 }
 
-// buildEndedMessage composes the ended-state message: the winners embed and,
-// unless it's a link-less config, an optional "Jump to giveaway" button. The
-// Enter button is removed.
-func buildEndedEmbed(ctx context.Context, cfg Config, g store.Giveaway, winnerMentions []string, entryCount, memberCount int, guildName string) *discordgo.MessageEmbed {
+// ── Ended / cancelled state ──────────────────────────────────────────────────
+
+// buildEndedEmbed composes the compact ended-state card (title + winners +
+// footer) from the giveaway's Announce config, keeping the giveaway's colour and
+// image. The Enter button is dropped by the caller.
+func buildEndedEmbed(ctx context.Context, spec Spec, g store.Giveaway, winnerMentions []string, entryCount, memberCount int, guildName string) *discordgo.MessageEmbed {
 	data := scopeData(g, entryCount, winnerMentions, guildName, memberCount)
-	a := cfg.Announce
+	a := spec.Announce
 	em := &discordgo.MessageEmbed{
 		Title: fallback(renderText(ctx, a.EndedTitle, data), g.Prize),
-		Color: giveawayColor(g, cfg),
+		Color: embedAccent(spec, g.Color),
 	}
 	if g.ImageURL != "" {
 		em.Image = &discordgo.MessageEmbedImage{URL: g.ImageURL}
@@ -134,14 +174,9 @@ func buildEndedEmbed(ctx context.Context, cfg Config, g store.Giveaway, winnerMe
 	if len(winnerMentions) > 0 {
 		winnersVal = strings.Join(winnerMentions, ", ")
 	}
-	em.Fields = append(em.Fields,
-		&discordgo.MessageEmbedField{Name: orLabel(cfg.Embed.WinnersLabel, "Winners"), Value: winnersVal, Inline: false},
-	)
+	em.Fields = append(em.Fields, &discordgo.MessageEmbedField{Name: "Winners", Value: winnersVal, Inline: false})
 	if g.HostID != 0 {
-		em.Fields = append(em.Fields, inlineField(orLabel(cfg.Embed.HostedByLabel, "Hosted by"), "<@"+event.FormatID(g.HostID)+">"))
-	}
-	if cfg.ShowEntryCount {
-		em.Fields = append(em.Fields, inlineField(orLabel(cfg.Embed.EntriesLabel, "Entries"), strconv.Itoa(entryCount)))
+		em.Fields = append(em.Fields, inlineField("Hosted by", "<@"+event.FormatID(g.HostID)+">"))
 	}
 	if ft := renderText(ctx, a.EndedFooter, data); ft != "" {
 		em.Footer = &discordgo.MessageEmbedFooter{Text: ft}
@@ -150,19 +185,35 @@ func buildEndedEmbed(ctx context.Context, cfg Config, g store.Giveaway, winnerMe
 	return em
 }
 
+// buildCancelledEmbed composes the dimmed cancelled-state card.
+func buildCancelledEmbed(ctx context.Context, spec Spec, g store.Giveaway, guildName string, memberCount int) *discordgo.MessageEmbed {
+	data := scopeData(g, 0, nil, guildName, memberCount)
+	title := g.Prize
+	if len(spec.Embeds) > 0 {
+		title = fallback(renderText(ctx, spec.Embeds[0].Title, data), g.Prize)
+	}
+	return &discordgo.MessageEmbed{
+		Title:       title,
+		Description: "🚫 This giveaway was cancelled.",
+		Color:       embedAccent(spec, g.Color),
+	}
+}
+
+// ── Components ───────────────────────────────────────────────────────────────
+
 // enterComponents builds the single Enter button row. Its custom_id embeds the
 // giveaway id so a click resolves directly (no message-id round-trip).
-func enterComponents(cfg Config, giveawayID string) []discordgo.MessageComponent {
-	label := cfg.Button.Label
+func enterComponents(spec Spec, giveawayID string) []discordgo.MessageComponent {
+	label := spec.Button.Label
 	if strings.TrimSpace(label) == "" {
 		label = "Enter Giveaway"
 	}
 	btn := discordgo.Button{
 		Label:    label,
-		Style:    buttonStyle(cfg.Button.Style),
+		Style:    buttonStyle(spec.Button.Style),
 		CustomID: enterCustomID(giveawayID),
 	}
-	if em := componentEmoji(cfg.Button.Emoji); em != nil {
+	if em := componentEmoji(spec.Button.Emoji); em != nil {
 		btn.Emoji = em
 	}
 	return []discordgo.MessageComponent{discordgo.ActionsRow{Components: []discordgo.MessageComponent{btn}}}
@@ -170,8 +221,8 @@ func enterComponents(cfg Config, giveawayID string) []discordgo.MessageComponent
 
 // jumpComponents builds a "Jump to giveaway" link button row for the winner
 // announcement (empty when jump is off or the message isn't posted yet).
-func jumpComponents(cfg Config, g store.Giveaway) []discordgo.MessageComponent {
-	if !cfg.Announce.JumpButton || g.MessageID == 0 {
+func jumpComponents(spec Spec, g store.Giveaway) []discordgo.MessageComponent {
+	if !spec.Announce.JumpButton || g.MessageID == 0 {
 		return nil
 	}
 	url := "https://discord.com/channels/" + event.FormatID(g.GuildID) + "/" +
@@ -187,13 +238,6 @@ func inlineField(name, value string) *discordgo.MessageEmbedField {
 	return &discordgo.MessageEmbedField{Name: name, Value: value, Inline: true}
 }
 
-func orLabel(v, fallback string) string {
-	if strings.TrimSpace(v) == "" {
-		return fallback
-	}
-	return v
-}
-
 func fallback(v, alt string) string {
 	if strings.TrimSpace(v) == "" {
 		return alt
@@ -201,11 +245,30 @@ func fallback(v, alt string) string {
 	return v
 }
 
-func giveawayColor(g store.Giveaway, cfg Config) int {
-	if c := colorInt(g.Color, -1); c >= 0 {
+// embedEmpty reports whether a rendered embed carries nothing Discord would
+// display (so it can be dropped rather than rejected).
+func embedEmpty(em *discordgo.MessageEmbed) bool {
+	return em.Title == "" && em.Description == "" && len(em.Fields) == 0 &&
+		em.Image == nil && em.Thumbnail == nil && em.Author == nil && em.Footer == nil
+}
+
+// embedAccent resolves the giveaway's effective accent colour: the giveaway's
+// colour override, else the primary embed's colour, else the brand accent.
+func embedAccent(spec Spec, override string) int {
+	embedColor := ""
+	if len(spec.Embeds) > 0 {
+		embedColor = spec.Embeds[0].Color
+	}
+	return resolveColor(override, embedColor, brandAccent)
+}
+
+// resolveColor picks the first valid hex colour from override then base, falling
+// back to def.
+func resolveColor(override, base string, def int) int {
+	if c := colorInt(override, -1); c >= 0 {
 		return c
 	}
-	return colorInt(cfg.Embed.Color, brandAccent)
+	return colorInt(base, def)
 }
 
 // colorInt converts a #RRGGBB string to a Discord embed colour int (fallback on

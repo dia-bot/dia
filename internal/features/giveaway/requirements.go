@@ -117,6 +117,16 @@ func decodeRequirements(raw json.RawMessage) RequirementConfig {
 	return r
 }
 
+// decodeSpec parses a stored per-giveaway presentation Spec (the composed
+// message + button + announce + behaviour).
+func decodeSpec(raw json.RawMessage) Spec {
+	var s Spec
+	if len(raw) > 0 {
+		_ = json.Unmarshal(raw, &s)
+	}
+	return s
+}
+
 // requirementSummary renders the requirements as a compact human list for the
 // embed (empty string when there are none).
 func requirementSummary(req RequirementConfig) string {

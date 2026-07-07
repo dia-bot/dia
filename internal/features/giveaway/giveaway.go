@@ -3,7 +3,6 @@ package giveaway
 import (
 	"context"
 	"fmt"
-	"strconv"
 	"strings"
 	"time"
 
@@ -19,10 +18,6 @@ import (
 // back here and resolves its giveaway directly from the custom_id (no message-id
 // round-trip, and it keeps working for the life of the message).
 const componentPrefix = "giveaway:"
-
-// managePermBits are the guild permissions that always allow managing giveaways
-// (in addition to the guild owner and any configured manager roles).
-const managePermBits = int64(discordgo.PermissionManageServer | discordgo.PermissionAdministrator)
 
 // Plugin implements the giveaway feature.
 type Plugin struct {
@@ -42,11 +37,12 @@ func (*Plugin) Info() plugin.Info {
 	}
 }
 
-// Init wires the /giveaway command, the Enter-button component handler, and the
-// background sweeper that ends due giveaways.
+// Init wires the Enter-button component handler and the background sweeper that
+// posts scheduled giveaways and ends due ones. Giveaways are created and managed
+// from the dashboard (and by the custom-command "Start giveaway" step), so there
+// is deliberately no built-in slash command.
 func (p *Plugin) Init(ctx context.Context, d plugin.Deps, reg *plugin.Registrar) error {
 	p.deps = d
-	reg.Command(giveawayCommand(p))
 	reg.Component(componentPrefix, func(c *interactions.Context) error { return p.handleComponent(c) })
 	reg.Worker("giveaway-scheduler", func(ctx context.Context) { p.runScheduler(ctx) })
 	return nil
@@ -77,11 +73,7 @@ func (p *Plugin) handleComponent(c *interactions.Context) error {
 		return c.RespondEphemeral("This giveaway has already ended.")
 	}
 	uid, _ := event.ParseID(c.User.ID)
-
-	cfg, _, err := plugin.LoadConfig[Config](c.Ctx, d, gid, FeatureKey)
-	if err != nil {
-		return c.RespondEphemeral("Couldn't load the giveaway, try again in a moment.")
-	}
+	spec := decodeSpec(g.Spec)
 
 	// Toggle: leave if already entered (no re-validation needed to leave).
 	if has, _ := d.Store.Giveaways.HasEntry(c.Ctx, g.ID, uid); has {
@@ -89,11 +81,11 @@ func (p *Plugin) handleComponent(c *interactions.Context) error {
 			return c.RespondEphemeral("Couldn't update your entry, try again.")
 		}
 		_ = c.RespondEphemeral("You've left the giveaway for **" + g.Prize + "**.")
-		p.refreshLiveMessage(c.Ctx, cfg, g)
+		p.refreshLiveMessage(c.Ctx, spec, g)
 		return nil
 	}
 
-	if c.User.Bot && !cfg.AllowBotsToWin {
+	if c.User.Bot && !spec.AllowBotsToWin {
 		return c.RespondEphemeral("Bots can't enter this giveaway.")
 	}
 
@@ -111,7 +103,7 @@ func (p *Plugin) handleComponent(c *interactions.Context) error {
 		msg += fmt.Sprintf(" You have **%d** entries.", entries)
 	}
 	_ = c.RespondEphemeral(msg)
-	p.refreshLiveMessage(c.Ctx, cfg, g)
+	p.refreshLiveMessage(c.Ctx, spec, g)
 	return nil
 }
 
@@ -140,10 +132,11 @@ func (p *Plugin) entrantState(ctx context.Context, d plugin.Deps, guildID, userI
 	return e
 }
 
-// refreshLiveMessage re-renders the giveaway embed with the current entry count.
-// Best-effort: a failed edit (deleted message, missing perms) just leaves the
-// count momentarily stale until the next change or the end draw.
-func (p *Plugin) refreshLiveMessage(ctx context.Context, cfg Config, g store.Giveaway) {
+// refreshLiveMessage re-renders the giveaway message with the current entry
+// count. Best-effort: a failed edit (deleted message, missing perms) just leaves
+// the count momentarily stale until the next change or the end draw. Only the
+// embeds + button are edited so a role ping in the original content isn't re-sent.
+func (p *Plugin) refreshLiveMessage(ctx context.Context, spec Spec, g store.Giveaway) {
 	if g.MessageID == 0 {
 		return
 	}
@@ -152,14 +145,12 @@ func (p *Plugin) refreshLiveMessage(ctx context.Context, cfg Config, g store.Giv
 		return
 	}
 	name, memberCount := p.guildInfo(ctx, g.GuildID)
-	em := buildLiveEmbed(ctx, cfg, g, scopeData(g, count, nil, name, memberCount), count)
-	embeds := []*discordgo.MessageEmbed{em}
-	comps := enterComponents(cfg, g.ID)
+	send := buildLiveMessage(ctx, spec, g, count, name, memberCount)
 	_, err = p.deps.Discord.EditMessage(&discordgo.MessageEdit{
 		Channel:    event.FormatID(g.ChannelID),
 		ID:         event.FormatID(g.MessageID),
-		Embeds:     &embeds,
-		Components: &comps,
+		Embeds:     &send.Embeds,
+		Components: &send.Components,
 	})
 	if err != nil {
 		p.deps.Log.Debug("giveaway: refresh live message failed", "giveaway", g.ID, "err", err)
@@ -168,17 +159,23 @@ func (p *Plugin) refreshLiveMessage(ctx context.Context, cfg Config, g store.Giv
 
 // postGiveaway sends the live giveaway message (with an optional role ping above
 // it) and returns the posted message so the caller can record its id.
-func (p *Plugin) postGiveaway(ctx context.Context, cfg Config, g store.Giveaway, entryCount int) (*discordgo.Message, error) {
+func (p *Plugin) postGiveaway(ctx context.Context, spec Spec, g store.Giveaway, entryCount int) (*discordgo.Message, error) {
 	name, memberCount := p.guildInfo(ctx, g.GuildID)
-	send := buildLiveMessage(ctx, cfg, g, entryCount, name, memberCount)
-	if cfg.PingRoleID != "" {
-		send.Content = "<@&" + cfg.PingRoleID + ">"
-		send.AllowedMentions = &discordgo.MessageAllowedMentions{Roles: []string{cfg.PingRoleID}}
+	send := buildLiveMessage(ctx, spec, g, entryCount, name, memberCount)
+	if spec.PingRoleID != "" {
+		// The role ping rides above the giveaway as the message content; the
+		// composed spec.Content (if any) is folded in beneath it.
+		content := "<@&" + spec.PingRoleID + ">"
+		if send.Content != "" {
+			content += "\n" + send.Content
+		}
+		send.Content = content
+		send.AllowedMentions = &discordgo.MessageAllowedMentions{Roles: []string{spec.PingRoleID}}
 	}
 	return p.deps.Discord.SendMessage(event.FormatID(g.ChannelID), send)
 }
 
-// ── Guild + permission helpers ───────────────────────────────────────────────
+// ── Guild helpers ────────────────────────────────────────────────────────────
 
 // guildInfo returns the guild's display name and member count from the cached
 // snapshot (falls back to sensible defaults when unavailable).
@@ -195,40 +192,4 @@ func (p *Plugin) guildInfo(ctx context.Context, guildID int64) (name string, mem
 		name = snap.Meta.Name
 	}
 	return name, snap.Meta.MemberCount
-}
-
-// canManage reports whether the interaction actor may create/manage giveaways:
-// the guild owner, anyone holding a role with Manage Server / Administrator, or
-// anyone holding a configured manager role.
-func (p *Plugin) canManage(ctx context.Context, c *interactions.Context, cfg Config) bool {
-	if c.I.Member == nil {
-		return false
-	}
-	roles := c.I.Member.Roles
-	if p.deps.GuildState == nil {
-		return false
-	}
-	snap, err := p.deps.GuildState.Snapshot(ctx, c.GuildID)
-	if err != nil {
-		return false
-	}
-	if snap.Meta.OwnerID != "" && snap.Meta.OwnerID == c.User.ID {
-		return true
-	}
-	held := map[string]bool{}
-	for _, r := range roles {
-		held[r] = true
-		if contains(cfg.ManagerRoles, r) {
-			return true
-		}
-	}
-	for _, role := range snap.Roles {
-		if !held[role.ID] {
-			continue
-		}
-		if bits, err := strconv.ParseInt(strings.TrimSpace(role.Permissions), 10, 64); err == nil && bits&managePermBits != 0 {
-			return true
-		}
-	}
-	return false
 }

@@ -16,9 +16,9 @@ import (
 // race (already ended/cancelled), so the caller must not report success. Drawing
 // before the claim means a crash after the claim still leaves the correct winners
 // stored — only the best-effort announcement is lost. Shared by the sweeper, the
-// /giveaway end command, and the dashboard.
-func (p *Plugin) finishGiveaway(ctx context.Context, cfg Config, g store.Giveaway) bool {
-	winners, entryCount := p.drawFor(ctx, g, g.WinnerCount, p.baseExclude(cfg, g, nil))
+// step, and the dashboard. The giveaway carries its own presentation Spec.
+func (p *Plugin) finishGiveaway(ctx context.Context, spec Spec, g store.Giveaway) bool {
+	winners, entryCount := p.drawFor(ctx, g, g.WinnerCount, p.baseExclude(spec, g, nil))
 	claimed, ok, err := p.deps.Store.Giveaways.ClaimEnd(ctx, g.ID, winners)
 	if err != nil {
 		p.deps.Log.Warn("giveaway: claim end", "giveaway", g.ID, "err", err)
@@ -27,7 +27,7 @@ func (p *Plugin) finishGiveaway(ctx context.Context, cfg Config, g store.Giveawa
 	if !ok {
 		return false
 	}
-	p.announce(ctx, cfg, claimed, winners, entryCount, false)
+	p.announce(ctx, spec, claimed, winners, entryCount, false)
 	return true
 }
 
@@ -36,16 +36,16 @@ func (p *Plugin) finishGiveaway(ctx context.Context, cfg Config, g store.Giveawa
 // that yields nobody is a NO-OP: the existing winners, the public message and the
 // stored record are left untouched (returns nil). Otherwise it records + announces
 // the new winners and returns them.
-func (p *Plugin) rerollGiveaway(ctx context.Context, cfg Config, g store.Giveaway, count int) []int64 {
+func (p *Plugin) rerollGiveaway(ctx context.Context, spec Spec, g store.Giveaway, count int) []int64 {
 	count = clampWinners(count, g.WinnerCount)
-	winners, entryCount := p.drawFor(ctx, g, count, p.baseExclude(cfg, g, g.WinnerIDs))
+	winners, entryCount := p.drawFor(ctx, g, count, p.baseExclude(spec, g, g.WinnerIDs))
 	if len(winners) == 0 {
 		return nil // no eligible replacements — keep the original winners + message
 	}
 	if err := p.deps.Store.Giveaways.SetWinners(ctx, g.ID, winners); err != nil {
 		p.deps.Log.Warn("giveaway: set reroll winners", "giveaway", g.ID, "err", err)
 	}
-	p.announce(ctx, cfg, g, winners, entryCount, true)
+	p.announce(ctx, spec, g, winners, entryCount, true)
 	return winners
 }
 
@@ -61,12 +61,12 @@ func (p *Plugin) drawFor(ctx context.Context, g store.Giveaway, count int, exclu
 
 // baseExclude builds the set of ids the draw must skip: previously-drawn winners
 // (reroll) and, when configured, the host.
-func (p *Plugin) baseExclude(cfg Config, g store.Giveaway, prev []int64) map[int64]bool {
+func (p *Plugin) baseExclude(spec Spec, g store.Giveaway, prev []int64) map[int64]bool {
 	ex := make(map[int64]bool, len(prev)+1)
 	for _, id := range prev {
 		ex[id] = true
 	}
-	if cfg.ExcludeHost && g.HostID != 0 {
+	if spec.ExcludeHost && g.HostID != 0 {
 		ex[g.HostID] = true
 	}
 	return ex
@@ -75,7 +75,7 @@ func (p *Plugin) baseExclude(cfg Config, g store.Giveaway, prev []int64) map[int
 // announce switches the giveaway message to its ended state, posts the winner
 // announcement, DMs the winners, and publishes GIVEAWAY_ENDED. The winners are
 // already drawn + persisted by the caller.
-func (p *Plugin) announce(ctx context.Context, cfg Config, g store.Giveaway, winners []int64, entryCount int, rerolled bool) {
+func (p *Plugin) announce(ctx context.Context, spec Spec, g store.Giveaway, winners []int64, entryCount int, rerolled bool) {
 	d := p.deps
 	mentions := userMentions(winners)
 	name, memberCount := p.guildInfo(ctx, g.GuildID)
@@ -83,7 +83,7 @@ func (p *Plugin) announce(ctx context.Context, cfg Config, g store.Giveaway, win
 
 	// Switch the giveaway message to its ended state and drop the Enter button.
 	if g.MessageID != 0 {
-		em := buildEndedEmbed(ctx, cfg, g, mentions, entryCount, memberCount, name)
+		em := buildEndedEmbed(ctx, spec, g, mentions, entryCount, memberCount, name)
 		embeds := []*discordgo.MessageEmbed{em}
 		noComponents := []discordgo.MessageComponent{}
 		if _, err := d.Discord.EditMessage(&discordgo.MessageEdit{
@@ -96,10 +96,10 @@ func (p *Plugin) announce(ctx context.Context, cfg Config, g store.Giveaway, win
 		}
 	}
 
-	p.postAnnouncement(ctx, cfg, g, winners, data)
+	p.postAnnouncement(ctx, spec, g, winners, data)
 
-	if cfg.Announce.DMWinners && len(winners) > 0 {
-		if dm := renderText(ctx, cfg.Announce.DMMessage, data); dm != "" {
+	if spec.Announce.DMWinners && len(winners) > 0 {
+		if dm := renderText(ctx, spec.Announce.DMMessage, data); dm != "" {
 			for _, w := range winners {
 				if err := d.Discord.SendDM(event.FormatID(w), dm); err != nil {
 					d.Log.Debug("giveaway: winner DM failed", "user", w, "err", err)
@@ -130,21 +130,21 @@ func clampWinners(count, fallback int) int {
 // postAnnouncement posts the in-channel winner announcement (or the no-winners
 // message), optionally pinging the winners and adding a "Jump to giveaway"
 // button.
-func (p *Plugin) postAnnouncement(ctx context.Context, cfg Config, g store.Giveaway, winners []int64, data map[string]any) {
+func (p *Plugin) postAnnouncement(ctx context.Context, spec Spec, g store.Giveaway, winners []int64, data map[string]any) {
 	var content string
 	if len(winners) == 0 {
-		content = renderText(ctx, cfg.Announce.NoWinnersMessage, data)
+		content = renderText(ctx, spec.Announce.NoWinnersMessage, data)
 	} else {
-		content = renderText(ctx, cfg.Announce.Message, data)
+		content = renderText(ctx, spec.Announce.Message, data)
 	}
 	if content == "" {
 		return
 	}
 	send := &discordgo.MessageSend{Content: content}
-	if comps := jumpComponents(cfg, g); comps != nil {
+	if comps := jumpComponents(spec, g); comps != nil {
 		send.Components = comps
 	}
-	if cfg.Announce.PingWinners && len(winners) > 0 {
+	if spec.Announce.PingWinners && len(winners) > 0 {
 		ids := make([]string, len(winners))
 		for i, w := range winners {
 			ids[i] = event.FormatID(w)
@@ -220,17 +220,12 @@ func (p *Plugin) publishEnded(ctx context.Context, g store.Giveaway, winners []i
 
 // markCancelled edits a cancelled giveaway's message to a dimmed cancelled state
 // and removes the Enter button. Best-effort.
-func (p *Plugin) markCancelled(ctx context.Context, cfg Config, g store.Giveaway) {
+func (p *Plugin) markCancelled(ctx context.Context, spec Spec, g store.Giveaway) {
 	if g.MessageID == 0 {
 		return
 	}
 	name, memberCount := p.guildInfo(ctx, g.GuildID)
-	data := scopeData(g, 0, nil, name, memberCount)
-	em := &discordgo.MessageEmbed{
-		Title:       fallback(renderText(ctx, cfg.Embed.Title, data), g.Prize),
-		Description: "🚫 This giveaway was cancelled.",
-		Color:       giveawayColor(g, cfg),
-	}
+	em := buildCancelledEmbed(ctx, spec, g, name, memberCount)
 	embeds := []*discordgo.MessageEmbed{em}
 	noComponents := []discordgo.MessageComponent{}
 	if _, err := p.deps.Discord.EditMessage(&discordgo.MessageEdit{

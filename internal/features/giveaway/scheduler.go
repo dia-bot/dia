@@ -57,8 +57,9 @@ func (p *Plugin) sweep(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
-		cfg, _, _ := plugin.LoadConfig[Config](ctx, p.deps, g.GuildID, FeatureKey)
-		p.finishGiveaway(ctx, cfg, g)
+		// The giveaway carries its own presentation spec; no feature-config load
+		// is needed to end it.
+		p.finishGiveaway(ctx, decodeSpec(g.Spec), g)
 	}
 }
 
@@ -68,7 +69,7 @@ func (p *Plugin) sweep(ctx context.Context) {
 // message id. If the feature was disabled since scheduling, the giveaway is
 // cancelled so its row doesn't linger.
 func (p *Plugin) postScheduled(ctx context.Context, g store.Giveaway) {
-	cfg, enabled, err := plugin.LoadConfig[Config](ctx, p.deps, g.GuildID, FeatureKey)
+	_, enabled, err := plugin.LoadConfig[Config](ctx, p.deps, g.GuildID, FeatureKey)
 	if err != nil {
 		return
 	}
@@ -84,7 +85,7 @@ func (p *Plugin) postScheduled(ctx context.Context, g store.Giveaway) {
 	if !ok {
 		return // another sweep already activated it
 	}
-	msg, err := p.postGiveaway(ctx, cfg, claimed, 0)
+	msg, err := p.postGiveaway(ctx, decodeSpec(claimed.Spec), claimed, 0)
 	if err != nil {
 		// The giveaway is now running but unposted; the end sweep will still draw
 		// from any (unlikely) entries and announce to the channel. Not double-posted.
