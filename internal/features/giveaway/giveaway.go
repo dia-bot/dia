@@ -2,7 +2,6 @@ package giveaway
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"time"
 
@@ -91,42 +90,76 @@ func (p *Plugin) handleComponent(c *interactions.Context) error {
 	if err != nil {
 		return c.RespondEphemeral("This giveaway is no longer available.")
 	}
+	spec := decodeSpec(g.Spec)
 	if g.Status != "running" {
-		return c.RespondEphemeral("This giveaway has already ended.")
+		return c.RespondEphemeral(p.entryReply(c.Ctx, g, spec.Entry.Ended, defaultEnded, 0, ""))
 	}
 	uid, _ := event.ParseID(c.User.ID)
-	spec := decodeSpec(g.Spec)
 
 	// Toggle: leave if already entered (no re-validation needed to leave).
 	if has, _ := d.Store.Giveaways.HasEntry(c.Ctx, g.ID, uid); has {
 		if _, err := d.Store.Giveaways.RemoveEntry(c.Ctx, g.ID, uid); err != nil {
 			return c.RespondEphemeral("Couldn't update your entry, try again.")
 		}
-		_ = c.RespondEphemeral("You've left the giveaway for **" + g.Prize + "**.")
+		_ = c.RespondEphemeral(p.entryReply(c.Ctx, g, spec.Entry.Left, defaultLeft, 0, ""))
 		p.refreshLiveMessage(c.Ctx, spec, g)
+		p.publishEntered(c.Ctx, g, c.User, c.I.Member, "left", 0, "")
 		return nil
 	}
 
 	if c.User.Bot && !spec.AllowBotsToWin {
-		return c.RespondEphemeral("Bots can't enter this giveaway.")
+		_ = c.RespondEphemeral(p.entryReply(c.Ctx, g, spec.Entry.BotsBlocked, defaultBotsBlocked, 0, ""))
+		p.publishEntered(c.Ctx, g, c.User, c.I.Member, "blocked", 0, "")
+		return nil
 	}
 
 	req := decodeRequirements(g.Requirements)
 	ent := p.entrantState(c.Ctx, d, gid, uid, c.User.ID, c.I.Member, req)
 	eligible, reason, entries := evaluateEntry(req, ent)
 	if !eligible {
-		return c.RespondEphemeral("❌ " + reason)
+		_ = c.RespondEphemeral(p.entryReply(c.Ctx, g, spec.Entry.NotEligible, defaultNotEligible, 0, reason))
+		p.publishEntered(c.Ctx, g, c.User, c.I.Member, "denied", 0, reason)
+		return nil
 	}
 	if _, err := d.Store.Giveaways.AddEntry(c.Ctx, g.ID, uid, entries); err != nil {
 		return c.RespondEphemeral("Couldn't record your entry, try again.")
 	}
-	msg := "🎉 You're entered into the giveaway for **" + g.Prize + "**!"
-	if entries > 1 {
-		msg += fmt.Sprintf(" You have **%d** entries.", entries)
-	}
-	_ = c.RespondEphemeral(msg)
+	_ = c.RespondEphemeral(p.entryReply(c.Ctx, g, spec.Entry.Entered, defaultEntered, entries, ""))
 	p.refreshLiveMessage(c.Ctx, spec, g)
+	p.publishEntered(c.Ctx, g, c.User, c.I.Member, "entered", entries, "")
 	return nil
+}
+
+// entryReply renders the ephemeral reply for one entry outcome: the giveaway's
+// own template when set, otherwise the built-in default, against the giveaway
+// scope plus {{ .Entries }} (weighted tickets) and {{ .Reason }} (denial text). A
+// custom template that renders empty falls back to the default, so a member
+// always gets a reply.
+func (p *Plugin) entryReply(ctx context.Context, g store.Giveaway, custom, def string, entries int, reason string) string {
+	data := p.entryScope(ctx, g, entries, reason)
+	src := custom
+	if strings.TrimSpace(src) == "" {
+		src = def
+	}
+	out := renderText(ctx, src, data)
+	if out == "" {
+		out = renderText(ctx, def, data)
+	}
+	if out == "" {
+		out = "Done."
+	}
+	return out
+}
+
+// entryScope builds the template scope for an entry reply: the shared giveaway
+// scope with the clicker's weighted ticket count and any denial reason folded in.
+func (p *Plugin) entryScope(ctx context.Context, g store.Giveaway, entries int, reason string) map[string]any {
+	name, memberCount := p.guildInfo(ctx, g.GuildID)
+	count, _ := p.deps.Store.Giveaways.EntryCount(ctx, g.ID)
+	data := scopeData(g, count, nil, name, memberCount)
+	data["Entries"] = entries
+	data["Reason"] = reason
+	return data
 }
 
 // handleActionButton fires the saved automation a composed action button points

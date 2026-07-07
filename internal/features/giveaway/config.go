@@ -48,6 +48,14 @@ type Config struct {
 	// Automations canvas, NOT the Giveaways settings page, so settings saves pass
 	// through MergeStoredTail and can't clobber a flow wired on the canvas.
 	Tail []cc.Step `json:"tail,omitempty"`
+
+	// EntryTail is the canvas-owned follow-up flow for the built-in "On giveaway
+	// entry" automation: the steps an admin wires to run every time a member clicks
+	// Enter (reward a role on entry, log a denial, DM a confirmation), branching on
+	// .Event.outcome. It runs as a durable automation run on the giveaway_entered
+	// event. Like Tail it is owned by the Automations canvas, so MergeStoredTail
+	// preserves it across Giveaways-settings saves.
+	EntryTail []cc.Step `json:"entry_tail,omitempty"`
 }
 
 // Preset is a reusable giveaway template. It bundles the composed message Spec,
@@ -74,6 +82,7 @@ type Spec struct {
 	Embeds     []cc.EmbedSpec `json:"embeds,omitempty"`
 	Button     ButtonConfig   `json:"button"`
 	Announce   AnnounceConfig `json:"announce"`
+	Entry      EntryConfig    `json:"entry"`
 	PingRoleID string         `json:"ping_role_id,omitempty"` // pinged above the live message on start
 
 	// Components are extra user-composed button rows shown under the giveaway
@@ -101,6 +110,21 @@ type Spec struct {
 	// Draw behaviour.
 	ExcludeHost    bool `json:"exclude_host"` // the host can't win their own giveaway
 	AllowBotsToWin bool `json:"allow_bots_to_win"`
+}
+
+// EntryConfig customizes the ephemeral reply a member gets when they click the
+// Enter button, per outcome. Every field is a Go template over the giveaway scope
+// plus {{ .Entries }} (their weighted ticket count) and {{ .Reason }} (why entry
+// was denied). An empty field falls back to the built-in copy, so a giveaway is
+// never left with a blank reply. These are what the member sees; side effects
+// ("also give them a role", "log the denial") live in the built-in on-entry
+// automation (Config.EntryTail), reachable from the editor's Advanced button.
+type EntryConfig struct {
+	Entered     string `json:"entered,omitempty"`      // success (has {{ .Entries }})
+	Left        string `json:"left,omitempty"`         // toggled off (member leaves)
+	NotEligible string `json:"not_eligible,omitempty"` // failed a requirement (has {{ .Reason }})
+	BotsBlocked string `json:"bots_blocked,omitempty"` // a bot clicked and bots can't win
+	Ended       string `json:"ended,omitempty"`        // clicked after the giveaway ended
 }
 
 // ButtonConfig customizes the Enter button.
@@ -152,6 +176,29 @@ type BonusEntry struct {
 
 // defaultPresetID is the stable id of the built-in preset.
 const defaultPresetID = "default"
+
+// Default entry-reply copy, shared by defaultSpec() (what the editor seeds and
+// shows) and the runtime (the fallback when a giveaway leaves a field blank), so
+// the two can never drift. Each is a Go template over the giveaway scope plus
+// {{ .Entries }} / {{ .Reason }}.
+const (
+	defaultEntered     = "🎉 You're entered into the giveaway for **{{ .Prize }}**!{{ if gt .Entries 1 }} You have **{{ .Entries }}** entries.{{ end }}"
+	defaultLeft        = "You've left the giveaway for **{{ .Prize }}**."
+	defaultNotEligible = "❌ {{ .Reason }}"
+	defaultBotsBlocked = "Bots can't enter this giveaway."
+	defaultEnded       = "This giveaway has already ended."
+)
+
+// defaultEntry returns the built-in per-outcome entry replies.
+func defaultEntry() EntryConfig {
+	return EntryConfig{
+		Entered:     defaultEntered,
+		Left:        defaultLeft,
+		NotEligible: defaultNotEligible,
+		BotsBlocked: defaultBotsBlocked,
+		Ended:       defaultEnded,
+	}
+}
 
 // Default returns a ready-to-use config with one built-in preset that reproduces
 // the classic giveaway look (a rose-accent embed with Host/Ends/Winners/Entries
@@ -216,6 +263,7 @@ func defaultSpec() Spec {
 			DMWinners:        false,
 			DMMessage:        "🎉 You won **{{ .Prize }}** in {{ .Server }}! Contact the host {{ .Host }} to claim your prize.",
 		},
+		Entry:            defaultEntry(),
 		ShowRequirements: true,
 		ExcludeHost:      false,
 		AllowBotsToWin:   false,
@@ -246,11 +294,11 @@ func (c Config) preset(id string) Preset {
 }
 
 // MergeStoredTail returns the incoming giveaway config JSON with its
-// canvas-owned Tail replaced by the stored one, so a save from the Giveaways
-// settings page (which doesn't know about the built-in automation's follow-up
-// flow) can't wipe a tail wired on the Automations canvas. Mirrors
-// roles.MergeStoredActions / moderation.MergeStoredRuleTails. On any
-// decode/encode error the incoming bytes are returned unchanged.
+// canvas-owned tails (Tail, EntryTail) replaced by the stored ones, so a save
+// from the Giveaways settings page (which doesn't know about the built-in
+// automations' follow-up flows) can't wipe a flow wired on the Automations
+// canvas. Mirrors roles.MergeStoredActions / moderation.MergeStoredRuleTails. On
+// any decode/encode error the incoming bytes are returned unchanged.
 func MergeStoredTail(incoming, stored []byte) []byte {
 	var in, st Config
 	if err := json.Unmarshal(incoming, &in); err != nil {
@@ -260,6 +308,7 @@ func MergeStoredTail(incoming, stored []byte) []byte {
 		return incoming
 	}
 	in.Tail = st.Tail
+	in.EntryTail = st.EntryTail
 	out, err := json.Marshal(in)
 	if err != nil {
 		return incoming

@@ -218,6 +218,56 @@ func (p *Plugin) publishEnded(ctx context.Context, g store.Giveaway, winners []i
 	}
 }
 
+// publishEntered emits the GIVEAWAY_ENTERED event so the built-in "on entry"
+// automation (and any user flow on the giveaway_entry trigger) can react to a
+// member clicking Enter. The clicker is carried as .User / .Member; outcome is
+// one of entered/left/denied/blocked, with entries (weighted tickets) on a
+// successful entry and reason on a denial. Best-effort: a bus hiccup just skips
+// the automation, never the member's reply.
+func (p *Plugin) publishEntered(ctx context.Context, g store.Giveaway, user event.User, member *event.Member, outcome string, entries int, reason string) {
+	d := p.deps
+	if d.Bus == nil {
+		return
+	}
+	gidStr := event.FormatID(g.GuildID)
+	count, _ := d.Store.Giveaways.EntryCount(ctx, g.ID)
+	payload := event.GiveawayEntered{
+		GuildID:    gidStr,
+		GiveawayID: g.ID,
+		ChannelID:  event.FormatID(g.ChannelID),
+		Prize:      g.Prize,
+		Outcome:    outcome,
+		Entries:    entries,
+		Reason:     reason,
+		EntryCount: count,
+		User:       user,
+		Member:     member,
+	}
+	if g.MessageID != 0 {
+		payload.MessageID = event.FormatID(g.MessageID)
+	}
+	if g.HostID != 0 {
+		payload.HostID = event.FormatID(g.HostID)
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return
+	}
+	envBytes, err := json.Marshal(event.Envelope{
+		Type:    event.TypeGiveawayEntered,
+		GuildID: gidStr,
+		TS:      time.Now().UnixMilli(),
+		Data:    data,
+	})
+	if err != nil {
+		return
+	}
+	subject := event.Subject(event.TypeGiveawayEntered, gidStr)
+	if err := d.Bus.Publish(ctx, subject, envBytes, ""); err != nil {
+		d.Log.Warn("giveaway: publish entered failed", "subject", subject, "err", err)
+	}
+}
+
 // markCancelled edits a cancelled giveaway's message to a dimmed cancelled state
 // and removes the Enter button. Best-effort.
 func (p *Plugin) markCancelled(ctx context.Context, spec Spec, g store.Giveaway) {
