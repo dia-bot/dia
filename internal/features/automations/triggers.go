@@ -90,6 +90,7 @@ var Triggers = []TriggerKind{
 
 	// Giveaways
 	{Key: "giveaway_ended", Label: "Giveaway ends", Description: "A giveaway is drawn (natural end, manual end, or reroll). .User is the first winner; loop .Event.winner_ids for all winners.", Event: event.TypeGiveawayEnded, Category: CatGiveaways, Actor: "the first winner (if any)", HasChannel: true, Filters: []Filter{FilterChannels, FilterCooldown}},
+	{Key: "giveaway_entry", Label: "Giveaway entered", Description: "A member clicks a giveaway's Enter button. Branch on .Event.outcome (entered, left, denied, blocked). .User is the member who clicked.", Event: event.TypeGiveawayEntered, Category: CatGiveaways, Actor: "the member who clicked Enter", HasChannel: true, Filters: []Filter{FilterChannels, FilterIgnoreBots, FilterCooldown}},
 }
 
 // triggerByKey indexes the catalogue.

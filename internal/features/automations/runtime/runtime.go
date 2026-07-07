@@ -105,13 +105,14 @@ func (p *Plugin) handleEvent(ctx context.Context, et event.Type, env *event.Enve
 		waiting, _ = p.deps.Store.AutomationRuns.FindWaitingByKind(ctx, gid, waitKind)
 	}
 
-	// The giveaway feature's built-in "Draw giveaway winners" automation carries
-	// an editable follow-up tail (stored on its config) that runs on this event
-	// alongside any user-authored automations. Load it here so an otherwise-empty
-	// dispatch still runs it (only touches the store on giveaway_ended).
-	giveawayTail := p.giveawayTail(ctx, et, gid)
+	// The giveaway feature's two built-in automations carry editable follow-up
+	// tails (stored on its config) that run alongside any user-authored automations
+	// on their respective events: "Draw giveaway winners" on giveaway_ended and "On
+	// giveaway entry" on giveaway_entered. Load whichever matches (only touches the
+	// store on those two events) so an otherwise-empty dispatch still runs it.
+	drawTail, entryTail := p.giveawayTails(ctx, et, gid)
 
-	if len(autos) == 0 && len(waiting) == 0 && len(giveawayTail) == 0 {
+	if len(autos) == 0 && len(waiting) == 0 && len(drawTail) == 0 && len(entryTail) == 0 {
 		return nil
 	}
 
@@ -133,8 +134,11 @@ func (p *Plugin) handleEvent(ctx context.Context, et event.Type, env *event.Enve
 		}
 	}
 
-	if len(giveawayTail) > 0 {
-		p.runBuiltinTail(ctx, "giveaway.ended", "giveaway_ended", giveawayTail, ec)
+	if len(drawTail) > 0 {
+		p.runBuiltinTail(ctx, "giveaway.ended", "giveaway_ended", drawTail, ec)
+	}
+	if len(entryTail) > 0 {
+		p.runBuiltinTail(ctx, "giveaway.entry", "giveaway_entry", entryTail, ec)
 	}
 
 	if len(waiting) > 0 {
@@ -419,6 +423,26 @@ func (p *Plugin) prepare(ctx context.Context, et event.Type, env *event.Envelope
 			"channel_id":   g.ChannelID,
 		}
 
+	case event.TypeGiveawayEntered:
+		g, err := plugin.DecodeData[event.GiveawayEntered](env)
+		if err != nil {
+			return nil, false
+		}
+		ec.user = g.User // the member who clicked Enter
+		ec.member = g.Member
+		ec.channelID = g.ChannelID
+		ec.eventMap = map[string]any{
+			"giveaway_id": g.GiveawayID,
+			"prize":       g.Prize,
+			"host_id":     g.HostID,
+			"outcome":     g.Outcome,
+			"entries":     g.Entries,
+			"reason":      g.Reason,
+			"entry_count": g.EntryCount,
+			"message_id":  g.MessageID,
+			"channel_id":  g.ChannelID,
+		}
+
 	case event.TypeMessageCreate, event.TypeMessageUpdate:
 		m, err := decodeMessage(et, env)
 		if err != nil {
@@ -685,23 +709,27 @@ func (p *Plugin) run(ctx context.Context, a store.Automation, ec *eventContext) 
 	return nil
 }
 
-// giveawayTail returns the giveaway feature's built-in follow-up flow (its
-// canvas-owned Config.Tail) for a giveaway_ended event, or nil when the event
-// is something else, the feature is off, or no tail is wired. It only reads the
-// store on giveaway_ended, so every other event stays a cheap no-op.
-func (p *Plugin) giveawayTail(ctx context.Context, et event.Type, gid int64) []cc.Step {
-	if et != event.TypeGiveawayEnded {
-		return nil
+// giveawayTails returns the giveaway feature's built-in follow-up flows for the
+// event being dispatched: the post-draw tail (Config.Tail) on giveaway_ended and
+// the on-entry tail (Config.EntryTail) on giveaway_entered. Both are nil when the
+// event is something else, the feature is off, or no tail is wired. It only reads
+// the store on those two events, so every other event stays a cheap no-op.
+func (p *Plugin) giveawayTails(ctx context.Context, et event.Type, gid int64) (draw, entry []cc.Step) {
+	if et != event.TypeGiveawayEnded && et != event.TypeGiveawayEntered {
+		return nil, nil
 	}
 	fc, err := p.deps.Store.Features.Get(ctx, gid, giveaway.FeatureKey)
 	if err != nil || !fc.Enabled || len(fc.Config) == 0 {
-		return nil
+		return nil, nil
 	}
 	var cfg giveaway.Config
 	if json.Unmarshal(fc.Config, &cfg) != nil {
-		return nil
+		return nil, nil
 	}
-	return cfg.Tail
+	if et == event.TypeGiveawayEntered {
+		return nil, cfg.EntryTail
+	}
+	return cfg.Tail, nil
 }
 
 // runBuiltinTail runs a managed feature's built-in follow-up flow as a durable

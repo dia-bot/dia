@@ -163,17 +163,30 @@ func BuildBuiltins(configs map[string]json.RawMessage, featureEnabled map[string
 		_ = json.Unmarshal(raw, &gcfg)
 	}
 	gEnabled := featureEnabled[giveaway.FeatureKey]
-	out = append(out, Builtin{
-		Key:         "giveaway.ended",
-		Name:        "Draw giveaway winners",
-		Description: "When a giveaway ends it filters entries, draws weighted winners and announces them, then runs your follow-up steps. Managed on the Giveaways tab.",
-		TriggerType: "giveaway_ended",
-		FeatureKey:  giveaway.FeatureKey,
-		FeatureName: "Giveaways",
-		FeatureTab:  "giveaways",
-		Enabled:     gEnabled,
-		Definition:  giveawayFlow(gcfg),
-	})
+	out = append(out,
+		Builtin{
+			Key:         "giveaway.ended",
+			Name:        "Draw giveaway winners",
+			Description: "When a giveaway ends it filters entries, draws weighted winners and announces them, then runs your follow-up steps. Managed on the Giveaways tab.",
+			TriggerType: "giveaway_ended",
+			FeatureKey:  giveaway.FeatureKey,
+			FeatureName: "Giveaways",
+			FeatureTab:  "giveaways",
+			Enabled:     gEnabled,
+			Definition:  giveawayFlow(gcfg),
+		},
+		Builtin{
+			Key:         "giveaway.entry",
+			Name:        "On giveaway entry",
+			Description: "Runs every time a member clicks Enter, after Dia records the entry and replies. Branch on .Event.outcome (entered / left / denied / blocked) to reward a role, log a denial, or DM a confirmation. Managed on the Giveaways tab.",
+			TriggerType: "giveaway_entry",
+			FeatureKey:  giveaway.FeatureKey,
+			FeatureName: "Giveaways",
+			FeatureTab:  "giveaways",
+			Enabled:     gEnabled,
+			Definition:  giveawayEntryFlow(gcfg),
+		},
+	)
 
 	return out
 }
@@ -190,6 +203,21 @@ func giveawayFlow(cfg giveaway.Config) cc.Definition {
 		Kind: cc.KindNoop,
 	}}
 	steps = append(steps, cfg.Tail...)
+	return cc.Definition{Steps: steps}
+}
+
+// giveawayEntryFlow renders the on-entry flow as a read-only spine node (the
+// giveaway feature records the entry and sends the per-outcome reply natively —
+// no step program) followed by the editable follow-up tail the admin wires off
+// its out handle. Mirrors giveawayFlow: the "builtin-entry" spine is
+// generated/read-only, while cfg.EntryTail is appended as real, persisted steps
+// that run on the giveaway_entered event after the entry is recorded.
+func giveawayEntryFlow(cfg giveaway.Config) cc.Definition {
+	steps := []cc.Step{{
+		ID:   "builtin-entry",
+		Kind: cc.KindNoop,
+	}}
+	steps = append(steps, cfg.EntryTail...)
 	return cc.Definition{Steps: steps}
 }
 
