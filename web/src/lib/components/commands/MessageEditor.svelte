@@ -54,7 +54,8 @@
 		cardUrl = '',
 		cardAspect = '1024/450',
 		onCardToggle,
-		onCardEdit
+		onCardEdit,
+		buttonExtras
 	}: {
 		step: Step;
 		// Which message features this step kind supports (mirrors the Go spec).
@@ -77,6 +78,11 @@
 		cardAspect?: string;
 		onCardToggle?: (on: boolean) => void;
 		onCardEdit?: () => void;
+		// Optional per-button controls rendered inside a button's inline editor
+		// (when clickPaths is off), e.g. the giveaway's Enter / Run-automation
+		// action picker — so a feature can edit a button's behaviour right in the
+		// preview instead of a separate form.
+		buttonExtras?: import('svelte').Snippet<[{ component: AnySpec; ri: number; ci: number }]>;
 	} = $props();
 
 	// In automations, raw custom-id editing is hidden — buttons are wired by the
@@ -664,11 +670,15 @@
 															})}
 													/>
 												{:else if !clickPaths}
-													<p class="mt-2 text-[10px] leading-snug text-muted-foreground">
-														To make a click do something, open <span class="font-medium text-foreground">Advanced</span>
-														and drag this button's dot to an action. Or choose the
-														<span class="font-medium text-foreground">link</span> style above to open a URL.
-													</p>
+													{#if buttonExtras}
+														{@render buttonExtras({ component: c, ri, ci })}
+													{:else}
+														<p class="mt-2 text-[10px] leading-snug text-muted-foreground">
+															To make a click do something, open <span class="font-medium text-foreground">Advanced</span>
+															and drag this button's dot to an action. Or choose the
+															<span class="font-medium text-foreground">link</span> style above to open a URL.
+														</p>
+													{/if}
 												{:else if c.custom_id_manual}
 													<input
 														class="mt-1.5 h-7 w-full rounded-md border border-input bg-background px-2 font-mono text-[11px] text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"

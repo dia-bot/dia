@@ -142,8 +142,16 @@ export function defaultSpec(): GiveawaySpec {
 				]
 			}
 		],
-		components: [],
-		enter_button_suffix: '',
+		// A real, visible Enter button (edited in the message preview); nothing is
+		// added invisibly. enter_button_suffix points at it.
+		components: [
+			{
+				components: [
+					{ type: 'button', style: 'primary', label: 'Enter Giveaway', emoji: '🎉', custom_id_suffix: 'enter' }
+				]
+			}
+		],
+		enter_button_suffix: 'enter',
 		button_actions: {},
 		button: { label: 'Enter Giveaway', emoji: '🎉', style: 'primary' },
 		announce: {

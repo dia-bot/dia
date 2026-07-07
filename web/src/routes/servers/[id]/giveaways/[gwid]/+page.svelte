@@ -16,6 +16,7 @@
 		type GiveawayConfig,
 		type GiveawaySpec,
 		type ComponentRow,
+		type Component,
 		type Preset,
 		type RequirementConfig
 	} from '$lib/giveaway';
@@ -387,45 +388,43 @@
 		req.bonus_entries = (req.bonus_entries ?? []).filter((_, j) => j !== i);
 	}
 
-	const styleOptions = [
-		{ value: 'primary', label: 'Blurple' },
-		{ value: 'success', label: 'Green' },
-		{ value: 'danger', label: 'Red' },
-		{ value: 'secondary', label: 'Grey' }
-	];
 	const presetOptions = $derived(cfg.presets.map((p) => ({ value: p.id, label: p.name })));
 	const isPresetUpdate = $derived(!!sourcePresetId && cfg.presets.some((p) => p.id === sourcePresetId));
 
-	// The composed non-link buttons that can act as the entry button, for the
-	// entry-button picker below.
+	// The composed non-link buttons (each editable in the message preview). A
+	// button's action (Enter / Run automation / Nothing) is set inline there.
 	const messageButtons = $derived(
 		(((msgStep.spec as Record<string, unknown>)?.components as ComponentRow[]) ?? [])
 			.flatMap((r) => r.components ?? [])
 			.filter((c) => (c.type ?? 'button') === 'button' && c.style !== 'link' && !!c.custom_id_suffix)
 	);
-	const entryOptions = $derived([
-		{ value: '', label: 'Auto — add a default Enter button' },
-		...messageButtons.map((c) => ({
-			value: c.custom_id_suffix as string,
-			label: c.label?.trim() || (c.custom_id_suffix as string)
-		}))
-	]);
-	// If the chosen entry button gets deleted/renamed, fall back to Auto so the
-	// giveaway stays enterable.
-	$effect(() => {
-		if (enterButtonSuffix && !messageButtons.some((c) => c.custom_id_suffix === enterButtonSuffix)) {
-			enterButtonSuffix = '';
-		}
-	});
-	const usingComposedEntry = $derived(!!enterButtonSuffix);
-
-	// Buttons that can fire an automation on click: composed non-link buttons that
-	// aren't the entry button.
-	const actionButtons = $derived(messageButtons.filter((c) => c.custom_id_suffix !== enterButtonSuffix));
+	// Whether some visible button is wired to enter — else members can't enter.
+	const hasEnterButton = $derived(messageButtons.some((c) => c.custom_id_suffix === enterButtonSuffix));
 	const automationOptions = $derived([
-		{ value: '', label: 'No action' },
+		{ value: '', label: 'Choose an automation…' },
 		...automationList.map((a) => ({ value: a.id, label: a.name }))
 	]);
+	// A button's current action mode, and setters, driven by the inline picker.
+	function buttonMode(suffix: string): 'enter' | 'auto' | 'none' {
+		if (enterButtonSuffix === suffix) return 'enter';
+		if (suffix in buttonActions) return 'auto';
+		return 'none';
+	}
+	function setButtonMode(suffix: string, mode: 'enter' | 'auto' | 'none') {
+		if (mode === 'enter') {
+			enterButtonSuffix = suffix;
+			delete buttonActions[suffix];
+			buttonActions = { ...buttonActions };
+		} else {
+			if (enterButtonSuffix === suffix) enterButtonSuffix = '';
+			if (mode === 'auto') {
+				if (!(suffix in buttonActions)) buttonActions[suffix] = '';
+			} else {
+				delete buttonActions[suffix];
+				buttonActions = { ...buttonActions };
+			}
+		}
+	}
 	const canPublish = $derived(!!prize.trim() && !!channelId);
 	const showTiming = $derived(isNew || status === 'draft');
 
@@ -552,6 +551,57 @@
 	<title>{title} · Giveaways · Dia</title>
 </svelte:head>
 
+<!-- Per-button action picker, rendered inline inside each button in the message
+     preview (see MessageEditor buttonExtras). Edit the button's LOOK in the
+     preview; set what it DOES here. -->
+{#snippet buttonAction({ component }: { component: Component; ri: number; ci: number })}
+	{@const suffix = component.custom_id_suffix}
+	{#if suffix}
+		{@const mode = buttonMode(suffix)}
+		<div class="mt-2 space-y-1.5">
+			<span class="font-mono text-[9.5px] font-medium uppercase tracking-[0.14em] text-muted-foreground">Action</span>
+			<div class="flex rounded-md border border-input p-0.5" role="radiogroup" aria-label="Button action">
+				<button
+					type="button"
+					role="radio"
+					aria-checked={mode === 'enter'}
+					class="flex-1 rounded px-2 py-0.5 text-[10px] font-medium transition-colors {mode === 'enter' ? 'bg-secondary text-foreground' : 'text-muted-foreground hover:text-foreground'}"
+					onclick={() => setButtonMode(suffix, 'enter')}
+				>
+					Enter giveaway
+				</button>
+				<button
+					type="button"
+					role="radio"
+					aria-checked={mode === 'auto'}
+					class="flex-1 rounded px-2 py-0.5 text-[10px] font-medium transition-colors {mode === 'auto' ? 'bg-secondary text-foreground' : 'text-muted-foreground hover:text-foreground'}"
+					onclick={() => setButtonMode(suffix, 'auto')}
+				>
+					Run automation
+				</button>
+				<button
+					type="button"
+					role="radio"
+					aria-checked={mode === 'none'}
+					class="flex-1 rounded px-2 py-0.5 text-[10px] font-medium transition-colors {mode === 'none' ? 'bg-secondary text-foreground' : 'text-muted-foreground hover:text-foreground'}"
+					onclick={() => setButtonMode(suffix, 'none')}
+				>
+					Nothing
+				</button>
+			</div>
+			{#if mode === 'auto'}
+				{#if automationList.length === 0}
+					<p class="text-[10px] leading-snug text-muted-foreground">
+						No automations yet. Build one on the Automations tab, then pick it here.
+					</p>
+				{:else}
+					<Select bind:value={buttonActions[suffix]} options={automationOptions} />
+				{/if}
+			{/if}
+		</div>
+	{/if}
+{/snippet}
+
 <div class="flex h-full flex-col bg-bg text-ink">
 	<!-- ── Header (matches the shared page-header chrome) ─────────────────────── -->
 	<header class="flex min-h-12 shrink-0 flex-wrap items-center gap-2.5 border-b border-line bg-bg px-4 py-2 sm:px-5">
@@ -661,7 +711,7 @@
 			</div>
 		{:else}
 			<div class="pb-24">
-				<ModSection label="Message" desc="Compose the message, embeds and buttons like any other tab. Add link buttons, or a button to enter (picked below); if you don't, an Enter button is added automatically.">
+				<ModSection label="Message" desc="Compose the message, embeds and buttons right here. Click a button to set what it does: enter the giveaway, run one of your automations, or open a link.">
 					<div class="max-w-2xl">
 						{#if !readOnly}
 							<p class="mb-2 text-[12px] text-muted">
@@ -671,52 +721,16 @@
 								<code class="rounded bg-surface px-1 font-mono text-[11px]">{'{{ .Winners }}'}</code>.
 							</p>
 						{/if}
+						{#if !readOnly && !hasEnterButton}
+							<div class="mb-2 rounded-md border border-accent/40 bg-accent/5 px-2.5 py-1.5 text-[12px] text-accent-ink">
+								No Enter button yet. Add a button and set its action to <span class="font-medium">Enter giveaway</span>, or members won't be able to enter.
+							</div>
+						{/if}
 						<div class={readOnly ? 'pointer-events-none opacity-70' : ''}>
-							<MessageEditor step={msgStep} embeds components clickPaths={false} />
+							<MessageEditor step={msgStep} embeds components clickPaths={false} buttonExtras={buttonAction} />
 						</div>
 					</div>
 				</ModSection>
-
-				<ModSection label="Enter button" desc="The button members click to enter.">
-					<div class="max-w-2xl space-y-3">
-						<Field label="Entry action" hint="Which button enters the giveaway. Pick one of your own buttons, or let Dia add a default.">
-							<Select bind:value={enterButtonSuffix} options={entryOptions} />
-						</Field>
-						{#if usingComposedEntry}
-							<p class="text-[12px] text-muted">
-								Your button <span class="font-medium text-ink">“{entryOptions.find((o) => o.value === enterButtonSuffix)?.label}”</span>
-								enters the giveaway. Style it in the message editor above.
-							</p>
-						{:else}
-							<div class="grid gap-3 sm:grid-cols-3">
-								<Field label="Label"><input class={inputCls} bind:value={btnLabel} placeholder="Enter Giveaway" disabled={readOnly} /></Field>
-								<Field label="Emoji" hint="A glyph, or name:id."><input class={inputCls} bind:value={btnEmoji} placeholder="🎉" disabled={readOnly} /></Field>
-								<Field label="Colour"><Select bind:value={btnStyle} options={styleOptions} /></Field>
-							</div>
-						{/if}
-					</div>
-				</ModSection>
-
-				{#if actionButtons.length > 0}
-					<ModSection label="Button actions" desc="Point a button at one of your automations. It runs when a member clicks it.">
-						{#if automationList.length === 0}
-							<p class="max-w-2xl text-[12px] text-muted">
-								No automations yet. Build one on the
-								<a class="text-accent-ink hover:underline" href={`/servers/${store.id}/automations`}>Automations</a>
-								tab, then point a button at it here.
-							</p>
-						{:else}
-							<div class="grid max-w-2xl gap-3">
-								{#each actionButtons as c (c.custom_id_suffix)}
-									{@const suffix = c.custom_id_suffix as string}
-									<Field label={c.label?.trim() || suffix} hint="Runs when this button is clicked.">
-										<Select bind:value={buttonActions[suffix]} options={automationOptions} />
-									</Field>
-								{/each}
-							</div>
-						{/if}
-					</ModSection>
-				{/if}
 
 				<ModSection label={isPreset ? 'Preset defaults' : 'Setup'} desc={isPreset ? 'Pre-filled when a giveaway starts from this preset.' : ''}>
 					<div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">

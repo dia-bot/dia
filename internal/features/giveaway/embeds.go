@@ -209,11 +209,14 @@ func buildCancelledEmbed(ctx context.Context, spec Spec, g store.Giveaway, guild
 // button is composed, the styled system Enter button is appended so a giveaway
 // is always enterable. Labels/URLs are templated against the giveaway scope.
 func buildComponents(ctx context.Context, spec Spec, g store.Giveaway, data map[string]any) []discordgo.MessageComponent {
+	// Only when the message composes no buttons at all (a legacy or fully-cleared
+	// giveaway) does the styled system Enter button stand in, so a giveaway is
+	// never left with no way to enter. When the composer HAS buttons, nothing is
+	// added: the composed buttons are exactly what posts.
 	if len(spec.Components) == 0 {
 		return enterComponents(spec, g.ID)
 	}
 	var rows []discordgo.MessageComponent
-	hasEnter := false
 	for _, row := range spec.Components {
 		var comps []discordgo.MessageComponent
 		for _, c := range row.Components {
@@ -225,18 +228,11 @@ func buildComponents(ctx context.Context, spec Spec, g store.Giveaway, data map[
 			if btn == nil {
 				continue
 			}
-			hasEnter = hasEnter || isEnter
 			comps = append(comps, btn)
 		}
 		if len(comps) > 0 {
 			rows = append(rows, discordgo.ActionsRow{Components: comps})
 		}
-	}
-	// Guarantee an entry point: append the styled system Enter button when the
-	// composer didn't designate one (and there's still a free row; Discord caps
-	// a message at five action rows).
-	if !hasEnter && len(rows) < 5 {
-		rows = append(rows, enterComponents(spec, g.ID)...)
 	}
 	return rows
 }

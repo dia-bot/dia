@@ -190,6 +190,17 @@ func defaultSpec() Spec {
 				{Name: "Entries", Value: "{{ .EntryCount }}", Inline: true},
 			},
 		}},
+		// A real, visible Enter button in the message (edited in the preview like any
+		// other button), so nothing is added invisibly. EnterButtonSuffix points at
+		// it, routing its clicks to the native entry handler.
+		Components: []cc.ComponentRow{{Components: []cc.Component{{
+			Type:           "button",
+			Style:          "primary",
+			Label:          "Enter Giveaway",
+			Emoji:          "🎉",
+			CustomIDSuffix: "enter",
+		}}}},
+		EnterButtonSuffix: "enter",
 		Button: ButtonConfig{
 			Label: "Enter Giveaway",
 			Emoji: "🎉",
