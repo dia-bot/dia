@@ -15,6 +15,7 @@
 		GIVEAWAY_SCOPE_VARS,
 		type GiveawayConfig,
 		type GiveawaySpec,
+		type EmbedSpec,
 		type Preset,
 		type RequirementConfig
 	} from '$lib/giveaway';
@@ -30,6 +31,7 @@
 	import ChannelSelect from '$lib/components/ChannelSelect.svelte';
 	import ColorField from '$lib/components/ColorField.svelte';
 	import TemplateField from '$lib/components/TemplateField.svelte';
+	import GiveawayPreview from '$lib/components/giveaway/GiveawayPreview.svelte';
 	import {
 		ChevronLeft,
 		Gift,
@@ -40,7 +42,8 @@
 		CheckCircle2,
 		Dices,
 		Plus,
-		Bookmark
+		Bookmark,
+		Eye
 	} from 'lucide-svelte';
 
 	const store = getContext<GuildStore>(GUILD_CTX);
@@ -360,6 +363,36 @@
 	const canPublish = $derived(!!prize.trim() && !!channelId);
 	const showTiming = $derived(isNew || status === 'draft');
 
+	// ── Live preview (right rail) ──────────────────────────────────────────────
+	const previewContent = $derived(((msgStep.spec ?? {}) as Record<string, unknown>).content as string ?? '');
+	const previewEmbeds = $derived(
+		(((msgStep.spec ?? {}) as Record<string, unknown>).embeds as EmbedSpec[]) ?? []
+	);
+	function roleName(id: string): string {
+		return store.roles.find((r) => r.id === id)?.name ?? 'role';
+	}
+	const pingRoleName = $derived(pingRoleId ? roleName(pingRoleId) : '');
+	// A short, honest summary of the entry rules for the "Requirements" field.
+	const requirementsSummary = $derived.by(() => {
+		const parts: string[] = [];
+		if (req.required_roles?.length) parts.push('Requires ' + req.required_roles.map(roleName).join(' or '));
+		if (req.blocked_roles?.length) parts.push('Blocked: ' + req.blocked_roles.map(roleName).join(', '));
+		if (req.min_level) parts.push('Level ' + req.min_level + '+');
+		if (req.min_account_age_days) parts.push('Account ' + req.min_account_age_days + 'd+ old');
+		if (req.min_member_age_days) parts.push('In server ' + req.min_member_age_days + 'd+');
+		return parts.join('\n');
+	});
+	// The sample scope, with the live prize/description/channel/winners folded in
+	// so the preview reflects THIS giveaway, not just the placeholder defaults.
+	const previewSample = $derived({
+		...GIVEAWAY_SAMPLE,
+		Prize: prize.trim() || GIVEAWAY_SAMPLE.Prize,
+		Description: description.trim() || GIVEAWAY_SAMPLE.Description,
+		WinnerCount: winnerCount || 1,
+		Server: store.name,
+		Channel: channelId ? '#' + (store.channels.find((c) => c.id === channelId)?.name ?? 'giveaways') : GIVEAWAY_SAMPLE.Channel
+	});
+
 	const inputCls =
 		'h-8 w-full rounded-md border border-line bg-bg px-2.5 text-[13px] text-ink placeholder:text-faint focus-visible:border-line-strong focus-visible:outline-none disabled:opacity-60';
 	const btnGhost =
@@ -502,7 +535,8 @@
 				</div>
 			</div>
 		{:else}
-			<div class="pb-24">
+			<div class="flex flex-col lg:flex-row lg:items-start">
+			<div class="min-w-0 flex-1 pb-24">
 				<ModSection label="Message" desc="Edited like a message in any other tab. The Enter button is added automatically.">
 					<div class="max-w-2xl">
 						{#if !readOnly}
@@ -640,6 +674,29 @@
 						</label>
 					</div>
 				</ModSection>
+			</div>
+
+			<aside class="shrink-0 border-t border-line lg:sticky lg:top-0 lg:w-[380px] lg:self-start lg:border-l lg:border-t-0">
+				<div class="p-4">
+					<div class="mb-2 flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.14em] text-faint">
+						<Eye size={12} /> Live preview
+					</div>
+					<GiveawayPreview
+						content={previewContent}
+						embeds={previewEmbeds}
+						{color}
+						{imageUrl}
+						button={{ label: btnLabel, emoji: btnEmoji, style: btnStyle }}
+						{pingRoleName}
+						{showRequirements}
+						{requirementsSummary}
+						sample={previewSample}
+					/>
+					<p class="mt-2 text-[11px] leading-relaxed text-muted">
+						Approximate: variables use sample values and logic isn't run. Use <span class="font-medium">Test render</span> under a field for exact output.
+					</p>
+				</div>
+			</aside>
 			</div>
 		{/if}
 	</div>
