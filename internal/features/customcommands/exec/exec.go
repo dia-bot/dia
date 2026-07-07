@@ -33,11 +33,12 @@ import (
 // Deps are the runtime services every step handler may need. The Engine owns
 // one of these; handlers read from it without mutating.
 type Deps struct {
-	Log     *slog.Logger
-	Discord DiscordClient
-	Store   StoreClient
-	Imaging ImagingClient
-	HTTP    HTTPClient
+	Log       *slog.Logger
+	Discord   DiscordClient
+	Store     StoreClient
+	Imaging   ImagingClient
+	HTTP      HTTPClient
+	Giveaways GiveawayStarter // optional; nil disables the giveaway_start step
 }
 
 // Engine is the per-worker command runtime. Construct once via New(); call

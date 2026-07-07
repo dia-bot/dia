@@ -76,6 +76,7 @@ const (
 	KindRunCommand    = "run_command"
 	KindRunAutomation = "run_automation"
 	KindAuditNote     = "audit_note"
+	KindGiveawayStart = "giveaway_start"
 )
 
 // Latency is the worst-case timing class for a step. The validator walks the
@@ -613,6 +614,19 @@ type SpecRunAutomation struct {
 type SpecAuditNote struct {
 	Action string `json:"action"`
 	Detail Expr   `json:"detail,omitempty"`
+}
+
+// SpecGiveawayStart starts a giveaway from a saved preset (managed on the
+// Giveaways dashboard, which owns the composed message + the draw). Blank
+// overrides fall back to the preset's defaults; the new giveaway's id is written
+// to Into.
+type SpecGiveawayStart struct {
+	Preset   string `json:"preset,omitempty"`   // preset id (templated)
+	Prize    Expr   `json:"prize"`              // required
+	Channel  Expr   `json:"channel,omitempty"`  // snowflake / #mention; default = preset channel
+	Duration Expr   `json:"duration,omitempty"` // e.g. "24h", "3d"; default = preset duration
+	Winners  Expr   `json:"winners,omitempty"`  // int; default = preset winners
+	Into     string `json:"into,omitempty"`     // var to receive the new giveaway id
 }
 
 // SpecModalOpen opens a modal in response to the interaction; the result lands
