@@ -104,7 +104,8 @@
 				auto?.feature_tab === 'leveling' ||
 				auto?.feature_tab === 'auto-roles' ||
 				auto?.feature_tab === 'reaction-roles' ||
-				auto?.feature_tab === 'automod')
+				auto?.feature_tab === 'automod' ||
+				auto?.feature_tab === 'giveaways')
 	);
 	// Welcome distinguishes its two built-in ids (join vs leave) as config tabs;
 	// leveling has a single surface so this is only meaningful for welcome.
@@ -530,16 +531,18 @@
 	const isSpineNode = (id: string | null) => !!id && id.startsWith('builtin-');
 	// tailAnchorId is the spine node the editable tail hangs off. Welcome/leveling
 	// anchor on the channel message ('builtin-send'); auto-roles, reaction-role
-	// menus and automod rules have no message, so their tail hangs off the last
-	// leading spine node instead (the grant step, the menu's
-	// builtin-apply/builtin-disabled, or the rule's built-in action step).
+	// menus, automod rules and giveaways have no message, so their tail hangs off
+	// the last leading spine node instead (the grant step, the menu's
+	// builtin-apply/builtin-disabled, the rule's built-in action step, or the
+	// giveaway's builtin-draw).
 	const tailAnchorId = $derived.by(() => {
 		if (!auto) return '';
 		const steps = auto.definition.steps ?? [];
 		if (
 			auto.feature_tab === 'auto-roles' ||
 			auto.feature_tab === 'reaction-roles' ||
-			auto.feature_tab === 'automod'
+			auto.feature_tab === 'automod' ||
+			auto.feature_tab === 'giveaways'
 		) {
 			let last = '';
 			for (const s of steps) {
@@ -662,6 +665,8 @@
 				);
 			} else if (auto.feature_tab === 'auto-roles') {
 				await api.saveAutoroleActions(store.id, extractSpineTail(auto.definition));
+			} else if (auto.id === 'giveaway.ended') {
+				await api.saveGiveawayTail(store.id, extractSpineTail(auto.definition));
 			} else if (auto.feature_tab === 'leveling') {
 				const acts = extractWelcomeActions(auto.definition);
 				await api.saveLevelingActions(store.id, acts.channel, extractWelcomeTail(auto.definition));
@@ -1417,6 +1422,8 @@
 						The grey steps mirror this menu's role assignment and are managed on the Reaction Roles tab. Steps you connect after them run when a member picks their roles.
 					{:else if auto.feature_tab === 'automod'}
 						The grey step mirrors this rule's actions and is managed on the Automod tab. Steps you connect after it run when the rule fires.
+					{:else if auto.feature_tab === 'giveaways'}
+						The grey step mirrors the native winner draw &amp; announcement, managed on the Giveaways tab. Steps you connect after it run when a giveaway ends.
 					{:else}
 						Drag off the message to add a follow-up action, or off a button's dot to set what it does. Message, embed &amp; card are managed in {auto.feature_name}.
 					{/if}

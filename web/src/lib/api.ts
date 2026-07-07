@@ -268,6 +268,12 @@ export const api = {
 	// after the read-only grant-roles step.
 	saveAutoroleActions: (id: string, tail: unknown) =>
 		req<{ ok: boolean }>('POST', `/api/guilds/${id}/autorole/actions`, { tail }),
+	// saveGiveawayTail persists the canvas-authored follow-up flow for the
+	// giveaway feature's built-in "Draw giveaway winners" automation. The spine
+	// (the native draw + announce) is read-only, so like auto-roles only the
+	// post-draw tail saves; it runs on the giveaway_ended event.
+	saveGiveawayTail: (id: string, tail: unknown[]) =>
+		req<{ ok: boolean }>('POST', `/api/guilds/${id}/giveaway/actions`, { tail }),
 	// saveMenuTail persists the canvas-authored follow-up flow for one
 	// reaction-role menu. Like auto-roles the spine (the role-apply step) is
 	// read-only and there are no click actions, so only the post-pick tail saves.
