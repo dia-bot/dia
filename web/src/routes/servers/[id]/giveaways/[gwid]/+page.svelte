@@ -41,7 +41,8 @@
 		CheckCircle2,
 		Dices,
 		Plus,
-		Bookmark
+		Bookmark,
+		Eye
 	} from 'lucide-svelte';
 
 	const store = getContext<GuildStore>(GUILD_CTX);
@@ -363,6 +364,39 @@
 	const canPublish = $derived(!!prize.trim() && !!channelId);
 	const showTiming = $derived(isNew || status === 'draft');
 
+	// ── Winner-announcement live preview ────────────────────────────────────────
+	// The announcement/ended-embed fields are just template inputs, so a compact
+	// Discord-styled preview shows how the drawn message actually looks. Values are
+	// filled from the giveaway sample scope (with the live prize folded in); logic
+	// isn't executed (the per-field "Test render" runs the real engine).
+	const annSample = $derived({
+		...GIVEAWAY_SAMPLE,
+		Prize: prize.trim() || GIVEAWAY_SAMPLE.Prize,
+		WinnerCount: winnerCount || 1,
+		Server: store.name
+	});
+	function fillAnn(s: string | undefined): string {
+		if (!s) return '';
+		return s
+			.replace(/\{\{\s*\.(\w+)\s*\}\}/g, (_m, k: string) => {
+				const v = (annSample as Record<string, unknown>)[k];
+				return v === undefined ? '' : String(v);
+			})
+			.replace(/\{\{[^}]*\}\}/g, '')
+			.trim();
+	}
+	function hexColor(v: string): string {
+		const h = (v || '').trim();
+		return /^#?[0-9a-fA-F]{6}$/.test(h) ? (h.startsWith('#') ? h : `#${h}`) : '';
+	}
+	const annAccent = $derived(
+		hexColor(color) ||
+			hexColor(
+				(((msgStep.spec as Record<string, unknown>)?.embeds as { color?: string }[]) ?? [])[0]?.color ?? ''
+			) ||
+			'#FF6363'
+	);
+
 	const inputCls =
 		'h-8 w-full rounded-md border border-line bg-bg px-2.5 text-[13px] text-ink placeholder:text-faint focus-visible:border-line-strong focus-visible:outline-none disabled:opacity-60';
 	const btnGhost =
@@ -662,27 +696,71 @@
 				</ModSection>
 
 				<ModSection label="Winner announcement" desc="Posted in-channel when the giveaway is drawn.">
-					<div class="flex max-w-2xl flex-col gap-3">
-						<TemplateField label="Announcement message" bind:value={announce.message} guildId={store.id} variables={GIVEAWAY_VARS} sample={GIVEAWAY_SAMPLE} rows={2} />
-						<div class="grid gap-3 sm:grid-cols-2">
-							<TemplateField label="Ended embed title" bind:value={announce.ended_title} guildId={store.id} variables={GIVEAWAY_VARS} sample={GIVEAWAY_SAMPLE} rows={1} />
-							<TemplateField label="Ended embed footer" bind:value={announce.ended_footer} guildId={store.id} variables={GIVEAWAY_VARS} sample={GIVEAWAY_SAMPLE} rows={1} />
+					<div class="grid gap-5 lg:grid-cols-[minmax(0,1fr)_320px]">
+						<div class="flex flex-col gap-3">
+							<TemplateField label="Announcement message" bind:value={announce.message} guildId={store.id} variables={GIVEAWAY_VARS} sample={GIVEAWAY_SAMPLE} rows={2} />
+							<div class="grid gap-3 sm:grid-cols-2">
+								<TemplateField label="Ended embed title" bind:value={announce.ended_title} guildId={store.id} variables={GIVEAWAY_VARS} sample={GIVEAWAY_SAMPLE} rows={1} />
+								<TemplateField label="Ended embed footer" bind:value={announce.ended_footer} guildId={store.id} variables={GIVEAWAY_VARS} sample={GIVEAWAY_SAMPLE} rows={1} />
+							</div>
+							<TemplateField label="No-winners message" bind:value={announce.no_winners_message} guildId={store.id} variables={GIVEAWAY_VARS} sample={GIVEAWAY_SAMPLE} rows={1} />
+							<div class="flex flex-col gap-2">
+								<label class="flex items-center gap-2 text-[13px] text-ink">
+									<Toggle bind:checked={announce.ping_winners} label="Ping winners" /> Ping the winners in the announcement
+								</label>
+								<label class="flex items-center gap-2 text-[13px] text-ink">
+									<Toggle bind:checked={announce.jump_button} label="Jump button" /> Add a “Jump to giveaway” button
+								</label>
+								<label class="flex items-center gap-2 text-[13px] text-ink">
+									<Toggle bind:checked={announce.dm_winners} label="DM winners" /> DM each winner when they win
+								</label>
+							</div>
+							{#if announce.dm_winners}
+								<TemplateField label="Winner DM" bind:value={announce.dm_message} guildId={store.id} variables={GIVEAWAY_VARS} sample={GIVEAWAY_SAMPLE} rows={2} />
+							{/if}
 						</div>
-						<TemplateField label="No-winners message" bind:value={announce.no_winners_message} guildId={store.id} variables={GIVEAWAY_VARS} sample={GIVEAWAY_SAMPLE} rows={1} />
-						<div class="flex flex-col gap-2">
-							<label class="flex items-center gap-2 text-[13px] text-ink">
-								<Toggle bind:checked={announce.ping_winners} label="Ping winners" /> Ping the winners in the announcement
-							</label>
-							<label class="flex items-center gap-2 text-[13px] text-ink">
-								<Toggle bind:checked={announce.jump_button} label="Jump button" /> Add a “Jump to giveaway” button
-							</label>
-							<label class="flex items-center gap-2 text-[13px] text-ink">
-								<Toggle bind:checked={announce.dm_winners} label="DM winners" /> DM each winner when they win
-							</label>
+
+						<!-- Live preview of the drawn announcement -->
+						<div class="lg:border-l lg:border-line lg:pl-5">
+							<div class="mb-2 flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.14em] text-faint">
+								<Eye size={12} /> Preview
+							</div>
+							<div class="rounded-lg border border-line bg-[#313338] p-3 text-[#dbdee1]">
+								<div class="overflow-hidden rounded-[4px] bg-[#2b2d31]" style="border-left: 4px solid {annAccent}">
+									<div class="px-3 py-2.5">
+										<div class="text-[14px] font-semibold text-white">
+											{fillAnn(announce.ended_title) || prize.trim() || 'Giveaway'}
+										</div>
+										<div class="mt-2">
+											<div class="text-[12px] font-semibold text-white">Winners</div>
+											<div class="text-[13px] text-[#dbdee1]">@alex, @sam</div>
+										</div>
+										<div class="mt-2">
+											<div class="text-[12px] font-semibold text-white">Hosted by</div>
+											<div class="text-[13px] text-[#dbdee1]">@you</div>
+										</div>
+										{#if fillAnn(announce.ended_footer)}
+											<div class="mt-2 text-[11px] text-[#949ba4]">{fillAnn(announce.ended_footer)} · just now</div>
+										{/if}
+									</div>
+								</div>
+								{#if fillAnn(announce.message)}
+									<div class="mt-2 text-[13px] leading-relaxed whitespace-pre-wrap text-[#dbdee1]">{fillAnn(announce.message)}</div>
+								{/if}
+								{#if announce.jump_button}
+									<div class="mt-2">
+										<span class="inline-flex items-center rounded-[3px] border border-[#4e5058] px-3 py-1.5 text-[13px] font-medium text-white">Jump to giveaway</span>
+									</div>
+								{/if}
+							</div>
+							{#if announce.dm_winners && fillAnn(announce.dm_message)}
+								<div class="mt-3">
+									<div class="mb-1 font-mono text-[10px] uppercase tracking-[0.14em] text-faint">Winner DM</div>
+									<div class="rounded-lg border border-line bg-[#313338] p-3 text-[13px] leading-relaxed whitespace-pre-wrap text-[#dbdee1]">{fillAnn(announce.dm_message)}</div>
+								</div>
+							{/if}
+							<p class="mt-2 text-[11px] leading-relaxed text-muted">Sample values shown; the bot adds the timestamp automatically.</p>
 						</div>
-						{#if announce.dm_winners}
-							<TemplateField label="Winner DM" bind:value={announce.dm_message} guildId={store.id} variables={GIVEAWAY_VARS} sample={GIVEAWAY_SAMPLE} rows={2} />
-						{/if}
 					</div>
 				</ModSection>
 
