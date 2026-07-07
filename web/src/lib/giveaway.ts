@@ -1,7 +1,13 @@
 // Type-only mirror of internal/features/giveaway/config.go and the giveaway
 // API. Kept in lockstep with the Go side so the dashboard never saves JSONB the
-// runtime won't decode. Every embed/announce string is a Go text/template
-// rendered against the giveaway scope (see GIVEAWAY_VARS).
+// runtime won't decode.
+//
+// Each giveaway now carries its OWN composed message (the same {content,
+// embeds} shape the shared MessageEditor produces and Welcome/Leveling render
+// server-side), plus a button, a winner announcement and behaviour toggles. The
+// feature config is a library of reusable presets that seed new giveaways. Every
+// embed/announce string is a Go text/template over the giveaway scope
+// (GIVEAWAY_VARS / GIVEAWAY_SCOPE_VARS).
 
 export const FEATURE = 'giveaway';
 
@@ -20,23 +26,34 @@ export interface RequirementConfig {
 	min_level?: number;
 }
 
-export interface EmbedConfig {
-	color: string;
-	title: string;
-	description: string;
-	footer_text: string;
-	thumbnail: string;
-	hosted_by_label: string;
-	ends_label: string;
-	winners_label: string;
-	entries_label: string;
-	show_timestamp: boolean;
+// EmbedField / EmbedSpec mirror customcommands.EmbedSpec — the exact shape the
+// MessageEditor / EmbedBuilder produce in a step's spec.embeds.
+export interface EmbedField {
+	name: string;
+	value: string;
+	inline?: boolean;
+}
+
+export interface EmbedSpec {
+	title?: string;
+	description?: string;
+	url?: string;
+	color?: string;
+	author_name?: string;
+	author_icon?: string;
+	author_url?: string;
+	thumbnail?: string;
+	image_url?: string;
+	footer_text?: string;
+	footer_icon?: string;
+	timestamp?: boolean;
+	fields?: EmbedField[];
 }
 
 export interface ButtonConfig {
 	label: string;
 	emoji: string;
-	// primary | secondary | success | danger (kept as string so the Select binds cleanly).
+	// primary | secondary | success | danger (kept as string so a Select binds cleanly).
 	style: string;
 }
 
@@ -51,42 +68,52 @@ export interface AnnounceConfig {
 	dm_message: string;
 }
 
-export interface GiveawayConfig {
-	manager_roles?: string[];
-	default_channel_id?: string;
-	default_winner_count: number;
-	default_duration: string;
-	ping_role_id?: string;
-	embed: EmbedConfig;
+// GiveawaySpec is one giveaway's composed presentation + behaviour (stored on
+// the giveaway row, and embedded in a preset).
+export interface GiveawaySpec {
+	content?: string;
+	embeds?: EmbedSpec[];
 	button: ButtonConfig;
 	announce: AnnounceConfig;
-	requirements: RequirementConfig;
-	show_entry_count: boolean;
+	ping_role_id?: string;
 	show_requirements: boolean;
-	allow_bots_to_win: boolean;
 	exclude_host: boolean;
+	allow_bots_to_win: boolean;
 }
 
-// defaultConfig mirrors giveaway.Default() in Go exactly.
-export function defaultConfig(): GiveawayConfig {
+export interface Preset {
+	id: string;
+	name: string;
+	default_channel_id?: string;
+	default_duration?: string;
+	default_winner_count?: number;
+	spec: GiveawaySpec;
+	requirements: RequirementConfig;
+}
+
+export interface GiveawayConfig {
+	manager_roles?: string[];
+	presets: Preset[];
+	default_preset_id?: string;
+}
+
+// defaultSpec mirrors giveaway.defaultSpec() in Go.
+export function defaultSpec(): GiveawaySpec {
 	return {
-		manager_roles: [],
-		default_channel_id: '',
-		default_winner_count: 1,
-		default_duration: '24h',
-		ping_role_id: '',
-		embed: {
-			color: '#FF6363',
-			title: '🎉 {{ .Prize }}',
-			description: 'Click the button below to enter!',
-			footer_text: '{{ .WinnerCount }} winner(s) · ends',
-			thumbnail: '',
-			hosted_by_label: 'Hosted by',
-			ends_label: 'Ends',
-			winners_label: 'Winners',
-			entries_label: 'Entries',
-			show_timestamp: true
-		},
+		content: '',
+		embeds: [
+			{
+				color: '#FF6363',
+				title: '🎉 {{ .Prize }}',
+				description: 'Click the button below to enter!',
+				fields: [
+					{ name: 'Hosted by', value: '{{ .Host }}', inline: true },
+					{ name: 'Ends', value: '{{ .Ends }}', inline: true },
+					{ name: 'Winners', value: '{{ .WinnerCount }}', inline: true },
+					{ name: 'Entries', value: '{{ .EntryCount }}', inline: true }
+				]
+			}
+		],
 		button: { label: 'Enter Giveaway', emoji: '🎉', style: 'primary' },
 		announce: {
 			message: 'Congratulations {{ .Winners }}! You won **{{ .Prize }}** 🎉',
@@ -99,16 +126,66 @@ export function defaultConfig(): GiveawayConfig {
 			dm_message:
 				'🎉 You won **{{ .Prize }}** in {{ .Server }}! Contact the host {{ .Host }} to claim your prize.'
 		},
-		requirements: {},
-		show_entry_count: true,
+		ping_role_id: '',
 		show_requirements: true,
-		allow_bots_to_win: false,
-		exclude_host: false
+		exclude_host: false,
+		allow_bots_to_win: false
 	};
 }
 
+// defaultPreset mirrors giveaway.defaultPreset() in Go.
+export function defaultPreset(): Preset {
+	return {
+		id: 'default',
+		name: 'Classic',
+		default_channel_id: '',
+		default_duration: '24h',
+		default_winner_count: 1,
+		spec: defaultSpec(),
+		requirements: {}
+	};
+}
+
+// defaultConfig mirrors giveaway.Default() in Go.
+export function defaultConfig(): GiveawayConfig {
+	return {
+		manager_roles: [],
+		presets: [defaultPreset()],
+		default_preset_id: 'default'
+	};
+}
+
+// newPresetID mints a client-side preset id (stable enough for a small library).
+export function newPresetID(): string {
+	const ts = Date.now().toString(36);
+	const r = Math.floor(Math.random() * 0xffffff).toString(36);
+	return `p${ts}${r}`;
+}
+
+// parseDurationSeconds parses a compact duration ("30m", "2h", "3d", "1w",
+// "1d12h") to seconds, mirroring giveaway.parseGiveawayDuration in Go. Returns 0
+// when the input is empty or malformed.
+export function parseDurationSeconds(s: string): number {
+	const str = (s || '').trim().toLowerCase();
+	if (!str) return 0;
+	const units: Record<string, number> = { s: 1, m: 60, h: 3600, d: 86400, w: 604800 };
+	let total = 0;
+	let num = '';
+	for (const ch of str) {
+		if (ch >= '0' && ch <= '9') {
+			num += ch;
+			continue;
+		}
+		if (!num || !(ch in units)) return 0;
+		total += parseInt(num, 10) * units[ch];
+		num = '';
+	}
+	if (num) return 0;
+	return total;
+}
+
 // GIVEAWAY_VARS documents the template scope available in every giveaway string,
-// for the TemplateField variable picker.
+// for the TemplateField variable picker (announce / DM fields).
 export const GIVEAWAY_VARS: { token: string; desc: string }[] = [
 	{ token: '{{ .Prize }}', desc: 'The prize' },
 	{ token: '{{ .Description }}', desc: 'The giveaway description' },
@@ -124,10 +201,28 @@ export const GIVEAWAY_VARS: { token: string; desc: string }[] = [
 	{ token: '{{ .Channel }}', desc: 'The giveaway channel mention' }
 ];
 
-export type GiveawayStatus = 'scheduled' | 'running' | 'ended' | 'cancelled';
+// GIVEAWAY_SCOPE_VARS is the same scope shaped as ExprScope.extraVars so the
+// MessageEditor's variable picker offers the giveaway variables.
+export const GIVEAWAY_SCOPE_VARS: { path: string; label: string; type: string; short: string }[] = [
+	{ path: '.Prize', label: 'Prize', type: 'string', short: 'The prize' },
+	{ path: '.Description', label: 'Description', type: 'string', short: 'The giveaway description' },
+	{ path: '.WinnerCount', label: 'WinnerCount', type: 'int', short: 'Number of winners' },
+	{ path: '.EntryCount', label: 'EntryCount', type: 'int', short: 'Number of entrants' },
+	{ path: '.Host', label: 'Host', type: 'string', short: 'The host mention' },
+	{ path: '.Winners', label: 'Winners', type: 'string', short: 'Winner mentions (ended only)' },
+	{ path: '.WinnerList', label: 'WinnerList', type: 'string', short: 'Winners, one per line' },
+	{ path: '.Ends', label: 'Ends', type: 'string', short: 'Relative end time' },
+	{ path: '.EndsAt', label: 'EndsAt', type: 'string', short: 'Absolute end time' },
+	{ path: '.Server', label: 'Server', type: 'string', short: 'The server name' },
+	{ path: '.MemberCount', label: 'MemberCount', type: 'int', short: 'Server member count' },
+	{ path: '.Channel', label: 'Channel', type: 'string', short: 'The giveaway channel mention' }
+];
+
+export type GiveawayStatus = 'draft' | 'scheduled' | 'running' | 'ended' | 'cancelled';
 
 export interface GiveawaySummary {
 	id: string;
+	name: string;
 	channel_id: string;
 	message_id: string;
 	prize: string;
@@ -144,4 +239,9 @@ export interface GiveawaySummary {
 	ends_at: string;
 	ended_at: string | null;
 	created_at: string;
+}
+
+// GiveawayDetail is a summary plus the full composed spec, for the editor.
+export interface GiveawayDetail extends GiveawaySummary {
+	spec: GiveawaySpec;
 }

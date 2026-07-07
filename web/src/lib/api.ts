@@ -178,6 +178,19 @@ export const api = {
 			'GET',
 			`/api/guilds/${id}/giveaways` + (status ? `?status=${status}` : '')
 		),
+	giveaway: (id: string, gwid: string) =>
+		req<any>('GET', `/api/guilds/${id}/giveaways/${gwid}`),
+	createGiveaway: (id: string, body: unknown) =>
+		req<any>('POST', `/api/guilds/${id}/giveaways`, body),
+	updateGiveaway: (id: string, gwid: string, body: unknown) =>
+		req<any>('PATCH', `/api/guilds/${id}/giveaways/${gwid}`, body),
+	startGiveaway: (id: string, gwid: string, durationSeconds: number, startsInSeconds = 0) =>
+		req<any>('POST', `/api/guilds/${id}/giveaways/${gwid}/start`, {
+			duration_seconds: durationSeconds,
+			starts_in_seconds: startsInSeconds
+		}),
+	deleteGiveaway: (id: string, gwid: string) =>
+		req<{ ok: boolean }>('DELETE', `/api/guilds/${id}/giveaways/${gwid}`),
 	endGiveaway: (id: string, gwid: string) =>
 		req<{ ok: boolean }>('POST', `/api/guilds/${id}/giveaways/${gwid}/end`),
 	rerollGiveaway: (id: string, gwid: string, winners = 0) =>
