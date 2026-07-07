@@ -11,16 +11,30 @@ import (
 )
 
 type giveawayActionsReq struct {
-	Tail []cc.Step `json:"tail"` // the post-draw follow-up flow
+	Tail []cc.Step `json:"tail"` // the canvas-authored follow-up flow
 }
 
 // handleGiveawayActions persists the canvas-authored follow-up flow for the
-// giveaway feature's built-in automation ("connect a new action after the
-// winners are drawn"). Only Tail is replaced; the preset library, manager roles
-// and default preset stay authoritative from the Giveaways settings page. The
-// tail is validated as an event flow (it runs on the bare giveaway_ended event),
-// so an unrunnable step is rejected here. Mirrors handleAutoroleActions.
+// giveaway feature's built-in "Draw giveaway winners" automation ("connect a new
+// action after the winners are drawn"). It runs on the bare giveaway_ended event.
 func (s *Server) handleGiveawayActions(c *gin.Context) {
+	s.saveGiveawayFlow(c, "ended")
+}
+
+// handleGiveawayEntryActions persists the canvas-authored follow-up flow for the
+// giveaway feature's built-in "On giveaway entry" automation ("connect a new
+// action after a member enters"). It runs on the giveaway_entered event.
+func (s *Server) handleGiveawayEntryActions(c *gin.Context) {
+	s.saveGiveawayFlow(c, "entry")
+}
+
+// saveGiveawayFlow replaces exactly one of the giveaway config's canvas-owned
+// tails (which=="ended" → Tail, which=="entry" → EntryTail), leaving the other
+// tail, the preset library, manager roles and default preset authoritative from
+// the Giveaways settings page and the other flow. The tail is validated as an
+// event flow (it runs on the bare event), so an unrunnable step is rejected here.
+// Mirrors handleAutoroleActions.
+func (s *Server) saveGiveawayFlow(c *gin.Context, which string) {
 	var req giveawayActionsReq
 	if err := c.ShouldBindJSON(&req); err != nil {
 		fail(c, http.StatusBadRequest, "invalid body")
@@ -45,9 +59,13 @@ func (s *Server) handleGiveawayActions(c *gin.Context) {
 			return
 		}
 	}
-	// Replace only the canvas-owned tail; the preset library and access settings
-	// stay owned by the Giveaways settings page.
-	cfg.Tail = req.Tail
+	// Replace only the one canvas-owned tail; the preset library, access settings
+	// and the other built-in's tail stay untouched.
+	if which == "entry" {
+		cfg.EntryTail = req.Tail
+	} else {
+		cfg.Tail = req.Tail
+	}
 
 	raw, err := json.Marshal(cfg)
 	if err != nil {
@@ -58,6 +76,6 @@ func (s *Server) handleGiveawayActions(c *gin.Context) {
 		fail(c, http.StatusInternalServerError, "could not save")
 		return
 	}
-	s.audit(c, gidInt, "feature.update", gin.H{"feature": giveaway.FeatureKey, "actions": "giveaway"})
+	s.audit(c, gidInt, "feature.update", gin.H{"feature": giveaway.FeatureKey, "actions": "giveaway." + which})
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }

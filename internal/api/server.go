@@ -150,6 +150,7 @@ func (s *Server) Handler() http.Handler {
 	g.POST("/leveling/actions", s.handleLevelingActions)
 	g.POST("/autorole/actions", s.handleAutoroleActions)
 	g.POST("/giveaway/actions", s.handleGiveawayActions)
+	g.POST("/giveaway/entry-actions", s.handleGiveawayEntryActions)
 
 	g.GET("/leaderboard", s.handleLeaderboard)
 	g.GET("/level-rewards", s.handleListRewards)
