@@ -1,7 +1,5 @@
 <script lang="ts">
 	import { onMount, getContext } from 'svelte';
-	import { fade } from 'svelte/transition';
-	import { dur } from '$lib/motion';
 	import { goto } from '$app/navigation';
 	import { GuildStore, GUILD_CTX } from '$lib/guild.svelte';
 	import { api } from '$lib/api';
@@ -14,6 +12,7 @@
 		type Preset
 	} from '$lib/giveaway';
 	import ModerationShell, { type ModTab } from '$lib/components/moderation/ModerationShell.svelte';
+	import TabSwipe from '$lib/components/page/TabSwipe.svelte';
 	import ModSection from '$lib/components/moderation/ModSection.svelte';
 	import Field from '$lib/components/Field.svelte';
 	import RolePicker from '$lib/components/RolePicker.svelte';
@@ -228,8 +227,7 @@
 	onsave={save}
 	onreset={reset}
 >
-	{#key tab}
-	<div in:fade={{ duration: dur(140) }}>
+	<TabSwipe key={tab} index={tabs.findIndex((t) => t.key === tab)}>
 	{#if tab === 'list'}
 		<div class="flex items-center justify-between px-4 py-3 sm:px-5">
 			<div class="text-[12px] text-muted">
@@ -427,8 +425,7 @@
 			</div>
 		</ModSection>
 	{/if}
-	</div>
-	{/key}
+	</TabSwipe>
 </ModerationShell>
 
 <AccessPreview bind:open={showAccessPreview} featureName="Giveaways" />
