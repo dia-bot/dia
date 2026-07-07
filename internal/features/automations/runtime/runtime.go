@@ -21,6 +21,7 @@ import (
 	"github.com/dia-bot/dia/internal/features/automations"
 	cc "github.com/dia-bot/dia/internal/features/customcommands"
 	"github.com/dia-bot/dia/internal/features/customcommands/exec"
+	"github.com/dia-bot/dia/internal/features/giveaway"
 	"github.com/dia-bot/dia/internal/interactions"
 	"github.com/dia-bot/dia/internal/plugin"
 	"github.com/dia-bot/dia/internal/store"
@@ -57,11 +58,12 @@ func (*Plugin) Info() plugin.Info {
 func (p *Plugin) Init(ctx context.Context, d plugin.Deps, reg *plugin.Registrar) error {
 	p.deps = d
 	p.eng = exec.New(exec.Deps{
-		Log:     d.Log,
-		Discord: &exec.DiscordAdapter{C: d.Discord},
-		Store:   &exec.StoreAdapter{S: d.Store},
-		Imaging: &exec.ImagingAdapter{R: d.Imaging},
-		HTTP:    &exec.HTTPAdapter{Client: &http.Client{Timeout: 10 * time.Second}},
+		Log:       d.Log,
+		Discord:   &exec.DiscordAdapter{C: d.Discord},
+		Store:     &exec.StoreAdapter{S: d.Store},
+		Imaging:   &exec.ImagingAdapter{R: d.Imaging},
+		HTTP:      &exec.HTTPAdapter{Client: &http.Client{Timeout: 10 * time.Second}},
+		Giveaways: giveaway.NewManager(d),
 	})
 	p.eng.SetRouting(routePrefix, noopPrefix)
 	// Event runs have no interaction keeping them "live", so cap every wait_for
