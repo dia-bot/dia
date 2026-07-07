@@ -17,9 +17,12 @@ const (
 	ctxSession = "dia_session"
 	ctxGuildID = "dia_guild_id"
 
-	// Guild permission that grants dashboard management access: Administrator only
-	// (the guild owner implicitly qualifies — see canManage).
-	manageMask = discordgo.PermissionAdministrator
+	// Guild permissions that grant full dashboard access: Manage Server OR
+	// Administrator (the guild owner implicitly qualifies — see canManage).
+	// Manage Server is the conventional "runs this server" permission, so server
+	// staff who aren't full Administrators are still treated as admins here — an
+	// Administrator, holding every permission, always qualifies too.
+	manageMask = discordgo.PermissionManageGuild | discordgo.PermissionAdministrator
 )
 
 func (s *Server) sessionFromCookie(c *gin.Context) (*Session, string, bool) {
@@ -61,33 +64,81 @@ func (s *Server) csrf() gin.HandlerFunc {
 	}
 }
 
-// requireGuild authorizes that the session user manages the guild AND the bot is
-// present in it.
+// guildGate is the shared bootstrap for every guild route: it validates the
+// guild id, confirms the bot is present, ensures a guilds row exists (for
+// downstream FK-constrained writes like custom_commands / guild_feature_configs
+// — botInGuild may have passed via the live bot-list signal alone, before the
+// worker processed GUILD_CREATE, so without this the next INSERT would hit a
+// foreign-key violation; cheap no-op upsert when the row already exists),
+// resolves the caller's access, and stashes the guild id + access on the
+// context. It returns false (after writing the response) when the request
+// should stop.
+func (s *Server) guildGate(c *gin.Context) (guildAccess, bool) {
+	sess := currentSession(c)
+	gid := c.Param("id")
+	gidInt, ok := event.ParseID(gid)
+	if !ok {
+		fail(c, http.StatusBadRequest, "invalid guild id")
+		return guildAccess{}, false
+	}
+	if !s.botInGuild(c.Request.Context(), gid) {
+		fail(c, http.StatusNotFound, "Dia is not in this server")
+		return guildAccess{}, false
+	}
+	acc := s.accessFor(c.Request.Context(), sess, gid)
+	s.ensureGuildRow(c.Request.Context(), gidInt, gid, sess)
+	c.Set(ctxGuildID, gid)
+	c.Set(ctxAccess, acc)
+	return acc, true
+}
+
+// requireGuild authorizes that the session user is a server admin/owner AND the
+// bot is present. This is the strictest gate, used for every route that isn't
+// explicitly delegated to feature managers.
 func (s *Server) requireGuild() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		sess := currentSession(c)
-		gid := c.Param("id")
-		if !canManage(sess, gid) {
+		acc, ok := s.guildGate(c)
+		if !ok {
+			return
+		}
+		if !acc.Admin {
 			fail(c, http.StatusForbidden, "you don't manage this server")
 			return
 		}
-		gidInt, ok := event.ParseID(gid)
+		c.Next()
+	}
+}
+
+// requireGuildAccess authorizes that the caller can reach the guild dashboard at
+// all: an admin, or a manager of at least one delegated feature. Used for the
+// shared surfaces a feature manager needs to load their tab (guild detail, their
+// feature's config).
+func (s *Server) requireGuildAccess() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		acc, ok := s.guildGate(c)
 		if !ok {
-			fail(c, http.StatusBadRequest, "invalid guild id")
 			return
 		}
-		if !s.botInGuild(c.Request.Context(), gid) {
-			fail(c, http.StatusNotFound, "Dia is not in this server")
+		if !acc.any() {
+			fail(c, http.StatusForbidden, "you don't have access to this server")
 			return
 		}
-		// Ensure a guilds row exists for downstream FK-constrained writes
-		// (custom_commands, guild_feature_configs, etc.). botInGuild may have
-		// passed via the live bot-list signal alone, before the worker has
-		// processed GUILD_CREATE for this guild — without this step the next
-		// INSERT would fail with a foreign-key violation. Cheap: a no-op
-		// upsert when the row already exists.
-		s.ensureGuildRow(c.Request.Context(), gidInt, gid, sess)
-		c.Set(ctxGuildID, gid)
+		c.Next()
+	}
+}
+
+// requireFeature authorizes that the caller may manage a specific feature: an
+// admin, or a holder of one of that feature's configured manager roles.
+func (s *Server) requireFeature(feature string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		acc, ok := s.guildGate(c)
+		if !ok {
+			return
+		}
+		if !acc.can(feature) {
+			fail(c, http.StatusForbidden, "you don't have access to this feature")
+			return
+		}
 		c.Next()
 	}
 }
