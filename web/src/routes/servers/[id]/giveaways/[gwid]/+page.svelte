@@ -30,6 +30,7 @@
 	import ChannelSelect from '$lib/components/ChannelSelect.svelte';
 	import ColorField from '$lib/components/ColorField.svelte';
 	import TemplateField from '$lib/components/TemplateField.svelte';
+	import ReleaseDock from '$lib/components/page/ReleaseDock.svelte';
 	import {
 		ChevronLeft,
 		Gift,
@@ -164,6 +165,7 @@
 					winnerCount = p.default_winner_count ?? 1;
 					name = isNewPreset ? '' : p.name;
 				}
+				baseline = snapshot();
 				loaded = true;
 				return;
 			}
@@ -186,6 +188,7 @@
 				req = clone((g.requirements ?? {}) as RequirementConfig);
 				applySpec((g.spec ?? defaultSpec()) as GiveawaySpec);
 			}
+			baseline = snapshot();
 			loaded = true;
 		} catch (e) {
 			loadError = e instanceof Error ? e.message : 'Could not load the giveaway.';
@@ -389,6 +392,61 @@
 	// still create/run giveaways (giveaway CRUD), just not manage the preset library.
 	const admin = $derived(store.admin);
 	const presetBlocked = $derived(isPreset && store.detail !== null && !admin);
+
+	// ── Unsaved-changes dock ────────────────────────────────────────────────────
+	// The floating "Unsaved changes" pill (shared with every other tab) appears the
+	// moment the composition differs from what's stored. It's for editing an
+	// EXISTING thing (a live/scheduled/draft giveaway or a saved preset); creating a
+	// brand-new one still goes through the header's Publish / Save draft / Save
+	// preset actions, and a read-only ended giveaway has nothing to save.
+	let baseline = $state('');
+	let savePhase = $state<'idle' | 'saving' | 'saved' | 'error'>('idle');
+	function snapshot(): string {
+		return JSON.stringify({
+			name, prize, description, channelId, winnerCount, color, imageUrl,
+			durationStr, startInStr, pingRoleId, showRequirements, excludeHost,
+			allowBotsToWin, btnLabel, btnEmoji, btnStyle, announce, req,
+			spec: msgStep.spec
+		});
+	}
+	const dirty = $derived(
+		loaded && !isNew && !isNewPreset && !readOnly && !presetBlocked && snapshot() !== baseline
+	);
+	async function saveChanges() {
+		if (savePhase === 'saving' || !dirty) return;
+		savePhase = 'saving';
+		loadError = '';
+		try {
+			if (isPreset) {
+				const preset = buildPreset(presetId);
+				const exists = cfg.presets.some((p) => p.id === presetId);
+				const presets = exists
+					? cfg.presets.map((p) => (p.id === presetId ? preset : p))
+					: [...cfg.presets, preset];
+				const next = { ...cfg, presets, default_preset_id: cfg.default_preset_id || presetId };
+				await api.saveFeature(store.id, FEATURE, featureEnabled, next);
+				cfg = next;
+			} else {
+				await api.updateGiveaway(store.id, gwid, meta());
+			}
+			baseline = snapshot();
+			savePhase = 'saved';
+			setTimeout(() => (savePhase = 'idle'), 1400);
+		} catch (e) {
+			loadError = e instanceof Error ? e.message : 'Could not save.';
+			savePhase = 'error';
+		}
+	}
+	function discardChanges() {
+		savePhase = 'idle';
+		load();
+	}
+	function onKeydown(e: KeyboardEvent) {
+		if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's' && dirty) {
+			e.preventDefault();
+			saveChanges();
+		}
+	}
 </script>
 
 <svelte:head>
@@ -427,9 +485,11 @@
 							<Trash2 size={14} />
 						</button>
 					{/if}
-					<button type="button" disabled={!!busy || !name.trim()} onclick={savePreset} class="inline-flex h-8 items-center gap-1.5 rounded-md bg-ink px-3 text-[12px] font-semibold text-bg hover:bg-ink/90 disabled:opacity-40">
-						<Bookmark size={13} /> Save preset
-					</button>
+					{#if isNewPreset}
+						<button type="button" disabled={!!busy || !name.trim()} onclick={savePreset} class="inline-flex h-8 items-center gap-1.5 rounded-md bg-ink px-3 text-[12px] font-semibold text-bg hover:bg-ink/90 disabled:opacity-40">
+							<Bookmark size={13} /> Save preset
+						</button>
+					{/if}
 				{/if}
 			{:else if readOnly}
 				{#if status === 'ended'}
@@ -444,9 +504,6 @@
 					</button>
 				{/if}
 				{#if status === 'running' || status === 'scheduled'}
-					<button type="button" disabled={!!busy} onclick={() => run('save', () => api.updateGiveaway(store.id, gwid, meta()), false)} class={btnStrong}>
-						<Save size={13} /> Save changes
-					</button>
 					{#if status === 'running'}
 						<button type="button" disabled={!!busy} onclick={() => run('end', () => api.endGiveaway(store.id, gwid))} class={btnGhost}>
 							<CheckCircle2 size={13} /> End now
@@ -456,9 +513,11 @@
 						<Ban size={13} /> Cancel
 					</button>
 				{:else}
-					<button type="button" disabled={!!busy} onclick={saveDraft} class={btnStrong}>
-						<Save size={13} /> Save draft
-					</button>
+					{#if isNew}
+						<button type="button" disabled={!!busy} onclick={saveDraft} class={btnStrong}>
+							<Save size={13} /> Save draft
+						</button>
+					{/if}
 					{#if status === 'draft'}
 						<button type="button" disabled={!!busy} onclick={() => run('delete', () => api.deleteGiveaway(store.id, gwid))} class="grid size-8 place-items-center rounded-md border border-line text-muted hover:border-line-strong hover:text-danger disabled:opacity-50" aria-label="Delete draft">
 							<Trash2 size={14} />
@@ -644,3 +703,6 @@
 		{/if}
 	</div>
 </div>
+
+<svelte:window onkeydown={onKeydown} />
+<ReleaseDock {dirty} phase={savePhase} error={loadError} onsave={saveChanges} onreset={discardChanges} />
