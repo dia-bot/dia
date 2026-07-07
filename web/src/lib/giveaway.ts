@@ -98,6 +98,9 @@ export interface GiveawaySpec {
 	// custom_id_suffix of the composed button that enters the giveaway; '' = use
 	// the auto-added system Enter button.
 	enter_button_suffix?: string;
+	// Maps a composed button's custom_id_suffix to the saved automation it runs on
+	// click ("point a button at an automation").
+	button_actions?: Record<string, string>;
 	button: ButtonConfig;
 	announce: AnnounceConfig;
 	ping_role_id?: string;
@@ -141,6 +144,7 @@ export function defaultSpec(): GiveawaySpec {
 		],
 		components: [],
 		enter_button_suffix: '',
+		button_actions: {},
 		button: { label: 'Enter Giveaway', emoji: '🎉', style: 'primary' },
 		announce: {
 			message: 'Congratulations {{ .Winners }}! You won **{{ .Prize }}** 🎉',

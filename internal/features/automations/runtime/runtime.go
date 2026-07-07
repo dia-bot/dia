@@ -726,6 +726,35 @@ func (p *Plugin) runBuiltinTail(ctx context.Context, autoID, triggerType string,
 	}
 }
 
+// RunAutomation runs a saved, enabled automation on demand — the cross-feature
+// bridge (e.g. a giveaway action-button click) that satisfies
+// giveaway.AutomationRunner. The caller supplies the actor, channel and .Event
+// scope; a disabled automation is a silent no-op and a missing one is an error.
+func (p *Plugin) RunAutomation(ctx context.Context, guildID, automationID string, user event.User, member *event.Member, channelID string, eventMap map[string]any) error {
+	gid, ok := event.ParseID(guildID)
+	if !ok {
+		return fmt.Errorf("run automation: bad guild id %q", guildID)
+	}
+	a, err := p.deps.Store.Automations.Get(ctx, gid, automationID)
+	if err != nil {
+		return err
+	}
+	if !a.Enabled {
+		return nil
+	}
+	if eventMap == nil {
+		eventMap = map[string]any{}
+	}
+	ec := &eventContext{
+		guildID:   guildID,
+		channelID: channelID,
+		user:      user,
+		member:    member,
+		eventMap:  eventMap,
+	}
+	return p.run(ctx, a, ec)
+}
+
 // persistInitial records the first execution of an automation: it inserts the
 // run row (so the Runs tab and log rows have a parent), appends step logs, and
 // either parks it (pause) or stamps the terminal outcome.

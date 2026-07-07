@@ -89,6 +89,8 @@ func main() {
 	}
 
 	b := bot.New(deps)
+	automationsPlugin := automations.New()
+	giveawayPlugin := giveaway.New()
 	if err := b.Register(ctx,
 		welcome.New(),
 		leveling.New(),
@@ -97,11 +99,15 @@ func main() {
 		verification.New(),
 		serverlogs.New(),
 		customcommands.New(),
-		automations.New(),
-		giveaway.New(),
+		automationsPlugin,
+		giveawayPlugin,
 	); err != nil {
 		fatal(log, "register plugins", err)
 	}
+	// Composed giveaway action buttons fire a saved automation on click. The
+	// giveaway plugin can't import the automations runner (it would cycle), so the
+	// automations runtime is injected as the bridge once both have initialised.
+	giveawayPlugin.SetAutomationRunner(automationsPlugin)
 
 	// DEV_GUILD_ID registers commands to one guild (instant) for development;
 	// empty registers globally (~1h propagation).

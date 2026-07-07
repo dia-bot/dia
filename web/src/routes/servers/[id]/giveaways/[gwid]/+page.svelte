@@ -97,6 +97,10 @@
 	// custom_id_suffix of the composed button that enters the giveaway ('' = use
 	// the auto-added system Enter button styled by the fields above).
 	let enterButtonSuffix = $state('');
+	// suffix → saved automation id, for action buttons that fire an automation.
+	let buttonActions = $state<Record<string, string>>({});
+	// The guild's saved automations, for the action-button picker.
+	let automationList = $state<{ id: string; name: string }[]>([]);
 	let announce = $state(defaultSpec().announce);
 	let req = $state<RequirementConfig>({});
 	let sourcePresetId = $state('');
@@ -135,6 +139,7 @@
 			}
 		};
 		enterButtonSuffix = spec.enter_button_suffix ?? '';
+		buttonActions = clone(spec.button_actions ?? {});
 		btnLabel = spec.button?.label ?? 'Enter Giveaway';
 		btnEmoji = spec.button?.emoji ?? '';
 		btnStyle = spec.button?.style ?? 'primary';
@@ -209,6 +214,19 @@
 		}
 	}
 	onMount(load);
+	// The saved automations an action button can point at (best-effort; the picker
+	// just shows "No action" if this fails or there are none yet).
+	onMount(async () => {
+		try {
+			const r = await api.automations(store.id);
+			automationList = ((r.automations ?? []) as { id: string; name: string }[]).map((a) => ({
+				id: a.id,
+				name: a.name
+			}));
+		} catch {
+			/* ignore */
+		}
+	});
 
 	// Assemble the composed spec + create/update body from the current state.
 	function buildSpec(): GiveawaySpec {
@@ -218,6 +236,7 @@
 			embeds: ((s.embeds as GiveawaySpec['embeds']) ?? []) as GiveawaySpec['embeds'],
 			components: ((s.components as GiveawaySpec['components']) ?? []) as GiveawaySpec['components'],
 			enter_button_suffix: enterButtonSuffix,
+			button_actions: buttonActions,
 			button: { label: btnLabel, emoji: btnEmoji, style: btnStyle },
 			announce,
 			ping_role_id: pingRoleId,
@@ -399,6 +418,14 @@
 		}
 	});
 	const usingComposedEntry = $derived(!!enterButtonSuffix);
+
+	// Buttons that can fire an automation on click: composed non-link buttons that
+	// aren't the entry button.
+	const actionButtons = $derived(messageButtons.filter((c) => c.custom_id_suffix !== enterButtonSuffix));
+	const automationOptions = $derived([
+		{ value: '', label: 'No action' },
+		...automationList.map((a) => ({ value: a.id, label: a.name }))
+	]);
 	const canPublish = $derived(!!prize.trim() && !!channelId);
 	const showTiming = $derived(isNew || status === 'draft');
 
@@ -477,7 +504,7 @@
 		return JSON.stringify({
 			name, prize, description, channelId, winnerCount, color, imageUrl,
 			durationStr, startInStr, pingRoleId, showRequirements, excludeHost,
-			allowBotsToWin, btnLabel, btnEmoji, btnStyle, enterButtonSuffix, announce, req,
+			allowBotsToWin, btnLabel, btnEmoji, btnStyle, enterButtonSuffix, buttonActions, announce, req,
 			spec: msgStep.spec
 		});
 	}
@@ -669,6 +696,27 @@
 						{/if}
 					</div>
 				</ModSection>
+
+				{#if actionButtons.length > 0}
+					<ModSection label="Button actions" desc="Point a button at one of your automations. It runs when a member clicks it.">
+						{#if automationList.length === 0}
+							<p class="max-w-2xl text-[12px] text-muted">
+								No automations yet. Build one on the
+								<a class="text-accent-ink hover:underline" href={`/servers/${store.id}/automations`}>Automations</a>
+								tab, then point a button at it here.
+							</p>
+						{:else}
+							<div class="grid max-w-2xl gap-3">
+								{#each actionButtons as c (c.custom_id_suffix)}
+									{@const suffix = c.custom_id_suffix as string}
+									<Field label={c.label?.trim() || suffix} hint="Runs when this button is clicked.">
+										<Select bind:value={buttonActions[suffix]} options={automationOptions} />
+									</Field>
+								{/each}
+							</div>
+						{/if}
+					</ModSection>
+				{/if}
 
 				<ModSection label={isPreset ? 'Preset defaults' : 'Setup'} desc={isPreset ? 'Pre-filled when a giveaway starts from this preset.' : ''}>
 					<div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">

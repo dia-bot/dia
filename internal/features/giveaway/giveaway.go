@@ -22,6 +22,9 @@ const componentPrefix = "giveaway:"
 // Plugin implements the giveaway feature.
 type Plugin struct {
 	deps plugin.Deps
+	// autoRunner fires a saved automation when a composed action button is
+	// clicked (injected by the worker; nil until then). See automation_bridge.go.
+	autoRunner AutomationRunner
 }
 
 // New returns the giveaway plugin.
@@ -71,10 +74,14 @@ func (p *Plugin) handleComponent(c *interactions.Context) error {
 	if !ok {
 		return c.DeferUpdate()
 	}
-	// Composed action buttons (giveaway:act:<id>:<suffix>) route here; their
-	// click flow is wired in Automations. Until wired, acknowledge gracefully.
+	// Composed action buttons (giveaway:act:<id>:<suffix>) route here; a click
+	// fires the saved automation the button points at.
 	if action == "act" {
-		return c.RespondEphemeral("This button isn't set up yet.")
+		gwID, suffix, ok2 := strings.Cut(id, ":")
+		if !ok2 || suffix == "" {
+			return c.DeferUpdate()
+		}
+		return p.handleActionButton(c, gwID, suffix)
 	}
 	if action != "enter" || id == "" {
 		return c.DeferUpdate()
@@ -119,6 +126,35 @@ func (p *Plugin) handleComponent(c *interactions.Context) error {
 	}
 	_ = c.RespondEphemeral(msg)
 	p.refreshLiveMessage(c.Ctx, spec, g)
+	return nil
+}
+
+// handleActionButton fires the saved automation a composed action button points
+// at. It resolves the giveaway (for the click's event scope), looks up the
+// button's automation and runs it via the injected bridge. Missing wiring (no
+// mapping, or no bridge injected) reports an ephemeral notice rather than
+// silently doing nothing. The automation runs detached (context.WithoutCancel)
+// so a slow flow doesn't fail the interaction ack.
+func (p *Plugin) handleActionButton(c *interactions.Context, giveawayID, suffix string) error {
+	guildID, _ := event.ParseID(c.GuildID)
+	g, err := p.deps.Store.Giveaways.Get(c.Ctx, guildID, giveawayID)
+	if err != nil {
+		return c.RespondEphemeral("This giveaway is no longer available.")
+	}
+	autoID := decodeSpec(g.Spec).ButtonActions[suffix]
+	if autoID == "" || p.autoRunner == nil {
+		return c.RespondEphemeral("This button isn't set up yet.")
+	}
+	_ = c.DeferUpdate()
+	ev := map[string]any{
+		"giveaway_id": g.ID,
+		"prize":       g.Prize,
+		"button":      suffix,
+		"channel_id":  c.I.ChannelID,
+	}
+	if err := p.autoRunner.RunAutomation(context.WithoutCancel(c.Ctx), c.GuildID, autoID, c.User, c.I.Member, c.I.ChannelID, ev); err != nil {
+		p.deps.Log.Warn("giveaway: action button automation", "giveaway", g.ID, "automation", autoID, "err", err)
+	}
 	return nil
 }
 

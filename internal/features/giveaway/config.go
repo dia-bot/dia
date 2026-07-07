@@ -89,6 +89,11 @@ type Spec struct {
 	// button is used instead.
 	EnterButtonSuffix string `json:"enter_button_suffix,omitempty"`
 
+	// ButtonActions maps a composed button's custom_id_suffix to the saved
+	// automation it runs on click ("point a button at an automation"). The entry
+	// button and link buttons are excluded (they route natively / open a URL).
+	ButtonActions map[string]string `json:"button_actions,omitempty"`
+
 	// ShowRequirements appends a rendered requirement summary field to the
 	// primary embed (the rules are dynamic, so this saves hand-authoring them).
 	ShowRequirements bool `json:"show_requirements"`
