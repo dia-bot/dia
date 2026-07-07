@@ -387,6 +387,26 @@ func (p *Plugin) prepare(ctx context.Context, et event.Type, env *event.Envelope
 			"removed":    r.Removed,
 		}
 
+	case event.TypeGiveawayEnded:
+		g, err := plugin.DecodeData[event.GiveawayEnded](env)
+		if err != nil {
+			return nil, false
+		}
+		ec.user = g.User // the first winner (zero value when nobody won)
+		ec.member = g.Member
+		ec.channelID = g.ChannelID
+		ec.eventMap = map[string]any{
+			"giveaway_id":  g.GiveawayID,
+			"prize":        g.Prize,
+			"host_id":      g.HostID,
+			"winner_count": g.WinnerCount,
+			"winner_ids":   g.WinnerIDs,
+			"entry_count":  g.EntryCount,
+			"rerolled":     g.Rerolled,
+			"message_id":   g.MessageID,
+			"channel_id":   g.ChannelID,
+		}
+
 	case event.TypeMessageCreate, event.TypeMessageUpdate:
 		m, err := decodeMessage(et, env)
 		if err != nil {

@@ -32,6 +32,7 @@ type Store struct {
 	CommandRuns    *CommandRunRepo
 	Automations    *AutomationRepo
 	AutomationRuns *AutomationRunRepo
+	Giveaways      *GiveawayRepo
 	FeatureKV      *FeatureKVRepo
 	ImageTemplates *CommandImageTemplateRepo
 	Audit          *AuditRepo
@@ -75,6 +76,7 @@ func Open(ctx context.Context, cfg config.PostgresConfig, log *slog.Logger) (*St
 	s.CommandRuns = &CommandRunRepo{pool: pool}
 	s.Automations = &AutomationRepo{pool: pool}
 	s.AutomationRuns = &AutomationRunRepo{pool: pool}
+	s.Giveaways = &GiveawayRepo{pool: pool}
 	s.FeatureKV = &FeatureKVRepo{pool: pool}
 	s.ImageTemplates = &CommandImageTemplateRepo{pool: pool}
 	s.Audit = &AuditRepo{pool: pool}

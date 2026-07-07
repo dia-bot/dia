@@ -182,6 +182,11 @@ func (s *Server) Handler() http.Handler {
 	g.GET("/automation-runs", s.handleListAutomationRuns)
 	g.GET("/automation-runs/:rid", s.handleGetAutomationRun)
 
+	g.GET("/giveaways", s.handleListGiveaways)
+	g.POST("/giveaways/:gwid/end", s.handleEndGiveaway)
+	g.POST("/giveaways/:gwid/reroll", s.handleRerollGiveaway)
+	g.POST("/giveaways/:gwid/cancel", s.handleCancelGiveaway)
+
 	g.GET("/reaction-roles", s.handleListMenus)
 	g.PUT("/reaction-roles", s.handleUpsertMenu)
 	g.DELETE("/reaction-roles/:mid", s.handleDeleteMenu)

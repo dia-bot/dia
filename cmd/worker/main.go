@@ -25,6 +25,7 @@ import (
 
 	automations "github.com/dia-bot/dia/internal/features/automations/runtime"
 	customcommands "github.com/dia-bot/dia/internal/features/customcommands/runtime"
+	"github.com/dia-bot/dia/internal/features/giveaway"
 	"github.com/dia-bot/dia/internal/features/leveling"
 	serverlogs "github.com/dia-bot/dia/internal/features/logging"
 	"github.com/dia-bot/dia/internal/features/moderation"
@@ -97,6 +98,7 @@ func main() {
 		serverlogs.New(),
 		customcommands.New(),
 		automations.New(),
+		giveaway.New(),
 	); err != nil {
 		fatal(log, "register plugins", err)
 	}

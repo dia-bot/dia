@@ -16,6 +16,7 @@
 		TrendingUp,
 		ToggleRight,
 		UserPlus,
+		Gift,
 		ShieldCheck,
 		ShieldAlert,
 		UserCheck,
@@ -59,7 +60,8 @@
 				{ label: 'Welcome', path: 'welcome', icon: ImageIcon },
 				{ label: 'Leveling', path: 'leveling', icon: TrendingUp },
 				{ label: 'Reaction Roles', path: 'reaction-roles', icon: ToggleRight },
-				{ label: 'Auto Roles', path: 'auto-roles', icon: UserPlus }
+				{ label: 'Auto Roles', path: 'auto-roles', icon: UserPlus },
+				{ label: 'Giveaways', path: 'giveaways', icon: Gift }
 			]
 		},
 		{
@@ -141,6 +143,7 @@
 		'leveling',
 		'reaction-roles',
 		'auto-roles',
+		'giveaways',
 		'editor',
 		'commands',
 		'automations',
@@ -157,6 +160,7 @@
 		'leveling',
 		'reaction-roles',
 		'auto-roles',
+		'giveaways',
 		'commands',
 		'automations',
 		'moderation',

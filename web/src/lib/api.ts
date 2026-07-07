@@ -172,6 +172,21 @@ export const api = {
 	automationRun: (id: string, runId: string) =>
 		req<{ run: any; logs: any[] }>('GET', `/api/guilds/${id}/automation-runs/${runId}`),
 
+	// ── Giveaways ──
+	giveaways: (id: string, status = '') =>
+		req<{ giveaways: any[] }>(
+			'GET',
+			`/api/guilds/${id}/giveaways` + (status ? `?status=${status}` : '')
+		),
+	endGiveaway: (id: string, gwid: string) =>
+		req<{ ok: boolean }>('POST', `/api/guilds/${id}/giveaways/${gwid}/end`),
+	rerollGiveaway: (id: string, gwid: string, winners = 0) =>
+		req<{ ok: boolean; winners: string[] }>('POST', `/api/guilds/${id}/giveaways/${gwid}/reroll`, {
+			winners
+		}),
+	cancelGiveaway: (id: string, gwid: string) =>
+		req<{ ok: boolean }>('POST', `/api/guilds/${id}/giveaways/${gwid}/cancel`),
+
 	menus: (id: string) => req<{ menus: any[] }>('GET', `/api/guilds/${id}/reaction-roles`),
 	upsertMenu: (id: string, menu: unknown) =>
 		req<{ id?: number; ok?: boolean }>('PUT', `/api/guilds/${id}/reaction-roles`, menu),

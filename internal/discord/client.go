@@ -98,6 +98,13 @@ func (c *Client) SendMessage(channelID string, data *discordgo.MessageSend) (*di
 	return c.s.ChannelMessageSendComplex(channelID, data)
 }
 
+// EditMessage edits an existing message (used to refresh the live giveaway
+// embed and switch it to its ended state). The MessageEdit carries its own
+// Channel + ID.
+func (c *Client) EditMessage(edit *discordgo.MessageEdit) (*discordgo.Message, error) {
+	return c.s.ChannelMessageEditComplex(edit)
+}
+
 // DeleteMessage deletes a message (used by automod).
 func (c *Client) DeleteMessage(channelID, messageID, reason string) error {
 	return c.s.ChannelMessageDelete(channelID, messageID, discordgo.WithAuditLogReason(reason))
@@ -111,6 +118,16 @@ func (c *Client) SendDM(userID, content string) error {
 	}
 	_, err = c.s.ChannelMessageSend(ch.ID, content)
 	return err
+}
+
+// SendDMComplex opens a DM channel with a user and sends a rich message (content
+// + embeds), for the giveaway winner DM.
+func (c *Client) SendDMComplex(userID string, data *discordgo.MessageSend) (*discordgo.Message, error) {
+	ch, err := c.s.UserChannelCreate(userID)
+	if err != nil {
+		return nil, err
+	}
+	return c.s.ChannelMessageSendComplex(ch.ID, data)
 }
 
 // ── Roles ────────────────────────────────────────────────────

@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	cc "github.com/dia-bot/dia/internal/features/customcommands"
+	"github.com/dia-bot/dia/internal/features/giveaway"
 	"github.com/dia-bot/dia/internal/features/leveling"
 	"github.com/dia-bot/dia/internal/features/moderation"
 	"github.com/dia-bot/dia/internal/features/roles"
@@ -156,7 +157,32 @@ func BuildBuiltins(configs map[string]json.RawMessage, featureEnabled map[string
 		})
 	}
 
+	// ── Giveaways ────────────────────────────────────────────────────────────
+	gEnabled := featureEnabled[giveaway.FeatureKey]
+	out = append(out, Builtin{
+		Key:         "giveaway.ended",
+		Name:        "Draw giveaway winners",
+		Description: "When a giveaway ends it filters entries, draws weighted winners, and announces them. Managed on the Giveaways tab.",
+		TriggerType: "giveaway_ended",
+		FeatureKey:  giveaway.FeatureKey,
+		FeatureName: "Giveaways",
+		FeatureTab:  "giveaways",
+		Enabled:     gEnabled,
+		Definition:  giveawayFlow(),
+	})
+
 	return out
+}
+
+// giveawayFlow renders the giveaway end as a single read-only spine node: the
+// giveaway feature draws + announces winners natively (no step program), so the
+// flow shows one honest "winners drawn" node the canvas can hang a follow-up off
+// via the giveaway_ended trigger.
+func giveawayFlow() cc.Definition {
+	return cc.Definition{Steps: []cc.Step{{
+		ID:   "builtin-draw",
+		Kind: cc.KindNoop,
+	}}}
 }
 
 // ruleFlow renders one automod rule as a read-only step spine followed by the
