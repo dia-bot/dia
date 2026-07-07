@@ -15,6 +15,7 @@
 		GIVEAWAY_SCOPE_VARS,
 		type GiveawayConfig,
 		type GiveawaySpec,
+		type ComponentRow,
 		type Preset,
 		type RequirementConfig
 	} from '$lib/giveaway';
@@ -93,6 +94,9 @@
 	let btnLabel = $state('Enter Giveaway');
 	let btnEmoji = $state('🎉');
 	let btnStyle = $state('primary');
+	// custom_id_suffix of the composed button that enters the giveaway ('' = use
+	// the auto-added system Enter button styled by the fields above).
+	let enterButtonSuffix = $state('');
 	let announce = $state(defaultSpec().announce);
 	let req = $state<RequirementConfig>({});
 	let sourcePresetId = $state('');
@@ -107,7 +111,11 @@
 	});
 
 	// The message (content + embeds) edited via the shared WYSIWYG MessageEditor.
-	let msgStep = $state<Step>({ id: 'gw-msg', kind: 'send_message', spec: { content: '', embeds: [] } });
+	let msgStep = $state<Step>({
+		id: 'gw-msg',
+		kind: 'send_message',
+		spec: { content: '', embeds: [], components: [] }
+	});
 
 	const readOnly = $derived(status === 'ended' || status === 'cancelled');
 	const channelLocked = $derived(readOnly || status === 'running' || status === 'scheduled');
@@ -120,8 +128,13 @@
 		msgStep = {
 			id: 'gw-msg',
 			kind: 'send_message',
-			spec: { content: spec.content ?? '', embeds: clone(spec.embeds ?? []) }
+			spec: {
+				content: spec.content ?? '',
+				embeds: clone(spec.embeds ?? []),
+				components: clone(spec.components ?? [])
+			}
 		};
+		enterButtonSuffix = spec.enter_button_suffix ?? '';
 		btnLabel = spec.button?.label ?? 'Enter Giveaway';
 		btnEmoji = spec.button?.emoji ?? '';
 		btnStyle = spec.button?.style ?? 'primary';
@@ -203,6 +216,8 @@
 		return {
 			content: (s.content as string) ?? '',
 			embeds: ((s.embeds as GiveawaySpec['embeds']) ?? []) as GiveawaySpec['embeds'],
+			components: ((s.components as GiveawaySpec['components']) ?? []) as GiveawaySpec['components'],
+			enter_button_suffix: enterButtonSuffix,
 			button: { label: btnLabel, emoji: btnEmoji, style: btnStyle },
 			announce,
 			ping_role_id: pingRoleId,
@@ -361,6 +376,29 @@
 	];
 	const presetOptions = $derived(cfg.presets.map((p) => ({ value: p.id, label: p.name })));
 	const isPresetUpdate = $derived(!!sourcePresetId && cfg.presets.some((p) => p.id === sourcePresetId));
+
+	// The composed non-link buttons that can act as the entry button, for the
+	// entry-button picker below.
+	const messageButtons = $derived(
+		(((msgStep.spec as Record<string, unknown>)?.components as ComponentRow[]) ?? [])
+			.flatMap((r) => r.components ?? [])
+			.filter((c) => (c.type ?? 'button') === 'button' && c.style !== 'link' && !!c.custom_id_suffix)
+	);
+	const entryOptions = $derived([
+		{ value: '', label: 'Auto — add a default Enter button' },
+		...messageButtons.map((c) => ({
+			value: c.custom_id_suffix as string,
+			label: c.label?.trim() || (c.custom_id_suffix as string)
+		}))
+	]);
+	// If the chosen entry button gets deleted/renamed, fall back to Auto so the
+	// giveaway stays enterable.
+	$effect(() => {
+		if (enterButtonSuffix && !messageButtons.some((c) => c.custom_id_suffix === enterButtonSuffix)) {
+			enterButtonSuffix = '';
+		}
+	});
+	const usingComposedEntry = $derived(!!enterButtonSuffix);
 	const canPublish = $derived(!!prize.trim() && !!channelId);
 	const showTiming = $derived(isNew || status === 'draft');
 
@@ -439,7 +477,7 @@
 		return JSON.stringify({
 			name, prize, description, channelId, winnerCount, color, imageUrl,
 			durationStr, startInStr, pingRoleId, showRequirements, excludeHost,
-			allowBotsToWin, btnLabel, btnEmoji, btnStyle, announce, req,
+			allowBotsToWin, btnLabel, btnEmoji, btnStyle, enterButtonSuffix, announce, req,
 			spec: msgStep.spec
 		});
 	}
@@ -596,7 +634,7 @@
 			</div>
 		{:else}
 			<div class="pb-24">
-				<ModSection label="Message" desc="Edited like a message in any other tab. The Enter button is added automatically.">
+				<ModSection label="Message" desc="Compose the message, embeds and buttons like any other tab. Add link buttons, or a button to enter (picked below); if you don't, an Enter button is added automatically.">
 					<div class="max-w-2xl">
 						{#if !readOnly}
 							<p class="mb-2 text-[12px] text-muted">
@@ -607,16 +645,28 @@
 							</p>
 						{/if}
 						<div class={readOnly ? 'pointer-events-none opacity-70' : ''}>
-							<MessageEditor step={msgStep} embeds clickPaths={false} />
+							<MessageEditor step={msgStep} embeds components clickPaths={false} />
 						</div>
 					</div>
 				</ModSection>
 
 				<ModSection label="Enter button" desc="The button members click to enter.">
-					<div class="grid max-w-2xl gap-3 sm:grid-cols-3">
-						<Field label="Label"><input class={inputCls} bind:value={btnLabel} placeholder="Enter Giveaway" disabled={readOnly} /></Field>
-						<Field label="Emoji" hint="A glyph, or name:id."><input class={inputCls} bind:value={btnEmoji} placeholder="🎉" disabled={readOnly} /></Field>
-						<Field label="Colour"><Select bind:value={btnStyle} options={styleOptions} /></Field>
+					<div class="max-w-2xl space-y-3">
+						<Field label="Entry action" hint="Which button enters the giveaway. Pick one of your own buttons, or let Dia add a default.">
+							<Select bind:value={enterButtonSuffix} options={entryOptions} />
+						</Field>
+						{#if usingComposedEntry}
+							<p class="text-[12px] text-muted">
+								Your button <span class="font-medium text-ink">“{entryOptions.find((o) => o.value === enterButtonSuffix)?.label}”</span>
+								enters the giveaway. Style it in the message editor above.
+							</p>
+						{:else}
+							<div class="grid gap-3 sm:grid-cols-3">
+								<Field label="Label"><input class={inputCls} bind:value={btnLabel} placeholder="Enter Giveaway" disabled={readOnly} /></Field>
+								<Field label="Emoji" hint="A glyph, or name:id."><input class={inputCls} bind:value={btnEmoji} placeholder="🎉" disabled={readOnly} /></Field>
+								<Field label="Colour"><Select bind:value={btnStyle} options={styleOptions} /></Field>
+							</div>
+						{/if}
 					</div>
 				</ModSection>
 

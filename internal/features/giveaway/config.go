@@ -76,6 +76,19 @@ type Spec struct {
 	Announce   AnnounceConfig `json:"announce"`
 	PingRoleID string         `json:"ping_role_id,omitempty"` // pinged above the live message on start
 
+	// Components are extra user-composed button rows shown under the giveaway
+	// message (the same shape the shared MessageEditor produces). A button is
+	// either the entry button (its custom_id_suffix matches EnterButtonSuffix) or
+	// a link (its URL is set). When Components carries no entry button, the system
+	// Enter button (styled by Button) is appended so a giveaway is always
+	// enterable.
+	Components []cc.ComponentRow `json:"components,omitempty"`
+
+	// EnterButtonSuffix is the custom_id_suffix of the component that enters the
+	// giveaway. Empty (or no matching component) → the auto-appended system Enter
+	// button is used instead.
+	EnterButtonSuffix string `json:"enter_button_suffix,omitempty"`
+
 	// ShowRequirements appends a rendered requirement summary field to the
 	// primary embed (the rules are dynamic, so this saves hand-authoring them).
 	ShowRequirements bool `json:"show_requirements"`

@@ -57,6 +57,25 @@ export interface ButtonConfig {
 	style: string;
 }
 
+// Component / ComponentRow mirror customcommands.Component — the shape the shared
+// MessageEditor writes into spec.components. Giveaway buttons are either the
+// entry button (custom_id_suffix === enter_button_suffix) or link buttons.
+export interface Component {
+	type: string;
+	style?: string;
+	label?: string;
+	emoji?: string;
+	custom_id_suffix?: string;
+	url?: string;
+	disabled?: boolean;
+	on_click?: string;
+	placeholder?: string;
+}
+
+export interface ComponentRow {
+	components: Component[];
+}
+
 export interface AnnounceConfig {
 	message: string;
 	ping_winners: boolean;
@@ -73,6 +92,12 @@ export interface AnnounceConfig {
 export interface GiveawaySpec {
 	content?: string;
 	embeds?: EmbedSpec[];
+	// Extra composed button rows (links + the entry button). Empty = the system
+	// Enter button (styled by `button`) is used.
+	components?: ComponentRow[];
+	// custom_id_suffix of the composed button that enters the giveaway; '' = use
+	// the auto-added system Enter button.
+	enter_button_suffix?: string;
 	button: ButtonConfig;
 	announce: AnnounceConfig;
 	ping_role_id?: string;
@@ -114,6 +139,8 @@ export function defaultSpec(): GiveawaySpec {
 				]
 			}
 		],
+		components: [],
+		enter_button_suffix: '',
 		button: { label: 'Enter Giveaway', emoji: '🎉', style: 'primary' },
 		announce: {
 			message: 'Congratulations {{ .Winners }}! You won **{{ .Prize }}** 🎉',

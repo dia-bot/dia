@@ -50,6 +50,13 @@ func (p *Plugin) Init(ctx context.Context, d plugin.Deps, reg *plugin.Registrar)
 
 func enterCustomID(giveawayID string) string { return componentPrefix + "enter:" + giveawayID }
 
+// actionCustomID routes a composed (non-entry, non-link) giveaway button back to
+// this feature: giveaway:act:<giveawayID>:<suffix>. Wiring these buttons to a
+// click flow is configured in Automations.
+func actionCustomID(giveawayID, suffix string) string {
+	return componentPrefix + "act:" + giveawayID + ":" + suffix
+}
+
 // ── Enter / leave button ─────────────────────────────────────────────────────
 
 // handleComponent handles clicks on a posted giveaway's Enter button. It's a
@@ -61,7 +68,15 @@ func (p *Plugin) handleComponent(c *interactions.Context) error {
 	d := p.deps
 	rest := strings.TrimPrefix(c.CustomID(), componentPrefix)
 	action, id, ok := strings.Cut(rest, ":")
-	if !ok || action != "enter" || id == "" {
+	if !ok {
+		return c.DeferUpdate()
+	}
+	// Composed action buttons (giveaway:act:<id>:<suffix>) route here; their
+	// click flow is wired in Automations. Until wired, acknowledge gracefully.
+	if action == "act" {
+		return c.RespondEphemeral("This button isn't set up yet.")
+	}
+	if action != "enter" || id == "" {
 		return c.DeferUpdate()
 	}
 	gid, _ := event.ParseID(c.GuildID)

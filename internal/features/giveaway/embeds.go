@@ -78,7 +78,7 @@ func buildLiveMessage(ctx context.Context, spec Spec, g store.Giveaway, entryCou
 	data := scopeData(g, entryCount, nil, guildName, memberCount)
 	send := &discordgo.MessageSend{
 		Embeds:     buildLiveEmbeds(ctx, spec, g, data),
-		Components: enterComponents(spec, g.ID),
+		Components: buildComponents(ctx, spec, g, data),
 	}
 	if c := renderText(ctx, spec.Content, data); c != "" {
 		send.Content = c
@@ -200,6 +200,82 @@ func buildCancelledEmbed(ctx context.Context, spec Spec, g store.Giveaway, guild
 }
 
 // ── Components ───────────────────────────────────────────────────────────────
+
+// buildComponents renders the giveaway's action rows. When the spec composes its
+// own buttons, they're rendered with their custom_ids remapped to this feature's
+// routes: the entry button (custom_id_suffix == EnterButtonSuffix) gets the
+// enter custom_id, link buttons keep their (templated) URL, and any other button
+// gets an action custom_id so a click still routes back here. When no entry
+// button is composed, the styled system Enter button is appended so a giveaway
+// is always enterable. Labels/URLs are templated against the giveaway scope.
+func buildComponents(ctx context.Context, spec Spec, g store.Giveaway, data map[string]any) []discordgo.MessageComponent {
+	if len(spec.Components) == 0 {
+		return enterComponents(spec, g.ID)
+	}
+	var rows []discordgo.MessageComponent
+	hasEnter := false
+	for _, row := range spec.Components {
+		var comps []discordgo.MessageComponent
+		for _, c := range row.Components {
+			if c.Type != "" && c.Type != "button" {
+				continue // only buttons are meaningful on a giveaway message
+			}
+			isEnter := c.CustomIDSuffix != "" && c.CustomIDSuffix == spec.EnterButtonSuffix
+			btn := giveawayButton(ctx, c, g.ID, isEnter, data)
+			if btn == nil {
+				continue
+			}
+			hasEnter = hasEnter || isEnter
+			comps = append(comps, btn)
+		}
+		if len(comps) > 0 {
+			rows = append(rows, discordgo.ActionsRow{Components: comps})
+		}
+	}
+	// Guarantee an entry point: append the styled system Enter button when the
+	// composer didn't designate one (and there's still a free row; Discord caps
+	// a message at five action rows).
+	if !hasEnter && len(rows) < 5 {
+		rows = append(rows, enterComponents(spec, g.ID)...)
+	}
+	return rows
+}
+
+// giveawayButton renders one composed button, routing its click. A link button
+// keeps its URL; the entry button gets the enter custom_id; every other button
+// gets an action custom_id (giveaway:act:<id>:<suffix>) so the handler can react.
+func giveawayButton(ctx context.Context, c cc.Component, giveawayID string, isEnter bool, data map[string]any) discordgo.MessageComponent {
+	label := renderText(ctx, c.Label, data)
+	if label == "" {
+		label = "Button"
+	}
+	// Link button: no custom_id, just the (templated) URL.
+	if strings.EqualFold(c.Style, "link") || c.URL != "" {
+		url := renderText(ctx, c.URL, data)
+		if url == "" {
+			return nil
+		}
+		btn := discordgo.Button{Label: label, Style: discordgo.LinkButton, URL: url, Disabled: c.Disabled}
+		if em := componentEmoji(c.Emoji); em != nil {
+			btn.Emoji = em
+		}
+		return btn
+	}
+	customID := actionCustomID(giveawayID, c.CustomIDSuffix)
+	if isEnter {
+		customID = enterCustomID(giveawayID)
+	}
+	btn := discordgo.Button{
+		Label:    label,
+		Style:    buttonStyle(c.Style),
+		CustomID: customID,
+		Disabled: c.Disabled,
+	}
+	if em := componentEmoji(c.Emoji); em != nil {
+		btn.Emoji = em
+	}
+	return btn
+}
 
 // enterComponents builds the single Enter button row. Its custom_id embeds the
 // giveaway id so a click resolves directly (no message-id round-trip).
