@@ -212,7 +212,11 @@ func seedFeatures(ctx context.Context, st *store.Store, guildID int64) error {
 	auto := automations.Default()
 
 	giv := giveaway.Default()
-	giv.DefaultChannelID = sid(welcomeChannel)
+	// Pre-fill the built-in preset's default channel so seeded giveaways post
+	// somewhere sensible out of the box.
+	if len(giv.Presets) > 0 {
+		giv.Presets[0].DefaultChannelID = sid(welcomeChannel)
+	}
 
 	configs := []struct {
 		key string
