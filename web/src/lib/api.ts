@@ -274,6 +274,12 @@ export const api = {
 	// post-draw tail saves; it runs on the giveaway_ended event.
 	saveGiveawayTail: (id: string, tail: unknown[]) =>
 		req<{ ok: boolean }>('POST', `/api/guilds/${id}/giveaway/actions`, { tail }),
+	// saveGiveawayEntryTail persists the canvas-authored follow-up flow for the
+	// giveaway feature's built-in "On giveaway entry" automation. The spine (Dia
+	// recording the entry + replying) is read-only, so like the draw flow only the
+	// post-entry tail saves; it runs on the giveaway_entered event.
+	saveGiveawayEntryTail: (id: string, tail: unknown[]) =>
+		req<{ ok: boolean }>('POST', `/api/guilds/${id}/giveaway/entry-actions`, { tail }),
 	// saveMenuTail persists the canvas-authored follow-up flow for one
 	// reaction-role menu. Like auto-roles the spine (the role-apply step) is
 	// read-only and there are no click actions, so only the post-pick tail saves.

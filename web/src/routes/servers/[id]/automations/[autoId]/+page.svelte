@@ -667,6 +667,8 @@
 				await api.saveAutoroleActions(store.id, extractSpineTail(auto.definition));
 			} else if (auto.id === 'giveaway.ended') {
 				await api.saveGiveawayTail(store.id, extractSpineTail(auto.definition));
+			} else if (auto.id === 'giveaway.entry') {
+				await api.saveGiveawayEntryTail(store.id, extractSpineTail(auto.definition));
 			} else if (auto.feature_tab === 'leveling') {
 				const acts = extractWelcomeActions(auto.definition);
 				await api.saveLevelingActions(store.id, acts.channel, extractWelcomeTail(auto.definition));
@@ -1422,6 +1424,8 @@
 						The grey steps mirror this menu's role assignment and are managed on the Reaction Roles tab. Steps you connect after them run when a member picks their roles.
 					{:else if auto.feature_tab === 'automod'}
 						The grey step mirrors this rule's actions and is managed on the Automod tab. Steps you connect after it run when the rule fires.
+					{:else if auto.id === 'giveaway.entry'}
+						The grey step mirrors Dia recording the entry &amp; replying, managed on the Giveaways tab. Steps you connect after it run every time a member clicks Enter (branch on .Event.outcome).
 					{:else if auto.feature_tab === 'giveaways'}
 						The grey step mirrors the native winner draw &amp; announcement, managed on the Giveaways tab. Steps you connect after it run when a giveaway ends.
 					{:else}

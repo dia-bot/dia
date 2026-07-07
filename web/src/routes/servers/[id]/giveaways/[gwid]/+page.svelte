@@ -30,6 +30,7 @@
 	import ChannelSelect from '$lib/components/ChannelSelect.svelte';
 	import ColorField from '$lib/components/ColorField.svelte';
 	import AnnounceEditor from '$lib/components/giveaway/AnnounceEditor.svelte';
+	import EntryEditor from '$lib/components/giveaway/EntryEditor.svelte';
 	import ReleaseDock from '$lib/components/page/ReleaseDock.svelte';
 	import {
 		ChevronLeft,
@@ -100,6 +101,8 @@
 	// The guild's saved automations, for the action-button picker.
 	let automationList = $state<{ id: string; name: string }[]>([]);
 	let announce = $state(defaultSpec().announce);
+	// Per-outcome Enter-button replies (edited inline in the Entry responses panel).
+	let entry = $state(defaultSpec().entry);
 	let req = $state<RequirementConfig>({});
 	let sourcePresetId = $state('');
 	// Bound to the preset picker; an effect applies the chosen preset.
@@ -142,6 +145,7 @@
 		btnEmoji = spec.button?.emoji ?? '';
 		btnStyle = spec.button?.style ?? 'primary';
 		announce = clone(spec.announce ?? defaultSpec().announce);
+		entry = clone(spec.entry ?? defaultSpec().entry);
 		pingRoleId = spec.ping_role_id ?? '';
 		showRequirements = spec.show_requirements ?? true;
 		excludeHost = spec.exclude_host ?? false;
@@ -237,6 +241,7 @@
 			button_actions: buttonActions,
 			button: { label: btnLabel, emoji: btnEmoji, style: btnStyle },
 			announce,
+			entry,
 			ping_role_id: pingRoleId,
 			show_requirements: showRequirements,
 			exclude_host: excludeHost,
@@ -260,6 +265,13 @@
 
 	function backToList() {
 		goto(`/servers/${store.id}/giveaways`);
+	}
+
+	// goToEntryAutomation opens the built-in "On giveaway entry" automation on the
+	// canvas (the Advanced escape hatch: do anything when a member enters). It is
+	// config-level, so it applies to every giveaway, like the winner-draw flow.
+	function goToEntryAutomation() {
+		goto(`/servers/${store.id}/automations/giveaway.entry`);
 	}
 
 	async function run(key: string, fn: () => Promise<unknown>, back = true) {
@@ -482,7 +494,7 @@
 		return JSON.stringify({
 			name, prize, description, channelId, winnerCount, color, imageUrl,
 			durationStr, startInStr, pingRoleId, showRequirements, excludeHost,
-			allowBotsToWin, btnLabel, btnEmoji, btnStyle, enterButtonSuffix, buttonActions, announce, req,
+			allowBotsToWin, btnLabel, btnEmoji, btnStyle, enterButtonSuffix, buttonActions, announce, entry, req,
 			spec: msgStep.spec
 		});
 	}
@@ -783,6 +795,12 @@
 								</button>
 							</div>
 						</Field>
+					</div>
+				</ModSection>
+
+				<ModSection label="Entry responses" desc="The private reply a member gets when they click Enter, for each outcome. Edit them here; for anything more (give a role, log a denial, DM them), open Advanced to wire the on-entry automation.">
+					<div class="max-w-2xl">
+						<EntryEditor bind:entry {readOnly} onAdvanced={goToEntryAutomation} />
 					</div>
 				</ModSection>
 

@@ -87,6 +87,18 @@ export interface AnnounceConfig {
 	dm_message: string;
 }
 
+// EntryConfig mirrors giveaway.EntryConfig — the ephemeral reply a member gets
+// when they click Enter, per outcome. Each is a Go template over the giveaway
+// scope plus {{ .Entries }} / {{ .Reason }}. Empty falls back to the built-in
+// default on the server, so a member is never left without a reply.
+export interface EntryConfig {
+	entered: string; // success (has {{ .Entries }})
+	left: string; // toggled off (leaves)
+	not_eligible: string; // failed a requirement (has {{ .Reason }})
+	bots_blocked: string; // a bot clicked
+	ended: string; // clicked after it ended
+}
+
 // GiveawaySpec is one giveaway's composed presentation + behaviour (stored on
 // the giveaway row, and embedded in a preset).
 export interface GiveawaySpec {
@@ -103,6 +115,9 @@ export interface GiveawaySpec {
 	button_actions?: Record<string, string>;
 	button: ButtonConfig;
 	announce: AnnounceConfig;
+	// Per-outcome ephemeral replies to an Enter click (edited inline in the editor;
+	// side effects live in the built-in on-entry automation).
+	entry: EntryConfig;
 	ping_role_id?: string;
 	show_requirements: boolean;
 	exclude_host: boolean;
@@ -164,6 +179,15 @@ export function defaultSpec(): GiveawaySpec {
 			dm_winners: false,
 			dm_message:
 				'🎉 You won **{{ .Prize }}** in {{ .Server }}! Contact the host {{ .Host }} to claim your prize.'
+		},
+		// Mirrors giveaway.defaultEntry() in Go — keep the copy in lockstep.
+		entry: {
+			entered:
+				"🎉 You're entered into the giveaway for **{{ .Prize }}**!{{ if gt .Entries 1 }} You have **{{ .Entries }}** entries.{{ end }}",
+			left: "You've left the giveaway for **{{ .Prize }}**.",
+			not_eligible: '❌ {{ .Reason }}',
+			bots_blocked: "Bots can't enter this giveaway.",
+			ended: 'This giveaway has already ended.'
 		},
 		ping_role_id: '',
 		show_requirements: true,
@@ -237,7 +261,9 @@ export const GIVEAWAY_VARS: { token: string; desc: string }[] = [
 	{ token: '{{ .EndsAt }}', desc: 'Absolute end time' },
 	{ token: '{{ .Server }}', desc: 'The server name' },
 	{ token: '{{ .MemberCount }}', desc: 'Server member count' },
-	{ token: '{{ .Channel }}', desc: 'The giveaway channel mention' }
+	{ token: '{{ .Channel }}', desc: 'The giveaway channel mention' },
+	{ token: '{{ .Entries }}', desc: 'The entrant’s weighted tickets (entry reply)' },
+	{ token: '{{ .Reason }}', desc: 'Why entry was denied (entry reply)' }
 ];
 
 // GIVEAWAY_SCOPE_VARS is the same scope shaped as ExprScope.extraVars so the
@@ -254,7 +280,9 @@ export const GIVEAWAY_SCOPE_VARS: { path: string; label: string; type: string; s
 	{ path: '.EndsAt', label: 'EndsAt', type: 'string', short: 'Absolute end time' },
 	{ path: '.Server', label: 'Server', type: 'string', short: 'The server name' },
 	{ path: '.MemberCount', label: 'MemberCount', type: 'int', short: 'Server member count' },
-	{ path: '.Channel', label: 'Channel', type: 'string', short: 'The giveaway channel mention' }
+	{ path: '.Channel', label: 'Channel', type: 'string', short: 'The giveaway channel mention' },
+	{ path: '.Entries', label: 'Entries', type: 'int', short: 'Entrant’s weighted tickets (entry reply)' },
+	{ path: '.Reason', label: 'Reason', type: 'string', short: 'Denial reason (entry reply)' }
 ];
 
 // GIVEAWAY_SAMPLE is realistic sample data for the giveaway scope, passed to the
@@ -275,7 +303,9 @@ export const GIVEAWAY_SAMPLE: Record<string, unknown> = {
 	EndsAt: 'July 7, 2026 6:00 PM',
 	Server: 'Your Server',
 	MemberCount: 1024,
-	Channel: '#giveaways'
+	Channel: '#giveaways',
+	Entries: 3,
+	Reason: 'You need the @Member role to enter.'
 };
 
 export type GiveawayStatus = 'draft' | 'scheduled' | 'running' | 'ended' | 'cancelled';

@@ -174,6 +174,18 @@ const GIVEAWAY_EVENT_VARS: TmplVar[] = [
 	v('.Event.channel_id', 'snowflake', 'The channel the giveaway lives in')
 ];
 
+const GIVEAWAY_ENTRY_EVENT_VARS: TmplVar[] = [
+	v('.Event.giveaway_id', 'string', 'The giveaway id'),
+	v('.Event.prize', 'string', 'The prize'),
+	v('.Event.host_id', 'snowflake', 'The host who started it'),
+	v('.Event.outcome', 'string', 'entered, left, denied, or blocked'),
+	v('.Event.entries', 'int', 'The member’s weighted tickets (on a successful entry)'),
+	v('.Event.reason', 'string', 'Why entry was denied (outcome=="denied")'),
+	v('.Event.entry_count', 'int', 'Distinct entrants after this click'),
+	v('.Event.message_id', 'snowflake', 'The giveaway message id'),
+	v('.Event.channel_id', 'snowflake', 'The channel the giveaway lives in')
+];
+
 export const TRIGGERS: TriggerKindMeta[] = [
 	{
 		key: 'member_join',
@@ -464,6 +476,18 @@ export const TRIGGERS: TriggerKindMeta[] = [
 		hasChannel: true,
 		filters: ['channels', 'cooldown'],
 		eventVars: GIVEAWAY_EVENT_VARS
+	},
+	{
+		key: 'giveaway_entry',
+		label: 'Giveaway entered',
+		description:
+			"A member clicks a giveaway's Enter button. Branch on .Event.outcome (entered, left, denied, blocked). .User is the member who clicked.",
+		category: 'giveaways',
+		event: 'GIVEAWAY_ENTERED',
+		actor: 'the member who clicked Enter',
+		hasChannel: true,
+		filters: ['channels', 'ignore_bots', 'cooldown'],
+		eventVars: GIVEAWAY_ENTRY_EVENT_VARS
 	}
 ];
 
