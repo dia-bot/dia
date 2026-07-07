@@ -280,11 +280,20 @@ export const api = {
 		req<{ ok: boolean }>('POST', `/api/guilds/${id}/automod/rules/${ruleId}/actions`, { tail }),
 	levelingVariables: (id: string) =>
 		req<{ variables: { token: string; desc: string }[] }>('GET', `/api/guilds/${id}/leveling/variables`),
-	// templatingPreview renders one template string and returns the text + any error.
-	templatingPreview: (id: string, template: string, extraVars?: Record<string, string>) =>
+	// templatingPreview renders one template string and returns the text + any
+	// error. Pass `sample` to render against a feature data map via the card
+	// engine (e.g. giveaway strings that use {{ .Prize }}); otherwise the default
+	// slash/message scope is used.
+	templatingPreview: (
+		id: string,
+		template: string,
+		extraVars?: Record<string, string>,
+		sample?: Record<string, unknown>
+	) =>
 		req<{ rendered: string; error: string }>('POST', `/api/guilds/${id}/templating/preview`, {
 			template,
-			extra_vars: extraVars
+			extra_vars: extraVars,
+			sample
 		})
 };
 

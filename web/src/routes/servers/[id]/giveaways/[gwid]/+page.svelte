@@ -11,6 +11,7 @@
 		newPresetID,
 		parseDurationSeconds,
 		GIVEAWAY_VARS,
+		GIVEAWAY_SAMPLE,
 		GIVEAWAY_SCOPE_VARS,
 		type GiveawayConfig,
 		type GiveawaySpec,
@@ -603,12 +604,12 @@
 
 				<ModSection label="Winner announcement" desc="Posted in-channel when the giveaway is drawn.">
 					<div class="flex max-w-2xl flex-col gap-3">
-						<TemplateField label="Announcement message" bind:value={announce.message} guildId={store.id} variables={GIVEAWAY_VARS} rows={2} />
+						<TemplateField label="Announcement message" bind:value={announce.message} guildId={store.id} variables={GIVEAWAY_VARS} sample={GIVEAWAY_SAMPLE} rows={2} />
 						<div class="grid gap-3 sm:grid-cols-2">
-							<TemplateField label="Ended embed title" bind:value={announce.ended_title} guildId={store.id} variables={GIVEAWAY_VARS} rows={1} />
-							<TemplateField label="Ended embed footer" bind:value={announce.ended_footer} guildId={store.id} variables={GIVEAWAY_VARS} rows={1} />
+							<TemplateField label="Ended embed title" bind:value={announce.ended_title} guildId={store.id} variables={GIVEAWAY_VARS} sample={GIVEAWAY_SAMPLE} rows={1} />
+							<TemplateField label="Ended embed footer" bind:value={announce.ended_footer} guildId={store.id} variables={GIVEAWAY_VARS} sample={GIVEAWAY_SAMPLE} rows={1} />
 						</div>
-						<TemplateField label="No-winners message" bind:value={announce.no_winners_message} guildId={store.id} variables={GIVEAWAY_VARS} rows={1} />
+						<TemplateField label="No-winners message" bind:value={announce.no_winners_message} guildId={store.id} variables={GIVEAWAY_VARS} sample={GIVEAWAY_SAMPLE} rows={1} />
 						<div class="flex flex-col gap-2">
 							<label class="flex items-center gap-2 text-[13px] text-ink">
 								<Toggle bind:checked={announce.ping_winners} label="Ping winners" /> Ping the winners in the announcement
@@ -621,7 +622,7 @@
 							</label>
 						</div>
 						{#if announce.dm_winners}
-							<TemplateField label="Winner DM" bind:value={announce.dm_message} guildId={store.id} variables={GIVEAWAY_VARS} rows={2} />
+							<TemplateField label="Winner DM" bind:value={announce.dm_message} guildId={store.id} variables={GIVEAWAY_VARS} sample={GIVEAWAY_SAMPLE} rows={2} />
 						{/if}
 					</div>
 				</ModSection>

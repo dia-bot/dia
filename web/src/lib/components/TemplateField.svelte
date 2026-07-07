@@ -12,6 +12,7 @@
 		guildId,
 		variables = [],
 		extraVars,
+		sample,
 		rows = 3
 	}: {
 		value: string;
@@ -20,6 +21,9 @@
 		guildId: string;
 		variables?: { token: string; desc: string }[];
 		extraVars?: Record<string, string>;
+		// sample renders the "Test render" against a feature data map via the card
+		// engine (fields like {{ .Prize }}) instead of the default user/guild scope.
+		sample?: Record<string, unknown>;
 		rows?: number;
 	} = $props();
 
@@ -57,7 +61,7 @@
 		error = null;
 		result = null;
 		try {
-			const r = await api.templatingPreview(guildId, value, extraVars);
+			const r = await api.templatingPreview(guildId, value, extraVars, sample);
 			if (r.error) error = r.error;
 			else result = r.rendered;
 		} catch (e) {

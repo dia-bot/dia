@@ -218,6 +218,27 @@ export const GIVEAWAY_SCOPE_VARS: { path: string; label: string; type: string; s
 	{ path: '.Channel', label: 'Channel', type: 'string', short: 'The giveaway channel mention' }
 ];
 
+// GIVEAWAY_SAMPLE is realistic sample data for the giveaway scope, passed to the
+// server "Test render" so a preview of a giveaway string ({{ .Prize }},
+// {{ .Winners }}, …) resolves against the SAME card engine the giveaway uses at
+// runtime — rather than the default user/guild scope, where those fields don't
+// exist and the render errors ("can't evaluate field Prize"). Keep the keys in
+// lockstep with scopeData() in internal/features/giveaway/embeds.go.
+export const GIVEAWAY_SAMPLE: Record<string, unknown> = {
+	Prize: 'Discord Nitro (1 month)',
+	Description: 'A month of Nitro, on the house.',
+	WinnerCount: 2,
+	EntryCount: 84,
+	Host: '@you',
+	Winners: '@alex, @sam',
+	WinnerList: '@alex\n@sam',
+	Ends: 'in 2 hours',
+	EndsAt: 'July 7, 2026 6:00 PM',
+	Server: 'Your Server',
+	MemberCount: 1024,
+	Channel: '#giveaways'
+};
+
 export type GiveawayStatus = 'draft' | 'scheduled' | 'running' | 'ended' | 'cancelled';
 
 export interface GiveawaySummary {
