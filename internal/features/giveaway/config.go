@@ -14,6 +14,8 @@
 package giveaway
 
 import (
+	"encoding/json"
+
 	cc "github.com/dia-bot/dia/internal/features/customcommands"
 )
 
@@ -38,6 +40,14 @@ type Config struct {
 	// DefaultPresetID selects the preset used when none is named (the "New
 	// giveaway" starting point and the step's default).
 	DefaultPresetID string `json:"default_preset_id,omitempty"`
+
+	// Tail is the canvas-owned follow-up flow for the built-in "Draw giveaway
+	// winners" automation: the steps an admin wires after a giveaway is drawn and
+	// announced (e.g. reward each winner a role, post a recap elsewhere). It runs
+	// as a durable automation run on the giveaway_ended event. It is owned by the
+	// Automations canvas, NOT the Giveaways settings page, so settings saves pass
+	// through MergeStoredTail and can't clobber a flow wired on the canvas.
+	Tail []cc.Step `json:"tail,omitempty"`
 }
 
 // Preset is a reusable giveaway template. It bundles the composed message Spec,
@@ -204,6 +214,28 @@ func (c Config) preset(id string) Preset {
 		return c.Presets[0]
 	}
 	return defaultPreset()
+}
+
+// MergeStoredTail returns the incoming giveaway config JSON with its
+// canvas-owned Tail replaced by the stored one, so a save from the Giveaways
+// settings page (which doesn't know about the built-in automation's follow-up
+// flow) can't wipe a tail wired on the Automations canvas. Mirrors
+// roles.MergeStoredActions / moderation.MergeStoredRuleTails. On any
+// decode/encode error the incoming bytes are returned unchanged.
+func MergeStoredTail(incoming, stored []byte) []byte {
+	var in, st Config
+	if err := json.Unmarshal(incoming, &in); err != nil {
+		return incoming
+	}
+	if err := json.Unmarshal(stored, &st); err != nil {
+		return incoming
+	}
+	in.Tail = st.Tail
+	out, err := json.Marshal(in)
+	if err != nil {
+		return incoming
+	}
+	return out
 }
 
 // buttonComponentStyle normalizes a config style string.

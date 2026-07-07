@@ -105,7 +105,13 @@ func (p *Plugin) handleEvent(ctx context.Context, et event.Type, env *event.Enve
 		waiting, _ = p.deps.Store.AutomationRuns.FindWaitingByKind(ctx, gid, waitKind)
 	}
 
-	if len(autos) == 0 && len(waiting) == 0 {
+	// The giveaway feature's built-in "Draw giveaway winners" automation carries
+	// an editable follow-up tail (stored on its config) that runs on this event
+	// alongside any user-authored automations. Load it here so an otherwise-empty
+	// dispatch still runs it (only touches the store on giveaway_ended).
+	giveawayTail := p.giveawayTail(ctx, et, gid)
+
+	if len(autos) == 0 && len(waiting) == 0 && len(giveawayTail) == 0 {
 		return nil
 	}
 
@@ -125,6 +131,10 @@ func (p *Plugin) handleEvent(ctx context.Context, et event.Type, env *event.Enve
 		if err := p.run(ctx, a, ec); err != nil {
 			p.deps.Log.Warn("automation run error", "automation", a.ID, "trigger", a.TriggerType, "err", err)
 		}
+	}
+
+	if len(giveawayTail) > 0 {
+		p.runBuiltinTail(ctx, "giveaway.ended", "giveaway_ended", giveawayTail, ec)
 	}
 
 	if len(waiting) > 0 {
@@ -673,6 +683,47 @@ func (p *Plugin) run(ctx context.Context, a store.Automation, ec *eventContext) 
 	}
 	p.persistInitial(ctx, run, scope, pause, outcome)
 	return nil
+}
+
+// giveawayTail returns the giveaway feature's built-in follow-up flow (its
+// canvas-owned Config.Tail) for a giveaway_ended event, or nil when the event
+// is something else, the feature is off, or no tail is wired. It only reads the
+// store on giveaway_ended, so every other event stays a cheap no-op.
+func (p *Plugin) giveawayTail(ctx context.Context, et event.Type, gid int64) []cc.Step {
+	if et != event.TypeGiveawayEnded {
+		return nil
+	}
+	fc, err := p.deps.Store.Features.Get(ctx, gid, giveaway.FeatureKey)
+	if err != nil || !fc.Enabled || len(fc.Config) == 0 {
+		return nil
+	}
+	var cfg giveaway.Config
+	if json.Unmarshal(fc.Config, &cfg) != nil {
+		return nil
+	}
+	return cfg.Tail
+}
+
+// runBuiltinTail runs a managed feature's built-in follow-up flow as a durable
+// automation run, reusing the same execution + persistence path as a
+// user-authored automation. autoID mirrors the built-in's key (e.g.
+// "giveaway.ended") so its runs share that flow's KV scope and show under the
+// built-in in the Runs tab. The tail sees exactly the trigger's .Event scope
+// (set on ec in prepare), so it behaves like a hand-built automation.
+func (p *Plugin) runBuiltinTail(ctx context.Context, autoID, triggerType string, tail []cc.Step, ec *eventContext) {
+	raw, err := json.Marshal(cc.Definition{Steps: tail})
+	if err != nil {
+		return
+	}
+	synth := store.Automation{
+		ID:          autoID,
+		Version:     1,
+		TriggerType: triggerType,
+		Definition:  raw,
+	}
+	if err := p.run(ctx, synth, ec); err != nil {
+		p.deps.Log.Warn("builtin tail run error", "automation", autoID, "err", err)
+	}
 }
 
 // persistInitial records the first execution of an automation: it inserts the

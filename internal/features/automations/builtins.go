@@ -158,31 +158,39 @@ func BuildBuiltins(configs map[string]json.RawMessage, featureEnabled map[string
 	}
 
 	// ── Giveaways ────────────────────────────────────────────────────────────
+	gcfg := giveaway.Default()
+	if raw := configs[giveaway.FeatureKey]; len(raw) > 0 {
+		_ = json.Unmarshal(raw, &gcfg)
+	}
 	gEnabled := featureEnabled[giveaway.FeatureKey]
 	out = append(out, Builtin{
 		Key:         "giveaway.ended",
 		Name:        "Draw giveaway winners",
-		Description: "When a giveaway ends it filters entries, draws weighted winners, and announces them. Managed on the Giveaways tab.",
+		Description: "When a giveaway ends it filters entries, draws weighted winners and announces them, then runs your follow-up steps. Managed on the Giveaways tab.",
 		TriggerType: "giveaway_ended",
 		FeatureKey:  giveaway.FeatureKey,
 		FeatureName: "Giveaways",
 		FeatureTab:  "giveaways",
 		Enabled:     gEnabled,
-		Definition:  giveawayFlow(),
+		Definition:  giveawayFlow(gcfg),
 	})
 
 	return out
 }
 
-// giveawayFlow renders the giveaway end as a single read-only spine node: the
-// giveaway feature draws + announces winners natively (no step program), so the
-// flow shows one honest "winners drawn" node the canvas can hang a follow-up off
-// via the giveaway_ended trigger.
-func giveawayFlow() cc.Definition {
-	return cc.Definition{Steps: []cc.Step{{
+// giveawayFlow renders the giveaway end as a read-only spine node (the giveaway
+// feature draws + announces winners natively — no step program) followed by the
+// editable follow-up tail the admin wires off its out handle. Mirrors
+// autoroleFlow: the "builtin-draw" spine is generated/read-only, while cfg.Tail
+// is appended as real, persisted steps (their own non-"builtin-" ids) that run
+// on the giveaway_ended event after the draw.
+func giveawayFlow(cfg giveaway.Config) cc.Definition {
+	steps := []cc.Step{{
 		ID:   "builtin-draw",
 		Kind: cc.KindNoop,
-	}}}
+	}}
+	steps = append(steps, cfg.Tail...)
+	return cc.Definition{Steps: steps}
 }
 
 // ruleFlow renders one automod rule as a read-only step spine followed by the

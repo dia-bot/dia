@@ -10,6 +10,7 @@ import (
 
 	"github.com/dia-bot/dia/internal/discord"
 	"github.com/dia-bot/dia/internal/event"
+	"github.com/dia-bot/dia/internal/features/giveaway"
 	"github.com/dia-bot/dia/internal/features/leveling"
 	"github.com/dia-bot/dia/internal/features/moderation"
 	"github.com/dia-bot/dia/internal/features/roles"
@@ -365,13 +366,13 @@ func (s *Server) handlePutFeature(c *gin.Context) {
 	}
 	gid := guildID(c)
 	gidInt, _ := event.ParseID(gid)
-	// Welcome's, leveling's, auto-roles' and automod's canvas-owned programs
-	// (button click actions and/or the follow-up flows) are owned by the
+	// Welcome's, leveling's, auto-roles', automod's and giveaways' canvas-owned
+	// programs (button click actions and/or the follow-up flows) are owned by the
 	// automation flow (saved via /welcome/actions, /leveling/actions,
-	// /autorole/actions or /automod/rules/:rid/actions), not the settings page.
-	// Keep the stored copy authoritative so a settings save can't clobber a flow
-	// wired meanwhile on the canvas.
-	if len(req.Config) > 0 && (key == welcome.FeatureKey || key == leveling.FeatureKey || key == roles.FeatureKey || key == moderation.AutomodKey) {
+	// /autorole/actions, /automod/rules/:rid/actions or /giveaway/actions), not
+	// the settings page. Keep the stored copy authoritative so a settings save
+	// can't clobber a flow wired meanwhile on the canvas.
+	if len(req.Config) > 0 && (key == welcome.FeatureKey || key == leveling.FeatureKey || key == roles.FeatureKey || key == moderation.AutomodKey || key == giveaway.FeatureKey) {
 		if existing, err := s.store.Features.Get(c.Request.Context(), gidInt, key); err == nil && len(existing.Config) > 0 {
 			switch key {
 			case welcome.FeatureKey:
@@ -382,6 +383,8 @@ func (s *Server) handlePutFeature(c *gin.Context) {
 				req.Config = roles.MergeStoredActions(req.Config, existing.Config)
 			case moderation.AutomodKey:
 				req.Config = moderation.MergeStoredRuleTails(req.Config, existing.Config)
+			case giveaway.FeatureKey:
+				req.Config = giveaway.MergeStoredTail(req.Config, existing.Config)
 			}
 		}
 	}
