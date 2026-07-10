@@ -216,25 +216,49 @@ func buildComponents(ctx context.Context, spec Spec, g store.Giveaway, data map[
 	if len(spec.Components) == 0 {
 		return enterComponents(spec, g.ID)
 	}
-	var rows []discordgo.MessageComponent
-	for _, row := range spec.Components {
+	return renderComponentRows(ctx, spec.Components, spec, g.ID, data)
+}
+
+// renderComponentRows renders composed button rows (the giveaway message's own,
+// or an entry reply's) with each button's click routed: the entry button
+// (custom_id_suffix == EnterButtonSuffix) gets the enter custom_id, link buttons
+// keep their (templated) URL, and any other button gets an action custom_id so
+// its click runs the saved automation Spec.ButtonActions points it at.
+func renderComponentRows(ctx context.Context, rows []cc.ComponentRow, spec Spec, giveawayID string, data map[string]any) []discordgo.MessageComponent {
+	var out []discordgo.MessageComponent
+	for _, row := range rows {
 		var comps []discordgo.MessageComponent
 		for _, c := range row.Components {
 			if c.Type != "" && c.Type != "button" {
-				continue // only buttons are meaningful on a giveaway message
+				continue // only buttons are meaningful on a giveaway surface
 			}
 			isEnter := c.CustomIDSuffix != "" && c.CustomIDSuffix == spec.EnterButtonSuffix
-			btn := giveawayButton(ctx, c, g.ID, isEnter, data)
+			btn := giveawayButton(ctx, c, giveawayID, isEnter, data)
 			if btn == nil {
 				continue
 			}
 			comps = append(comps, btn)
 		}
 		if len(comps) > 0 {
-			rows = append(rows, discordgo.ActionsRow{Components: comps})
+			out = append(out, discordgo.ActionsRow{Components: comps})
 		}
 	}
-	return rows
+	return out
+}
+
+// renderEntryEmbeds renders an entry reply's composed embeds against the entry
+// scope, dropping any that render empty (Discord rejects empty embeds). The
+// giveaway's colour override applies like on the live message.
+func renderEntryEmbeds(ctx context.Context, embeds []cc.EmbedSpec, data map[string]any, overrideColor string) []*discordgo.MessageEmbed {
+	var out []*discordgo.MessageEmbed
+	for _, e := range embeds {
+		em := buildEmbed(ctx, e, data, overrideColor)
+		if embedEmpty(em) {
+			continue
+		}
+		out = append(out, em)
+	}
+	return out
 }
 
 // giveawayButton renders one composed button, routing its click. A link button

@@ -112,19 +112,57 @@ type Spec struct {
 	AllowBotsToWin bool `json:"allow_bots_to_win"`
 }
 
-// EntryConfig customizes the ephemeral reply a member gets when they click the
-// Enter button, per outcome. Every field is a Go template over the giveaway scope
-// plus {{ .Entries }} (their weighted ticket count) and {{ .Reason }} (why entry
-// was denied). An empty field falls back to the built-in copy, so a giveaway is
-// never left with a blank reply. These are what the member sees; side effects
-// ("also give them a role", "log the denial") live in the built-in on-entry
-// automation (Config.EntryTail), reachable from the editor's Advanced button.
+// EntryConfig customizes the response a member gets when they click the Enter
+// button, per outcome. Each outcome is a fully-composed EntryReply (delivery
+// mode + content + embeds + buttons). An outcome whose composition renders
+// empty falls back to the built-in copy, so a giveaway is never left with a
+// blank reply. These are what the member sees; side effects ("also give them a
+// role", "log the denial") live in the built-in on-entry automation
+// (Config.EntryTail), reachable from the editor's Advanced button.
 type EntryConfig struct {
-	Entered     string `json:"entered,omitempty"`      // success (has {{ .Entries }})
-	Left        string `json:"left,omitempty"`         // toggled off (member leaves)
-	NotEligible string `json:"not_eligible,omitempty"` // failed a requirement (has {{ .Reason }})
-	BotsBlocked string `json:"bots_blocked,omitempty"` // a bot clicked and bots can't win
-	Ended       string `json:"ended,omitempty"`        // clicked after the giveaway ended
+	Entered     EntryReply `json:"entered,omitempty"`      // success (has {{ .Entries }})
+	Left        EntryReply `json:"left,omitempty"`         // toggled off (member leaves)
+	NotEligible EntryReply `json:"not_eligible,omitempty"` // failed a requirement (has {{ .Reason }})
+	BotsBlocked EntryReply `json:"bots_blocked,omitempty"` // a bot clicked and bots can't win
+	Ended       EntryReply `json:"ended,omitempty"`        // clicked after the giveaway ended
+}
+
+// EntryReply is one outcome's fully-composed response to an Enter click: the
+// same {content, embeds, components} shape the shared MessageEditor produces
+// (every string a Go template over the giveaway scope plus {{ .Entries }} /
+// {{ .Reason }}), plus how it's delivered. Buttons route like the giveaway
+// message's own: a link button opens its URL, any other button runs the saved
+// automation Spec.ButtonActions points it at.
+type EntryReply struct {
+	// Mode selects delivery: "" / "ephemeral" (default) = a private reply only
+	// the clicker sees; "public" = a normal reply in the channel; "dm" = a direct
+	// message (the click is acknowledged silently); "none" = acknowledge silently
+	// and send nothing.
+	Mode       string            `json:"mode,omitempty"`
+	Content    string            `json:"content,omitempty"`
+	Embeds     []cc.EmbedSpec    `json:"embeds,omitempty"`
+	Components []cc.ComponentRow `json:"components,omitempty"`
+}
+
+// UnmarshalJSON accepts both the current object shape and the legacy plain
+// string an earlier version stored (the string becomes the ephemeral content),
+// so previously saved giveaways and presets keep decoding.
+func (r *EntryReply) UnmarshalJSON(b []byte) error {
+	if len(b) > 0 && b[0] == '"' {
+		var s string
+		if err := json.Unmarshal(b, &s); err != nil {
+			return err
+		}
+		*r = EntryReply{Content: s}
+		return nil
+	}
+	type alias EntryReply
+	var a alias
+	if err := json.Unmarshal(b, &a); err != nil {
+		return err
+	}
+	*r = EntryReply(a)
+	return nil
 }
 
 // ButtonConfig customizes the Enter button.
@@ -189,14 +227,15 @@ const (
 	defaultEnded       = "This giveaway has already ended."
 )
 
-// defaultEntry returns the built-in per-outcome entry replies.
+// defaultEntry returns the built-in per-outcome entry replies (ephemeral,
+// content-only; fully customizable per giveaway).
 func defaultEntry() EntryConfig {
 	return EntryConfig{
-		Entered:     defaultEntered,
-		Left:        defaultLeft,
-		NotEligible: defaultNotEligible,
-		BotsBlocked: defaultBotsBlocked,
-		Ended:       defaultEnded,
+		Entered:     EntryReply{Content: defaultEntered},
+		Left:        EntryReply{Content: defaultLeft},
+		NotEligible: EntryReply{Content: defaultNotEligible},
+		BotsBlocked: EntryReply{Content: defaultBotsBlocked},
+		Ended:       EntryReply{Content: defaultEnded},
 	}
 }
 

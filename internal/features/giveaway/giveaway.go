@@ -85,14 +85,13 @@ func (p *Plugin) handleComponent(c *interactions.Context) error {
 	if action != "enter" || id == "" {
 		return c.DeferUpdate()
 	}
-	gid, _ := event.ParseID(c.GuildID)
-	g, err := d.Store.Giveaways.Get(c.Ctx, gid, id)
+	g, err := p.resolveGiveaway(c.Ctx, c.GuildID, id)
 	if err != nil {
 		return c.RespondEphemeral("This giveaway is no longer available.")
 	}
 	spec := decodeSpec(g.Spec)
 	if g.Status != "running" {
-		return c.RespondEphemeral(p.entryReply(c.Ctx, g, spec.Entry.Ended, defaultEnded, 0, ""))
+		return p.respondEntry(c, g, spec, spec.Entry.Ended, defaultEnded, 0, "")
 	}
 	uid, _ := event.ParseID(c.User.ID)
 
@@ -101,54 +100,81 @@ func (p *Plugin) handleComponent(c *interactions.Context) error {
 		if _, err := d.Store.Giveaways.RemoveEntry(c.Ctx, g.ID, uid); err != nil {
 			return c.RespondEphemeral("Couldn't update your entry, try again.")
 		}
-		_ = c.RespondEphemeral(p.entryReply(c.Ctx, g, spec.Entry.Left, defaultLeft, 0, ""))
+		_ = p.respondEntry(c, g, spec, spec.Entry.Left, defaultLeft, 0, "")
 		p.refreshLiveMessage(c.Ctx, spec, g)
 		p.publishEntered(c.Ctx, g, c.User, c.I.Member, "left", 0, "")
 		return nil
 	}
 
 	if c.User.Bot && !spec.AllowBotsToWin {
-		_ = c.RespondEphemeral(p.entryReply(c.Ctx, g, spec.Entry.BotsBlocked, defaultBotsBlocked, 0, ""))
+		_ = p.respondEntry(c, g, spec, spec.Entry.BotsBlocked, defaultBotsBlocked, 0, "")
 		p.publishEntered(c.Ctx, g, c.User, c.I.Member, "blocked", 0, "")
 		return nil
 	}
 
 	req := decodeRequirements(g.Requirements)
-	ent := p.entrantState(c.Ctx, d, gid, uid, c.User.ID, c.I.Member, req)
+	ent := p.entrantState(c.Ctx, d, g.GuildID, uid, c.User.ID, c.I.Member, req)
 	eligible, reason, entries := evaluateEntry(req, ent)
 	if !eligible {
-		_ = c.RespondEphemeral(p.entryReply(c.Ctx, g, spec.Entry.NotEligible, defaultNotEligible, 0, reason))
+		_ = p.respondEntry(c, g, spec, spec.Entry.NotEligible, defaultNotEligible, 0, reason)
 		p.publishEntered(c.Ctx, g, c.User, c.I.Member, "denied", 0, reason)
 		return nil
 	}
 	if _, err := d.Store.Giveaways.AddEntry(c.Ctx, g.ID, uid, entries); err != nil {
 		return c.RespondEphemeral("Couldn't record your entry, try again.")
 	}
-	_ = c.RespondEphemeral(p.entryReply(c.Ctx, g, spec.Entry.Entered, defaultEntered, entries, ""))
+	_ = p.respondEntry(c, g, spec, spec.Entry.Entered, defaultEntered, entries, "")
 	p.refreshLiveMessage(c.Ctx, spec, g)
 	p.publishEntered(c.Ctx, g, c.User, c.I.Member, "entered", entries, "")
 	return nil
 }
 
-// entryReply renders the ephemeral reply for one entry outcome: the giveaway's
-// own template when set, otherwise the built-in default, against the giveaway
-// scope plus {{ .Entries }} (weighted tickets) and {{ .Reason }} (denial text). A
-// custom template that renders empty falls back to the default, so a member
-// always gets a reply.
-func (p *Plugin) entryReply(ctx context.Context, g store.Giveaway, custom, def string, entries int, reason string) string {
+// resolveGiveaway resolves the giveaway a component click belongs to. In a
+// guild the lookup stays guild-scoped; a click without a guild (a button on a
+// DM'd entry reply) falls back to the id-only lookup — safe because the
+// custom_id embedding the id only exists on bot-authored messages.
+func (p *Plugin) resolveGiveaway(ctx context.Context, guildIDStr, id string) (store.Giveaway, error) {
+	if gid, ok := event.ParseID(guildIDStr); ok && gid != 0 {
+		return p.deps.Store.Giveaways.Get(ctx, gid, id)
+	}
+	return p.deps.Store.Giveaways.GetByID(ctx, id)
+}
+
+// respondEntry delivers one entry outcome's fully-composed reply (content +
+// embeds + buttons) per its delivery mode: ephemeral (default), a public reply
+// in the channel, a DM (the click is acknowledged silently), or nothing.
+// Buttons route exactly like the giveaway message's own (enter / automation /
+// link). A composition that renders empty falls back to the built-in default
+// copy, so the member always gets a response.
+func (p *Plugin) respondEntry(c *interactions.Context, g store.Giveaway, spec Spec, r EntryReply, def string, entries int, reason string) error {
+	if r.Mode == "none" {
+		return c.DeferUpdate()
+	}
+	ctx := c.Ctx
 	data := p.entryScope(ctx, g, entries, reason)
-	src := custom
-	if strings.TrimSpace(src) == "" {
-		src = def
+	content := renderText(ctx, r.Content, data)
+	embeds := renderEntryEmbeds(ctx, r.Embeds, data, g.Color)
+	comps := renderComponentRows(ctx, r.Components, spec, g.ID, data)
+	if content == "" && len(embeds) == 0 {
+		content = renderText(ctx, def, data)
+		if content == "" {
+			content = "Done."
+		}
 	}
-	out := renderText(ctx, src, data)
-	if out == "" {
-		out = renderText(ctx, def, data)
+	if r.Mode == "dm" {
+		// Acknowledge the click silently, then DM the composed reply.
+		_ = c.DeferUpdate()
+		send := &discordgo.MessageSend{Content: content, Embeds: embeds, Components: comps}
+		if _, err := p.deps.Discord.SendDMComplex(c.User.ID, send); err != nil {
+			p.deps.Log.Debug("giveaway: entry DM failed", "giveaway", g.ID, "user", c.User.ID, "err", err)
+		}
+		return nil
 	}
-	if out == "" {
-		out = "Done."
+	d := &discordgo.InteractionResponseData{Content: content, Embeds: embeds, Components: comps}
+	if r.Mode != "public" {
+		d.Flags = discordgo.MessageFlagsEphemeral
 	}
-	return out
+	return c.RespondData(d)
 }
 
 // entryScope builds the template scope for an entry reply: the shared giveaway
@@ -169,8 +195,7 @@ func (p *Plugin) entryScope(ctx context.Context, g store.Giveaway, entries int, 
 // silently doing nothing. The automation runs detached (context.WithoutCancel)
 // so a slow flow doesn't fail the interaction ack.
 func (p *Plugin) handleActionButton(c *interactions.Context, giveawayID, suffix string) error {
-	guildID, _ := event.ParseID(c.GuildID)
-	g, err := p.deps.Store.Giveaways.Get(c.Ctx, guildID, giveawayID)
+	g, err := p.resolveGiveaway(c.Ctx, c.GuildID, giveawayID)
 	if err != nil {
 		return c.RespondEphemeral("This giveaway is no longer available.")
 	}
@@ -185,7 +210,9 @@ func (p *Plugin) handleActionButton(c *interactions.Context, giveawayID, suffix 
 		"button":      suffix,
 		"channel_id":  c.I.ChannelID,
 	}
-	if err := p.autoRunner.RunAutomation(context.WithoutCancel(c.Ctx), c.GuildID, autoID, c.User, c.I.Member, c.I.ChannelID, ev); err != nil {
+	// The giveaway row's own guild drives the automation lookup, so a click on a
+	// DM'd entry reply (no guild on the interaction) still resolves.
+	if err := p.autoRunner.RunAutomation(context.WithoutCancel(c.Ctx), event.FormatID(g.GuildID), autoID, c.User, c.I.Member, c.I.ChannelID, ev); err != nil {
 		p.deps.Log.Warn("giveaway: action button automation", "giveaway", g.ID, "automation", autoID, "err", err)
 	}
 	return nil

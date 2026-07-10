@@ -177,6 +177,23 @@ func (r *GiveawayRepo) Get(ctx context.Context, guildID int64, id string) (Givea
 	return g, nil
 }
 
+// GetByID resolves a giveaway by its id alone, without a guild scope. Used for
+// component clicks that arrive outside the guild (a button on a DM'd entry
+// reply): the custom_id embedding the id was authored by the bot on its own
+// message, so the id is trusted; ids are ULIDs, globally unique.
+func (r *GiveawayRepo) GetByID(ctx context.Context, id string) (Giveaway, error) {
+	var g Giveaway
+	err := scanGiveaway(r.pool.QueryRow(ctx,
+		`SELECT `+giveawayCols+` FROM giveaways WHERE id = $1`, id), &g)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Giveaway{}, ErrGiveawayNotFound
+	}
+	if err != nil {
+		return Giveaway{}, fmt.Errorf("get giveaway by id: %w", err)
+	}
+	return g, nil
+}
+
 // GetByMessage resolves the giveaway a posted message belongs to (Enter clicks).
 func (r *GiveawayRepo) GetByMessage(ctx context.Context, messageID int64) (Giveaway, error) {
 	var g Giveaway
