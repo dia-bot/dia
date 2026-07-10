@@ -246,10 +246,11 @@ func renderComponentRows(ctx context.Context, rows []cc.ComponentRow, spec Spec,
 	return out
 }
 
-// renderEntryEmbeds renders an entry reply's composed embeds against the entry
-// scope, dropping any that render empty (Discord rejects empty embeds). The
-// giveaway's colour override applies like on the live message.
-func renderEntryEmbeds(ctx context.Context, embeds []cc.EmbedSpec, data map[string]any, overrideColor string) []*discordgo.MessageEmbed {
+// renderComposedEmbeds renders a composed surface's embeds (an entry reply's,
+// or the winner DM's) against its scope, dropping any that render empty
+// (Discord rejects empty embeds). The giveaway's colour override applies like
+// on the live message.
+func renderComposedEmbeds(ctx context.Context, embeds []cc.EmbedSpec, data map[string]any, overrideColor string) []*discordgo.MessageEmbed {
 	var out []*discordgo.MessageEmbed
 	for _, e := range embeds {
 		em := buildEmbed(ctx, e, data, overrideColor)

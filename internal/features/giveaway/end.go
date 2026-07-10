@@ -99,9 +99,17 @@ func (p *Plugin) announce(ctx context.Context, spec Spec, g store.Giveaway, winn
 	p.postAnnouncement(ctx, spec, g, winners, data)
 
 	if spec.Announce.DMWinners && len(winners) > 0 {
-		if dm := renderText(ctx, spec.Announce.DMMessage, data); dm != "" {
+		// The winner DM is a fully-composed message: content + embeds + buttons
+		// (link buttons open their URL; action buttons run their saved automation,
+		// resolving guild-lessly via the id-only lookup). Skipped only when the
+		// whole composition renders empty.
+		dm := renderText(ctx, spec.Announce.DMMessage, data)
+		dmEmbeds := renderComposedEmbeds(ctx, spec.Announce.DMEmbeds, data, g.Color)
+		dmComps := renderComponentRows(ctx, spec.Announce.DMComponents, spec, g.ID, data)
+		if dm != "" || len(dmEmbeds) > 0 {
 			for _, w := range winners {
-				if err := d.Discord.SendDM(event.FormatID(w), dm); err != nil {
+				send := &discordgo.MessageSend{Content: dm, Embeds: dmEmbeds, Components: dmComps}
+				if _, err := d.Discord.SendDMComplex(event.FormatID(w), send); err != nil {
 					d.Log.Debug("giveaway: winner DM failed", "user", w, "err", err)
 				}
 			}

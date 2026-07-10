@@ -174,7 +174,11 @@ type ButtonConfig struct {
 
 // AnnounceConfig controls how winners are announced and DMed. The ended embed is
 // a compact system card (title + winners + footer) built from the giveaway's
-// colour/image, keeping the ended state tidy without hand-authoring it.
+// colour/image, keeping the ended state tidy without hand-authoring it. The
+// winner DM is a fully-composed message: content plus optional embeds and
+// buttons (a link opens its URL; any other button runs the saved automation
+// Spec.ButtonActions points it at, resolving without a guild via the id-only
+// lookup since DM clicks carry none).
 type AnnounceConfig struct {
 	Message          string `json:"message"`            // in-channel congrats, templated
 	PingWinners      bool   `json:"ping_winners"`       // ping the winners in the announcement
@@ -183,7 +187,11 @@ type AnnounceConfig struct {
 	EndedFooter      string `json:"ended_footer"`       // templated footer of the ended embed
 	NoWinnersMessage string `json:"no_winners_message"` // templated, shown when nobody eligible entered
 	DMWinners        bool   `json:"dm_winners"`
-	DMMessage        string `json:"dm_message"` // templated winner DM
+	DMMessage        string `json:"dm_message"` // templated winner DM content
+	// DMEmbeds / DMComponents complete the winner DM as a composed message (the
+	// same shapes the shared MessageEditor produces).
+	DMEmbeds     []cc.EmbedSpec    `json:"dm_embeds,omitempty"`
+	DMComponents []cc.ComponentRow `json:"dm_components,omitempty"`
 }
 
 // RequirementConfig is the entry-eligibility spec. It is both the preset default

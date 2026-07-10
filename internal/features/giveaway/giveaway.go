@@ -153,7 +153,7 @@ func (p *Plugin) respondEntry(c *interactions.Context, g store.Giveaway, spec Sp
 	ctx := c.Ctx
 	data := p.entryScope(ctx, g, entries, reason)
 	content := renderText(ctx, r.Content, data)
-	embeds := renderEntryEmbeds(ctx, r.Embeds, data, g.Color)
+	embeds := renderComposedEmbeds(ctx, r.Embeds, data, g.Color)
 	comps := renderComponentRows(ctx, r.Components, spec, g.ID, data)
 	if content == "" && len(embeds) == 0 {
 		content = renderText(ctx, def, data)
