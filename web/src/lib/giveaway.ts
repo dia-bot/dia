@@ -85,6 +85,11 @@ export interface AnnounceConfig {
 	no_winners_message: string;
 	dm_winners: boolean;
 	dm_message: string;
+	// The winner DM is a fully-composed message: dm_message is its content,
+	// dm_embeds / dm_components complete it (same shapes the MessageEditor
+	// produces; buttons are links or run a saved automation via button_actions).
+	dm_embeds?: EmbedSpec[];
+	dm_components?: ComponentRow[];
 }
 
 // EntryReply mirrors giveaway.EntryReply — one outcome's fully-composed

@@ -32,6 +32,7 @@
 	import ColorField from '$lib/components/ColorField.svelte';
 	import AnnounceEditor from '$lib/components/giveaway/AnnounceEditor.svelte';
 	import EntryEditor from '$lib/components/giveaway/EntryEditor.svelte';
+	import TemplateGuide from '$lib/components/commands/TemplateGuide.svelte';
 	import ReleaseDock from '$lib/components/page/ReleaseDock.svelte';
 	import {
 		ChevronLeft,
@@ -43,7 +44,8 @@
 		CheckCircle2,
 		Dices,
 		Plus,
-		Bookmark
+		Bookmark,
+		BookOpen
 	} from 'lucide-svelte';
 
 	const store = getContext<GuildStore>(GUILD_CTX);
@@ -71,6 +73,8 @@
 
 	let loaded = $state(false);
 	let loadError = $state('');
+	// The Go-template reference modal (syntax, scope variables, functions).
+	let showGuide = $state(false);
 	let busy = $state('');
 	let cfg = $state<GiveawayConfig>(defaultConfig());
 	let featureEnabled = $state(false);
@@ -753,12 +757,21 @@
 				<ModSection label="Message" desc="Compose the message, embeds and buttons right here. Click a button to set what it does: enter the giveaway, run one of your automations, or open a link.">
 					<div class="max-w-2xl">
 						{#if !readOnly}
-							<p class="mb-2 text-[12px] text-muted">
-								Use variables like
-								<code class="rounded bg-surface px-1 font-mono text-[11px]">{'{{ .Ends }}'}</code>,
-								<code class="rounded bg-surface px-1 font-mono text-[11px]">{'{{ .EntryCount }}'}</code>,
-								<code class="rounded bg-surface px-1 font-mono text-[11px]">{'{{ .Winners }}'}</code>.
-							</p>
+							<div class="mb-2 flex flex-wrap items-center gap-2">
+								<p class="text-[12px] text-muted">
+									Use variables like
+									<code class="rounded bg-surface px-1 font-mono text-[11px]">{'{{ .Ends }}'}</code>,
+									<code class="rounded bg-surface px-1 font-mono text-[11px]">{'{{ .EntryCount }}'}</code>,
+									<code class="rounded bg-surface px-1 font-mono text-[11px]">{'{{ .Winners }}'}</code>.
+								</p>
+								<button
+									type="button"
+									class="inline-flex h-6 items-center gap-1 rounded border border-line px-1.5 font-mono text-[10px] font-medium text-muted transition-colors hover:border-line-strong hover:text-ink"
+									onclick={() => (showGuide = true)}
+								>
+									<BookOpen size={10} /> Template guide
+								</button>
+							</div>
 						{/if}
 						{#if !readOnly && !hasEnterButton}
 							<div class="mb-2 rounded-md border border-accent/40 bg-accent/5 px-2.5 py-1.5 text-[12px] text-accent-ink">
@@ -852,9 +865,9 @@
 					</div>
 				</ModSection>
 
-				<ModSection label="Winner announcement" desc="What the bot posts when the giveaway is drawn. Edit it right here, the same way you edit the message.">
+				<ModSection label="Winner announcement" desc="What the bot posts when the giveaway is drawn. Edit it right here, the same way you edit the message. The winner DM is a full message too: embeds, buttons and all.">
 					<div class="max-w-2xl">
-						<AnnounceEditor bind:announce accent={annAccent} {readOnly} />
+						<AnnounceEditor bind:announce accent={annAccent} {readOnly} buttonExtras={entryButtonAction} />
 					</div>
 				</ModSection>
 
@@ -878,3 +891,6 @@
 
 <svelte:window onkeydown={onKeydown} />
 <ReleaseDock {dirty} phase={savePhase} error={loadError} onsave={saveChanges} onreset={discardChanges} />
+<!-- Giveaway strings render on the pure engine (no guild lookups), with the
+     giveaway scope (plus the entry-reply extras) in every field. -->
+<TemplateGuide bind:open={showGuide} variables={GIVEAWAY_SCOPE_VARS} variablesLabel="Giveaway variables" lookups={false} />
