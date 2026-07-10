@@ -9,6 +9,7 @@
 		defaultConfig,
 		defaultSpec,
 		newPresetID,
+		normalizeEntryConfig,
 		parseDurationSeconds,
 		GIVEAWAY_SCOPE_VARS,
 		type GiveawayConfig,
@@ -145,7 +146,7 @@
 		btnEmoji = spec.button?.emoji ?? '';
 		btnStyle = spec.button?.style ?? 'primary';
 		announce = clone(spec.announce ?? defaultSpec().announce);
-		entry = clone(spec.entry ?? defaultSpec().entry);
+		entry = normalizeEntryConfig(clone(spec.entry ?? defaultSpec().entry));
 		pingRoleId = spec.ping_role_id ?? '';
 		showRequirements = spec.show_requirements ?? true;
 		excludeHost = spec.exclude_host ?? false;
@@ -593,6 +594,53 @@
 	{/if}
 {/snippet}
 
+<!-- Same idea for a button on an ENTRY REPLY: it can run a saved automation or
+     do nothing (there's no Enter mode here — the giveaway message owns the
+     entry button; wiring a reply button to it would steal that wiring). -->
+{#snippet entryButtonAction({ component }: { component: Component; ri: number; ci: number })}
+	{@const suffix = component.custom_id_suffix}
+	{#if suffix}
+		{@const wired = suffix in buttonActions}
+		<div class="mt-2 space-y-1.5">
+			<span class="font-mono text-[9.5px] font-medium uppercase tracking-[0.14em] text-muted-foreground">Action</span>
+			<div class="flex rounded-md border border-input p-0.5" role="radiogroup" aria-label="Button action">
+				<button
+					type="button"
+					role="radio"
+					aria-checked={wired}
+					class="flex-1 rounded px-2 py-0.5 text-[10px] font-medium transition-colors {wired ? 'bg-secondary text-foreground' : 'text-muted-foreground hover:text-foreground'}"
+					onclick={() => {
+						if (!(suffix in buttonActions)) buttonActions[suffix] = '';
+					}}
+				>
+					Run automation
+				</button>
+				<button
+					type="button"
+					role="radio"
+					aria-checked={!wired}
+					class="flex-1 rounded px-2 py-0.5 text-[10px] font-medium transition-colors {!wired ? 'bg-secondary text-foreground' : 'text-muted-foreground hover:text-foreground'}"
+					onclick={() => {
+						delete buttonActions[suffix];
+						buttonActions = { ...buttonActions };
+					}}
+				>
+					Nothing
+				</button>
+			</div>
+			{#if wired}
+				{#if automationList.length === 0}
+					<p class="text-[10px] leading-snug text-muted-foreground">
+						No automations yet. Build one on the Automations tab, then pick it here.
+					</p>
+				{:else}
+					<Select bind:value={buttonActions[suffix]} options={automationOptions} />
+				{/if}
+			{/if}
+		</div>
+	{/if}
+{/snippet}
+
 <div class="flex h-full flex-col bg-bg text-ink">
 	<!-- ── Header (matches the shared page-header chrome) ─────────────────────── -->
 	<header class="flex min-h-12 shrink-0 flex-wrap items-center gap-2.5 border-b border-line bg-bg px-4 py-2 sm:px-5">
@@ -798,9 +846,9 @@
 					</div>
 				</ModSection>
 
-				<ModSection label="Entry responses" desc="The private reply a member gets when they click Enter, for each outcome. Edit them here; for anything more (give a role, log a denial, DM them), open Advanced to wire the on-entry automation.">
+				<ModSection label="Entry responses" desc="What a member gets when they click Enter, per outcome: a full message (embeds, buttons and all) delivered as a private reply, a public reply, a DM, or nothing. For side effects (give a role, log a denial), open Advanced to wire the on-entry automation.">
 					<div class="max-w-2xl">
-						<EntryEditor bind:entry {readOnly} onAdvanced={goToEntryAutomation} />
+						<EntryEditor bind:entry {readOnly} onAdvanced={goToEntryAutomation} buttonExtras={entryButtonAction} />
 					</div>
 				</ModSection>
 

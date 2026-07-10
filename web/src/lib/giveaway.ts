@@ -87,16 +87,55 @@ export interface AnnounceConfig {
 	dm_message: string;
 }
 
-// EntryConfig mirrors giveaway.EntryConfig — the ephemeral reply a member gets
-// when they click Enter, per outcome. Each is a Go template over the giveaway
-// scope plus {{ .Entries }} / {{ .Reason }}. Empty falls back to the built-in
-// default on the server, so a member is never left without a reply.
+// EntryReply mirrors giveaway.EntryReply — one outcome's fully-composed
+// response to an Enter click: the same {content, embeds, components} shape the
+// shared MessageEditor produces, plus its delivery mode. Every string is a Go
+// template over the giveaway scope plus {{ .Entries }} / {{ .Reason }}. An empty
+// composition falls back to the built-in default on the server. Buttons route
+// like the giveaway message's own (link opens a URL, anything else runs the
+// saved automation button_actions points it at).
+export interface EntryReply {
+	// '' | 'ephemeral' (default) = private reply; 'public' = channel reply;
+	// 'dm' = direct message; 'none' = acknowledge silently.
+	mode?: string;
+	content?: string;
+	embeds?: EmbedSpec[];
+	components?: ComponentRow[];
+}
+
+// EntryConfig mirrors giveaway.EntryConfig — the response a member gets when
+// they click Enter, per outcome, each a fully-composed EntryReply.
 export interface EntryConfig {
-	entered: string; // success (has {{ .Entries }})
-	left: string; // toggled off (leaves)
-	not_eligible: string; // failed a requirement (has {{ .Reason }})
-	bots_blocked: string; // a bot clicked
-	ended: string; // clicked after it ended
+	entered: EntryReply; // success (has {{ .Entries }})
+	left: EntryReply; // toggled off (leaves)
+	not_eligible: EntryReply; // failed a requirement (has {{ .Reason }})
+	bots_blocked: EntryReply; // a bot clicked
+	ended: EntryReply; // clicked after it ended
+}
+
+// normalizeEntryReply upgrades a stored entry reply to the current object shape
+// (an earlier version stored a plain string; it becomes the ephemeral content),
+// mirroring EntryReply.UnmarshalJSON on the Go side.
+export function normalizeEntryReply(v: unknown): EntryReply {
+	if (typeof v === 'string') return { content: v };
+	if (v && typeof v === 'object') return v as EntryReply;
+	return {};
+}
+
+// normalizeEntryConfig upgrades a stored entry block: legacy string outcomes
+// become object replies, and missing outcomes fall back to the defaults.
+export function normalizeEntryConfig(v: unknown): EntryConfig {
+	const o = (v && typeof v === 'object' ? v : {}) as Record<string, unknown>;
+	const d = defaultSpec().entry;
+	const pick = (key: keyof EntryConfig): EntryReply =>
+		key in o ? normalizeEntryReply(o[key]) : d[key];
+	return {
+		entered: pick('entered'),
+		left: pick('left'),
+		not_eligible: pick('not_eligible'),
+		bots_blocked: pick('bots_blocked'),
+		ended: pick('ended')
+	};
 }
 
 // GiveawaySpec is one giveaway's composed presentation + behaviour (stored on
@@ -182,12 +221,14 @@ export function defaultSpec(): GiveawaySpec {
 		},
 		// Mirrors giveaway.defaultEntry() in Go — keep the copy in lockstep.
 		entry: {
-			entered:
-				"🎉 You're entered into the giveaway for **{{ .Prize }}**!{{ if gt .Entries 1 }} You have **{{ .Entries }}** entries.{{ end }}",
-			left: "You've left the giveaway for **{{ .Prize }}**.",
-			not_eligible: '❌ {{ .Reason }}',
-			bots_blocked: "Bots can't enter this giveaway.",
-			ended: 'This giveaway has already ended.'
+			entered: {
+				content:
+					"🎉 You're entered into the giveaway for **{{ .Prize }}**!{{ if gt .Entries 1 }} You have **{{ .Entries }}** entries.{{ end }}"
+			},
+			left: { content: "You've left the giveaway for **{{ .Prize }}**." },
+			not_eligible: { content: '❌ {{ .Reason }}' },
+			bots_blocked: { content: "Bots can't enter this giveaway." },
+			ended: { content: 'This giveaway has already ended.' }
 		},
 		ping_role_id: '',
 		show_requirements: true,
