@@ -1,18 +1,24 @@
 <script lang="ts">
-	import { onMount, getContext } from 'svelte';
+	import { onMount, getContext, setContext } from 'svelte';
 	import { GuildStore, GUILD_CTX } from '$lib/guild.svelte';
 	import { api, ApiError } from '$lib/api';
 	import {
 		defaultTicketsConfig,
 		defaultPanelConfig,
+		defaultControlButtons,
 		newCategory,
+		normalizeMessageSpec,
+		TICKET_TEMPLATE_VARS,
 		type TicketsConfig,
 		type PanelSummary,
 		type PanelConfig,
 		type CategoryConfig,
+		type ControlButtons,
 		type TicketRow,
 		type TicketStats
 	} from '$lib/tickets/types';
+	import type { Step } from '$lib/commands/types';
+	import { AUTOMATION_CTX, EXPR_SCOPE_CTX, type ExprScope } from '$lib/commands/expr-meta';
 	import ModerationShell, { type ModTab } from '$lib/components/moderation/ModerationShell.svelte';
 	import ModSection from '$lib/components/moderation/ModSection.svelte';
 	import TabSwipe from '$lib/components/page/TabSwipe.svelte';
@@ -23,8 +29,7 @@
 	import NumberField from '$lib/components/ui/NumberField.svelte';
 	import Select from '$lib/components/Select.svelte';
 	import Toggle from '$lib/components/Toggle.svelte';
-	import TemplateField from '$lib/components/TemplateField.svelte';
-	import EmbedBuilder from '$lib/components/commands/EmbedBuilder.svelte';
+	import MessageEditor from '$lib/components/commands/MessageEditor.svelte';
 	import CategoryEditor from '$lib/components/tickets/CategoryEditor.svelte';
 	import {
 		Ticket,
@@ -43,6 +48,16 @@
 
 	const store = getContext<GuildStore>(GUILD_CTX);
 	const FEATURE = 'tickets';
+
+	// Every MessageEditor on this page (panel + category surfaces) offers the
+	// ticket template variables in its picker, in the non-automation form.
+	setContext(AUTOMATION_CTX, false);
+	setContext(EXPR_SCOPE_CTX, {
+		options: [],
+		variables: [],
+		steps: [],
+		extraVars: TICKET_TEMPLATE_VARS
+	} satisfies ExprScope);
 
 	let enabled = $state(false);
 	let cfg = $state<TicketsConfig>(defaultTicketsConfig());
@@ -105,27 +120,73 @@
 	let panelStatus = $state('');
 	let publishChannel = $state('');
 
+	// mergeButtons fills in any missing system-button overrides.
+	function mergeButtons(b: Partial<ControlButtons> | undefined): ControlButtons {
+		const d = defaultControlButtons();
+		return {
+			claim: { ...d.claim, ...(b?.claim ?? {}) },
+			close: { ...d.close, ...(b?.close ?? {}) },
+			reopen: { ...d.reopen, ...(b?.reopen ?? {}) },
+			delete: { ...d.delete, ...(b?.delete ?? {}) },
+			transcript: { ...d.transcript, ...(b?.transcript ?? {}) }
+		};
+	}
+	// normalizeCategory upgrades stored categories to the current shape (folding
+	// the legacy single-embed welcome into embeds, mirroring the Go decoder).
 	function normalizeCategory(c: Partial<CategoryConfig>): CategoryConfig {
 		const base = newCategory();
 		return {
 			...base,
 			...c,
-			welcome: { ...base.welcome, ...(c.welcome ?? {}), embed: { ...(c.welcome?.embed ?? {}) } },
+			welcome: normalizeMessageSpec(c.welcome ?? base.welcome),
+			closed: normalizeMessageSpec(c.closed),
+			close_request: normalizeMessageSpec(c.close_request),
+			buttons: mergeButtons(c.buttons),
 			transcript: { ...base.transcript, ...(c.transcript ?? {}) },
-			feedback: { ...base.feedback, ...(c.feedback ?? {}) },
-			auto_close: { ...base.auto_close, ...(c.auto_close ?? {}) },
+			feedback: { ...base.feedback, ...(c.feedback ?? {}), message: normalizeMessageSpec(c.feedback?.message) },
+			auto_close: {
+				...base.auto_close,
+				...(c.auto_close ?? {}),
+				warn_message: normalizeMessageSpec(c.auto_close?.warn_message)
+			},
 			form: c.form ?? []
 		};
 	}
 	function normalizeConfig(pc: Partial<PanelConfig> | undefined): PanelConfig {
 		const d = defaultPanelConfig();
+		let embeds = (pc?.embeds ?? []).map((e) => ({ ...e }));
+		if (embeds.length === 0 && pc?.embed && Object.keys(pc.embed).length > 0) {
+			embeds = [{ ...pc.embed }]; // legacy single-embed panel
+		}
+		if (!pc) embeds = d.embeds ?? [];
 		return {
 			content: pc?.content ?? '',
-			embed: { ...(pc?.embed ?? d.embed) },
+			embeds,
 			select_placeholder: pc?.select_placeholder ?? d.select_placeholder,
 			categories: (pc?.categories ?? []).map(normalizeCategory)
 		};
 	}
+
+	// The panel message is edited with the shared WYSIWYG MessageEditor; the step
+	// is (re)seeded when a panel is opened for editing and the effect below syncs
+	// edits back into the panel config being edited.
+	let panelEditSeq = $state(0);
+	let panelStep = $state<Step>({ id: 'panel-msg', kind: 'send_message', spec: { content: '', embeds: [] } });
+	function seedPanelStep(pc: PanelConfig) {
+		panelStep = {
+			id: 'panel-msg',
+			kind: 'send_message',
+			spec: { content: pc.content ?? '', embeds: JSON.parse(JSON.stringify(pc.embeds ?? [])) }
+		};
+		panelEditSeq++;
+	}
+	$effect(() => {
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		const s = panelStep.spec as any;
+		if (!editing) return;
+		editing.config.content = s.content ?? '';
+		editing.config.embeds = s.embeds ?? [];
+	});
 
 	async function loadPanels() {
 		panelsError = '';
@@ -150,11 +211,13 @@
 			message_id: '',
 			config: defaultPanelConfig()
 		};
+		seedPanelStep(editing.config);
 		publishChannel = '';
 		panelStatus = '';
 	}
 	function editPanel(p: PanelSummary) {
 		editing = { ...p, config: normalizeConfig(p.config) };
+		seedPanelStep(editing.config);
 		publishChannel = '';
 		panelStatus = '';
 	}
@@ -385,10 +448,13 @@
 
 						<div class="space-y-3">
 							<p class="eyebrow">Panel message</p>
-							<Field label="Message content" hint="Optional text above the embed">
-								<TemplateField guildId={store.id} value={editing.config.content ?? ''} variables={[]} extraVars={{}} rows={1} />
-							</Field>
-							<EmbedBuilder embed={editing.config.embed} onChange={(next) => (editing!.config.embed = next)} />
+							<p class="text-xs text-muted">
+								Compose the message members see — content and as many embeds as you like. The open
+								buttons (or dropdown) below it come from the categories.
+							</p>
+							{#key panelEditSeq}
+								<MessageEditor step={panelStep} embeds clickPaths={false} />
+							{/key}
 						</div>
 
 						<div class="space-y-3 border-t border-line pt-4">
@@ -533,9 +599,11 @@
 					<p><span class="text-ink">1. Design a panel.</span> A panel is an embed with buttons (or a dropdown). Each button is a category — its own ticket type with its own permissions, opening message, form and rules.</p>
 					<p><span class="text-ink">2. Publish it.</span> Post the panel to a channel. Members click to open a ticket. If the category has a form, they fill it first.</p>
 					<p><span class="text-ink">3. A private channel opens.</span> Only the opener and your support roles can see it. Staff can claim it, add or remove members, rename it, and leave private notes.</p>
-					<p><span class="text-ink">4. Close and follow up.</span> Closing generates an HTML transcript (posted to your transcript channel and optionally DMed to the opener) and can ask the opener to rate the help. Inactive tickets can auto-close.</p>
-					<p><span class="text-ink">5. Automate it.</span> Every ticket event (opened, claimed, closed, rated) is a trigger in Automations, and each category can launch a saved automation on open or close.</p>
-					<p>Staff also get <code class="text-ink">/ticket</code> commands (close, claim, add, remove, rename, note, transcript) inside any ticket channel, and admins can post a panel with <code class="text-ink">/tickets post</code>.</p>
+					<p><span class="text-ink">4. Close politely.</span> Staff can close outright, or send a close request with <code class="text-ink">/ticket closerequest</code> — the opener confirms with a button, and an optional delay closes the ticket automatically if they never answer.</p>
+					<p><span class="text-ink">5. Follow up.</span> Closing generates an HTML transcript (posted to your transcript channel and optionally DMed to the opener) and can ask the opener to rate the help. Inactive tickets can auto-close after a warning.</p>
+					<p><span class="text-ink">6. Make it yours.</span> Every message — panel, opening, closed card, close request, inactivity warning, feedback DM — is fully composable (content, embeds, buttons), and the built-in Claim/Close/Reopen buttons can be restyled per category.</p>
+					<p><span class="text-ink">7. Automate it.</span> Every ticket event (opened, claimed, closed, close requested, rated) is a trigger in Automations; each category can launch a saved automation on open or close; and any button you add to a ticket message can run an automation when clicked.</p>
+					<p>Staff also get <code class="text-ink">/ticket</code> commands (close, closerequest, claim, add, remove, rename, note, transcript) inside any ticket channel, and admins can post a panel with <code class="text-ink">/tickets post</code>.</p>
 				</div>
 			</ModSection>
 		{/if}

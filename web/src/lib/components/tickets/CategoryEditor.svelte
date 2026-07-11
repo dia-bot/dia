@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { CategoryConfig } from '$lib/tickets/types';
-	import { newFormField, TICKET_TEMPLATE_VARS } from '$lib/tickets/types';
+	import { newFormField } from '$lib/tickets/types';
 	import Field from '$lib/components/Field.svelte';
 	import Select from '$lib/components/Select.svelte';
 	import Toggle from '$lib/components/Toggle.svelte';
@@ -8,8 +8,8 @@
 	import ChannelPicker from '$lib/components/ChannelPicker.svelte';
 	import NumberField from '$lib/components/ui/NumberField.svelte';
 	import TemplateField from '$lib/components/TemplateField.svelte';
-	import EmbedBuilder from '$lib/components/commands/EmbedBuilder.svelte';
 	import AutomationPicker from '$lib/components/commands/AutomationPicker.svelte';
+	import TicketMessageEditor from '$lib/components/tickets/TicketMessageEditor.svelte';
 	import { ChevronDown, ChevronRight, Trash2, Plus } from 'lucide-svelte';
 
 	let {
@@ -27,18 +27,36 @@
 	// svelte-ignore state_referenced_locally
 	let open = $state(index === 0); // first category expanded by default; toggled thereafter
 
+	// Advanced message surfaces are collapsed until needed (the built-in message
+	// is used while a surface stays uncomposed).
+	let showClosed = $state(false);
+	let showCloseReq = $state(false);
+	let showWarn = $state(false);
+	let showButtons = $state(false);
+
 	const styleOptions = [
 		{ value: 'primary', label: 'Primary (blurple)' },
 		{ value: 'secondary', label: 'Secondary (grey)' },
 		{ value: 'success', label: 'Success (green)' },
 		{ value: 'danger', label: 'Danger (red)' }
 	];
+	const sysStyleOptions = [{ value: '', label: 'Default' }, ...styleOptions];
 	const modeOptions = [
 		{ value: 'channel', label: 'Private channel' },
 		{ value: 'thread', label: 'Private thread' }
 	];
 	const inputCls =
 		'w-full rounded-md border border-line bg-bg px-3 py-2 text-sm text-ink outline-none focus:border-line-strong';
+
+	// The system buttons, with which ones support hiding (Close never hides; the
+	// Claim button is governed by the claiming toggle instead).
+	const sysButtons: { key: keyof CategoryConfig['buttons']; label: string; hideable: boolean; hint: string }[] = [
+		{ key: 'claim', label: 'Claim', hideable: false, hint: 'On the opening message' },
+		{ key: 'close', label: 'Close', hideable: false, hint: 'On the opening message' },
+		{ key: 'reopen', label: 'Reopen', hideable: true, hint: 'On the closed message' },
+		{ key: 'delete', label: 'Delete', hideable: true, hint: 'On the closed message' },
+		{ key: 'transcript', label: 'Transcript', hideable: true, hint: 'On the closed message' }
+	];
 
 	function addFormField() {
 		if (!category.form) category.form = [];
@@ -148,22 +166,70 @@
 			<!-- Opening message -->
 			<div class="space-y-3 border-t border-line pt-4">
 				<p class="eyebrow">Opening message</p>
-				<Field label="Message content" hint="Posted in the new ticket channel">
-					<TemplateField
-						{guildId}
-						value={category.welcome.content ?? ''}
-						variables={[]}
-						extraVars={{}}
-						rows={2}
-						placeholder={'{{ .User.Mention }}'}
-					/>
-				</Field>
-				<label class="flex items-center gap-3 text-sm text-ink">
-					<Toggle bind:checked={category.welcome.use_embed} label="Use embed" />
-					Include an embed
-				</label>
-				{#if category.welcome.use_embed}
-					<EmbedBuilder embed={category.welcome.embed} onChange={(next) => (category.welcome.embed = next)} />
+				<p class="text-xs text-muted">
+					Posted in the new ticket. Compose it like any message: content, embeds and your own buttons
+					(a button can open a link or run one of your automations). The Claim / Close controls are
+					added automatically below your composition.
+				</p>
+				<TicketMessageEditor spec={category.welcome} id={category.id + '-welcome'} />
+			</div>
+
+			<!-- System buttons -->
+			<div class="space-y-3 border-t border-line pt-4">
+				<button type="button" class="flex items-center gap-2 text-left" onclick={() => (showButtons = !showButtons)}>
+					{#if showButtons}<ChevronDown class="h-4 w-4 text-muted" />{:else}<ChevronRight class="h-4 w-4 text-muted" />{/if}
+					<p class="eyebrow">Control buttons <span class="text-faint">(restyle Claim, Close, Reopen…)</span></p>
+				</button>
+				{#if showButtons}
+					<div class="space-y-2">
+						{#each sysButtons as sb (sb.key)}
+							<div class="grid items-end gap-3 rounded-md border border-line p-3 sm:grid-cols-[1fr_1fr_1fr_auto]">
+								<Field label={sb.label} hint={sb.hint}>
+									<input class={inputCls} bind:value={category.buttons[sb.key].label} placeholder={sb.label} />
+								</Field>
+								<Field label="Emoji"><input class={inputCls} bind:value={category.buttons[sb.key].emoji} placeholder="—" /></Field>
+								<Field label="Style"><Select bind:value={category.buttons[sb.key].style} options={sysStyleOptions} /></Field>
+								{#if sb.hideable}
+									<label class="flex items-center gap-2 pb-2 text-sm text-ink">
+										<Toggle bind:checked={category.buttons[sb.key].hide} label="Hide" /> Hide
+									</label>
+								{:else}
+									<div></div>
+								{/if}
+							</div>
+						{/each}
+					</div>
+				{/if}
+			</div>
+
+			<!-- Closed message -->
+			<div class="space-y-3 border-t border-line pt-4">
+				<button type="button" class="flex items-center gap-2 text-left" onclick={() => (showClosed = !showClosed)}>
+					{#if showClosed}<ChevronDown class="h-4 w-4 text-muted" />{:else}<ChevronRight class="h-4 w-4 text-muted" />{/if}
+					<p class="eyebrow">Closed message <span class="text-faint">(blank = built-in card)</span></p>
+				</button>
+				{#if showClosed}
+					<p class="text-xs text-muted">
+						Posted when the ticket closes. Use {'{{ .Ticket.Closer }}'} and {'{{ .Ticket.Reason }}'}.
+						The Reopen / Delete / Transcript controls are added automatically.
+					</p>
+					<TicketMessageEditor spec={category.closed} id={category.id + '-closed'} />
+				{/if}
+			</div>
+
+			<!-- Close request message -->
+			<div class="space-y-3 border-t border-line pt-4">
+				<button type="button" class="flex items-center gap-2 text-left" onclick={() => (showCloseReq = !showCloseReq)}>
+					{#if showCloseReq}<ChevronDown class="h-4 w-4 text-muted" />{:else}<ChevronRight class="h-4 w-4 text-muted" />{/if}
+					<p class="eyebrow">Close request message <span class="text-faint">(blank = built-in card)</span></p>
+				</button>
+				{#if showCloseReq}
+					<p class="text-xs text-muted">
+						Posted by /ticket closerequest to ask the opener to confirm. Use {'{{ .Actor.Mention }}'}
+						(the requester), {'{{ .Ticket.Reason }}'} and {'{{ .Ticket.Deadline }}'}. The Accept /
+						Keep-open buttons are added automatically.
+					</p>
+					<TicketMessageEditor spec={category.close_request} id={category.id + '-closereq'} />
 				{/if}
 			</div>
 
@@ -207,7 +273,7 @@
 				{/each}
 			</div>
 
-			<!-- Transcript + feedback + auto-close -->
+			<!-- Transcript + feedback -->
 			<div class="grid gap-4 border-t border-line pt-4 sm:grid-cols-2">
 				<div class="space-y-2">
 					<p class="eyebrow">Transcript</p>
@@ -223,10 +289,24 @@
 					<label class="flex items-center gap-2 text-sm text-ink">
 						<Toggle bind:checked={category.feedback.enabled} label="Feedback" /> Ask for a rating on close
 					</label>
-					<Field label="Prompt"><input class={inputCls} bind:value={category.feedback.prompt} placeholder="How was your support experience?" /></Field>
+					<Field label="Prompt" hint="Used by the built-in DM card">
+						<input class={inputCls} bind:value={category.feedback.prompt} placeholder="How was your support experience?" />
+					</Field>
+					<Field label="Thanks reply" hint="Shown after rating (blank = star summary)">
+						<input class={inputCls} bind:value={category.feedback.thanks_message} placeholder={'Thanks! You rated us {{ .Ticket.Rating }}/5.'} />
+					</Field>
 				</div>
 			</div>
+			{#if category.feedback.enabled}
+				<div class="space-y-2">
+					<p class="text-xs text-muted">
+						Compose the DM sent above the rating select (blank = built-in card with the prompt).
+					</p>
+					<TicketMessageEditor spec={category.feedback.message} id={category.id + '-feedback'} />
+				</div>
+			{/if}
 
+			<!-- Auto-close -->
 			<div class="space-y-2 border-t border-line pt-4">
 				<p class="eyebrow">Auto-close on inactivity</p>
 				<label class="flex items-center gap-2 text-sm text-ink">
@@ -236,6 +316,15 @@
 					<div class="grid grid-cols-2 gap-3">
 						<Field label="Inactive minutes"><NumberField bind:value={category.auto_close.inactivity_minutes} min={5} /></Field>
 						<Field label="Warn grace (min)" hint="0 = close without warning"><NumberField bind:value={category.auto_close.warn_minutes} min={0} /></Field>
+					</div>
+					<div class="space-y-2 pt-1">
+						<button type="button" class="flex items-center gap-2 text-left" onclick={() => (showWarn = !showWarn)}>
+							{#if showWarn}<ChevronDown class="h-4 w-4 text-muted" />{:else}<ChevronRight class="h-4 w-4 text-muted" />{/if}
+							<p class="eyebrow">Warning message <span class="text-faint">(blank = built-in line)</span></p>
+						</button>
+						{#if showWarn}
+							<TicketMessageEditor spec={category.auto_close.warn_message} id={category.id + '-warn'} />
+						{/if}
 					</div>
 				{/if}
 			</div>
