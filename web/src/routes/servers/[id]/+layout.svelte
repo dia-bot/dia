@@ -1,7 +1,8 @@
 <script lang="ts">
 	import { page } from '$app/stores';
+	import { goto } from '$app/navigation';
 	import { onDestroy, onMount, tick, setContext, type Snippet } from 'svelte';
-	import { fly } from 'svelte/transition';
+	import { fade, fly, scale } from 'svelte/transition';
 	import { cubicOut } from 'svelte/easing';
 	import { dur } from '$lib/motion';
 	import { GuildStore, GUILD_CTX } from '$lib/guild.svelte';
@@ -16,6 +17,7 @@
 		TrendingUp,
 		ToggleRight,
 		UserPlus,
+		Gift,
 		ShieldCheck,
 		ShieldAlert,
 		UserCheck,
@@ -28,7 +30,9 @@
 		ChevronRight,
 		Search,
 		Menu,
-		X
+		X,
+		Lock,
+		ShieldX
 	} from 'lucide-svelte';
 
 	let { data, children }: { data: { user: User }; children: Snippet } = $props();
@@ -60,7 +64,8 @@
 				{ label: 'Welcome', path: 'welcome', icon: ImageIcon },
 				{ label: 'Leveling', path: 'leveling', icon: TrendingUp },
 				{ label: 'Reaction Roles', path: 'reaction-roles', icon: ToggleRight },
-				{ label: 'Auto Roles', path: 'auto-roles', icon: UserPlus }
+				{ label: 'Auto Roles', path: 'auto-roles', icon: UserPlus },
+				{ label: 'Giveaways', path: 'giveaways', icon: Gift }
 			]
 		},
 		{
@@ -97,6 +102,47 @@
 	// Breadcrumb tail: the current page's label.
 	const currentSeg = $derived($page.url.pathname.replace(base, '').replace(/^\//, '').split('/')[0]);
 	const pageTitle = $derived(flatPages.find((p) => p.path === currentSeg)?.label ?? 'Overview');
+
+	// ── Per-feature access gating ──────────────────────────────────────────────
+	// A non-admin who holds a feature's configured manager role can use only that
+	// feature's tab; everything else is locked. nav paths don't all match backend
+	// feature keys, so map the delegatable ones.
+	const FEATURE_KEY: Record<string, string> = {
+		welcome: 'welcome',
+		leveling: 'leveling',
+		'reaction-roles': 'reactionroles',
+		'auto-roles': 'autorole',
+		giveaways: 'giveaway',
+		moderation: 'moderation',
+		automod: 'automod',
+		verification: 'verification',
+		logging: 'logging',
+		commands: 'customcommands'
+	};
+	function canAccessPath(path: string): boolean {
+		if (store.admin) return true;
+		if (path === '') return true; // Overview is the shared landing.
+		const key = FEATURE_KEY[path];
+		return key ? store.canAccess(key) : false;
+	}
+	// True once the guild is loaded and the current route is one the user can't use
+	// (a manager navigating straight to a locked tab) → render a 403 instead.
+	const currentLocked = $derived(!!store.detail && !canAccessPath(currentSeg));
+	let lockedNotice = $state('');
+
+	// A non-admin manager's first usable tab (they land here instead of the
+	// admin-oriented Overview).
+	const firstAccessiblePath = $derived.by(() => {
+		for (const p of flatPages) {
+			if (p.path && canAccessPath(p.path)) return p.path;
+		}
+		return '';
+	});
+	$effect(() => {
+		if (store.detail && !store.admin && currentSeg === '' && firstAccessiblePath) {
+			goto(`${base}/${firstAccessiblePath}`, { replaceState: true });
+		}
+	});
 
 	// Vertical page-slide direction, from the sidebar order: moving DOWN the
 	// sidebar (a later item) slides the new page up from below; moving UP slides
@@ -143,6 +189,7 @@
 		'leveling',
 		'reaction-roles',
 		'auto-roles',
+		'giveaways',
 		'editor',
 		'commands',
 		'automations',
@@ -160,6 +207,7 @@
 		'leveling',
 		'reaction-roles',
 		'auto-roles',
+		'giveaways',
 		'commands',
 		'automations',
 		'moderation',
@@ -294,22 +342,36 @@
 					<div class="space-y-0.5">
 						{#each group.items as item (item.path)}
 							{@const active = isActive(item.path)}
-							<a
-								href={item.path ? `${base}/${item.path}` : base}
-								aria-current={active ? 'page' : undefined}
-								class="group flex h-8 items-center gap-2.5 rounded-md px-2.5 text-[13px] transition-colors duration-100 {active
-									? hl.shown
-										? 'font-medium text-ink'
-										: 'bg-surface font-medium text-ink'
-									: 'font-medium text-muted hover:bg-surface/50 hover:text-ink'}"
-							>
-								<item.icon
-									size={15}
-									strokeWidth={active ? 2 : 1.75}
-									class="shrink-0 {active ? 'text-ink' : 'text-faint group-hover:text-muted'}"
-								/>
-								<span class="truncate">{item.label}</span>
-							</a>
+							{@const locked = !!store.detail && !canAccessPath(item.path)}
+							{#if locked}
+								<button
+									type="button"
+									onclick={() => (lockedNotice = item.label)}
+									class="group flex h-8 w-full items-center gap-2.5 rounded-md px-2.5 text-[13px] font-medium text-faint/70 transition-colors duration-100 hover:bg-surface/40"
+									title="You don't have access to this section"
+								>
+									<item.icon size={15} strokeWidth={1.75} class="shrink-0 text-faint/60" />
+									<span class="truncate">{item.label}</span>
+									<Lock size={12} class="ml-auto shrink-0 text-faint/60" />
+								</button>
+							{:else}
+								<a
+									href={item.path ? `${base}/${item.path}` : base}
+									aria-current={active ? 'page' : undefined}
+									class="group flex h-8 items-center gap-2.5 rounded-md px-2.5 text-[13px] transition-colors duration-100 {active
+										? hl.shown
+											? 'font-medium text-ink'
+											: 'bg-surface font-medium text-ink'
+										: 'font-medium text-muted hover:bg-surface/50 hover:text-ink'}"
+								>
+									<item.icon
+										size={15}
+										strokeWidth={active ? 2 : 1.75}
+										class="shrink-0 {active ? 'text-ink' : 'text-faint group-hover:text-muted'}"
+									/>
+									<span class="truncate">{item.label}</span>
+								</a>
+							{/if}
 						{/each}
 					</div>
 				{/each}
@@ -384,6 +446,30 @@
 						{/each}
 					</div>
 				</div>
+			{:else if currentLocked}
+				<!-- Manager navigated straight to a tab they can't use. -->
+				<div class="grid h-full place-items-center px-6 py-12">
+					<div
+						class="flex max-w-md flex-col items-center gap-3 text-center"
+						in:scale={{ duration: dur(220), start: 0.96, opacity: 0, easing: cubicOut }}
+					>
+						<span class="grid size-11 place-items-center rounded-full border border-line bg-surface text-muted">
+							<ShieldX size={20} />
+						</span>
+						<div>
+							<p class="text-[14px] font-semibold text-ink">You don't have access</p>
+							<p class="mt-1 text-[12px] text-muted">
+								This section is restricted. Ask a server admin to grant your role access.
+							</p>
+						</div>
+						<a
+							href={base}
+							class="mt-1 inline-flex h-8 items-center rounded-md bg-ink px-3 text-[12px] font-semibold text-bg hover:bg-ink/90"
+						>
+							Back to overview
+						</a>
+					</div>
+				</div>
 			{:else}
 				<!-- Vertical page slide: re-keyed per feature so the new page flies in
 				     from the travel direction. Live-DOM (not a view transition) so it
@@ -404,3 +490,34 @@
 </div>
 
 <CommandPalette bind:open={paletteOpen} serverId={$page.params.id ?? ''} pages={flatPages} />
+
+{#if lockedNotice}
+	<div class="fixed inset-0 z-[60] grid place-items-center p-4">
+		<button
+			type="button"
+			class="absolute inset-0 h-full w-full cursor-default bg-black/40"
+			aria-label="Dismiss"
+			onclick={() => (lockedNotice = '')}
+			transition:fade={{ duration: dur(150) }}
+		></button>
+		<div
+			class="relative flex max-w-xs flex-col items-center gap-2.5 rounded-xl border border-line bg-surface p-5 text-center shadow-2xl"
+			transition:scale={{ duration: dur(190), start: 0.94, opacity: 0, easing: cubicOut }}
+		>
+			<span class="grid size-9 place-items-center rounded-full border border-line bg-bg text-muted">
+				<Lock size={16} />
+			</span>
+			<p class="text-[13px] font-semibold text-ink">{lockedNotice} is locked</p>
+			<p class="text-[12px] text-muted">
+				You don't have access to this section. Ask a server admin to grant your role access.
+			</p>
+			<button
+				type="button"
+				onclick={() => (lockedNotice = '')}
+				class="mt-1 h-8 rounded-md bg-ink px-3 text-[12px] font-semibold text-bg hover:bg-ink/90"
+			>
+				Got it
+			</button>
+		</div>
+	</div>
+{/if}

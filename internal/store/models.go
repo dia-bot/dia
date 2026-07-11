@@ -372,3 +372,43 @@ type AuditEntry struct {
 	Detail    json.RawMessage
 	CreatedAt time.Time
 }
+
+// ── Giveaways ────────────────────────────────────────────────
+
+// Giveaway is one hosted prize draw. The posted message carries the live Enter
+// button; entries accumulate in giveaway_entries; a background sweeper ends it
+// at EndsAt and fills WinnerIDs from the weighted draw. Requirements is the
+// resolved per-giveaway eligibility spec (JSONB) so each giveaway is
+// self-contained even if the feature defaults later change.
+type Giveaway struct {
+	ID           string // UUID
+	GuildID      int64
+	ChannelID    int64
+	MessageID    int64  // 0 until posted
+	Name         string // dashboard label; "" falls back to Prize
+	Prize        string
+	Description  string
+	WinnerCount  int
+	HostID       int64
+	Status       string          // draft | scheduled | running | ended | cancelled
+	Spec         json.RawMessage // composed message + button + announce + behaviour
+	Requirements json.RawMessage
+	ImageURL     string
+	Color        string // hex override, "" = embed default
+	WinnerIDs    []int64
+	StartsAt     time.Time
+	EndsAt       time.Time
+	EndedAt      *time.Time
+	CreatedBy    int64
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
+}
+
+// GiveawayEntry is one member's entry into a giveaway. Entries is the member's
+// weighted ticket count (1 base + role bonuses), biasing the random draw.
+type GiveawayEntry struct {
+	GiveawayID string
+	UserID     int64
+	Entries    int
+	EnteredAt  time.Time
+}

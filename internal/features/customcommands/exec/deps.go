@@ -90,6 +90,14 @@ type ImagingClient interface {
 	RenderLayoutBytes(ctx context.Context, layout json.RawMessage, vars map[string]string, fonts map[string]string) ([]byte, error)
 }
 
+// GiveawayStarter starts a giveaway from a saved preset (the giveaway_start
+// step). It is implemented by *giveaway.Manager; the signature is kept to
+// primitive args so the giveaway package needn't import this one. A nil binding
+// means giveaways aren't wired into this engine, and the step fails cleanly.
+type GiveawayStarter interface {
+	StartGiveaway(ctx context.Context, guildID int64, preset, prize, channel, duration string, winners int, hostID int64) (string, error)
+}
+
 // HTTPClient performs SSRF-guarded outbound requests for the http_request step.
 type HTTPClient interface {
 	Do(ctx context.Context, req *http.Request) (*http.Response, error)

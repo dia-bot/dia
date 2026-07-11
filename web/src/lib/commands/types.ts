@@ -338,7 +338,8 @@ export const STEP_KINDS: StepKindMeta[] = [
 	{ kind: 'fail', category: 'flow', label: 'Fail', short: 'Abort with an error.', icon: 'CircleAlert' },
 	{ kind: 'run_command', category: 'flow', label: 'Run command', short: 'Invoke another custom command.', icon: 'Terminal' },
 	{ kind: 'run_automation', category: 'flow', label: 'Run automation', short: "Launch another automation's steps inline.", icon: 'Zap' },
-	{ kind: 'audit_note', category: 'flow', label: 'Audit note', short: 'Record an entry in the audit log.', icon: 'FileText' }
+	{ kind: 'audit_note', category: 'flow', label: 'Audit note', short: 'Record an entry in the audit log.', icon: 'FileText' },
+	{ kind: 'giveaway_start', category: 'flow', label: 'Start giveaway', short: 'Start a giveaway from a saved preset.', icon: 'Gift' }
 ];
 
 export const STEP_KIND_BY_KIND = new Map(STEP_KINDS.map((k) => [k.kind, k]));
@@ -528,6 +529,9 @@ export function newStep(kind: string): Step {
 			break;
 		case 'audit_note':
 			step.spec = { action: 'note', detail: { lang: 'tmpl', src: '' } };
+			break;
+		case 'giveaway_start':
+			step.spec = { preset: '', prize: { lang: 'tmpl', src: '' } };
 			break;
 		case 'defer_reply':
 		default:

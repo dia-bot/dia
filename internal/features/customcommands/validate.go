@@ -554,6 +554,13 @@ func validateSpec(s Step, path string, r *ValidationResult) {
 			return
 		}
 		requireStr(spec.Action, path, "action", s.Kind, r)
+	case KindGiveawayStart:
+		var spec SpecGiveawayStart
+		if err := decodeSpec(s.Spec, &spec); err != nil {
+			r.fail(path+".spec", "spec_invalid", err.Error())
+			return
+		}
+		requireExpr(spec.Prize, path, "prize", s.Kind, r)
 	case KindWait:
 		var spec SpecWait
 		if err := decodeSpec(s.Spec, &spec); err != nil {
@@ -1055,7 +1062,8 @@ func validStepKind(s string) bool {
 		KindSetVar, KindIncrVar, KindPickRandom, KindJSONParse,
 		KindKVGet, KindKVSet, KindKVDelete, KindHTTPReq,
 		KindIf, KindSwitch, KindLoop, KindParallel, KindWait, KindWaitFor,
-		KindExit, KindFail, KindNoop, KindRunCommand, KindRunAutomation, KindAuditNote:
+		KindExit, KindFail, KindNoop, KindRunCommand, KindRunAutomation, KindAuditNote,
+		KindGiveawayStart:
 		return true
 	}
 	return false

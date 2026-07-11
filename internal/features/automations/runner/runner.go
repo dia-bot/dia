@@ -24,6 +24,7 @@ import (
 	"github.com/dia-bot/dia/internal/event"
 	cc "github.com/dia-bot/dia/internal/features/customcommands"
 	"github.com/dia-bot/dia/internal/features/customcommands/exec"
+	"github.com/dia-bot/dia/internal/features/giveaway"
 	"github.com/dia-bot/dia/internal/plugin"
 	"github.com/dia-bot/dia/internal/store"
 )
@@ -48,11 +49,12 @@ type Runner struct {
 // keeping it "live" longer).
 func New(d plugin.Deps) *Runner {
 	eng := exec.New(exec.Deps{
-		Log:     d.Log,
-		Discord: &exec.DiscordAdapter{C: d.Discord},
-		Store:   &exec.StoreAdapter{S: d.Store},
-		Imaging: &exec.ImagingAdapter{R: d.Imaging},
-		HTTP:    &exec.HTTPAdapter{Client: &http.Client{Timeout: 10 * time.Second}},
+		Log:       d.Log,
+		Discord:   &exec.DiscordAdapter{C: d.Discord},
+		Store:     &exec.StoreAdapter{S: d.Store},
+		Imaging:   &exec.ImagingAdapter{R: d.Imaging},
+		HTTP:      &exec.HTTPAdapter{Client: &http.Client{Timeout: 10 * time.Second}},
+		Giveaways: giveaway.NewManager(d),
 	})
 	eng.SetRouting(RoutePrefix, NoopPrefix)
 	eng.SetMaxWaitFor(time.Minute)

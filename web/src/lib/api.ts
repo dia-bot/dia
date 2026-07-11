@@ -172,6 +172,34 @@ export const api = {
 	automationRun: (id: string, runId: string) =>
 		req<{ run: any; logs: any[] }>('GET', `/api/guilds/${id}/automation-runs/${runId}`),
 
+	// ── Giveaways ──
+	giveaways: (id: string, status = '') =>
+		req<{ giveaways: any[] }>(
+			'GET',
+			`/api/guilds/${id}/giveaways` + (status ? `?status=${status}` : '')
+		),
+	giveaway: (id: string, gwid: string) =>
+		req<any>('GET', `/api/guilds/${id}/giveaways/${gwid}`),
+	createGiveaway: (id: string, body: unknown) =>
+		req<any>('POST', `/api/guilds/${id}/giveaways`, body),
+	updateGiveaway: (id: string, gwid: string, body: unknown) =>
+		req<any>('PATCH', `/api/guilds/${id}/giveaways/${gwid}`, body),
+	startGiveaway: (id: string, gwid: string, durationSeconds: number, startsInSeconds = 0) =>
+		req<any>('POST', `/api/guilds/${id}/giveaways/${gwid}/start`, {
+			duration_seconds: durationSeconds,
+			starts_in_seconds: startsInSeconds
+		}),
+	deleteGiveaway: (id: string, gwid: string) =>
+		req<{ ok: boolean }>('DELETE', `/api/guilds/${id}/giveaways/${gwid}`),
+	endGiveaway: (id: string, gwid: string) =>
+		req<{ ok: boolean }>('POST', `/api/guilds/${id}/giveaways/${gwid}/end`),
+	rerollGiveaway: (id: string, gwid: string, winners = 0) =>
+		req<{ ok: boolean; winners: string[] }>('POST', `/api/guilds/${id}/giveaways/${gwid}/reroll`, {
+			winners
+		}),
+	cancelGiveaway: (id: string, gwid: string) =>
+		req<{ ok: boolean }>('POST', `/api/guilds/${id}/giveaways/${gwid}/cancel`),
+
 	menus: (id: string) => req<{ menus: any[] }>('GET', `/api/guilds/${id}/reaction-roles`),
 	upsertMenu: (id: string, menu: unknown) =>
 		req<{ id?: number; ok?: boolean }>('PUT', `/api/guilds/${id}/reaction-roles`, menu),
@@ -258,6 +286,18 @@ export const api = {
 	// after the read-only grant-roles step.
 	saveAutoroleActions: (id: string, tail: unknown) =>
 		req<{ ok: boolean }>('POST', `/api/guilds/${id}/autorole/actions`, { tail }),
+	// saveGiveawayTail persists the canvas-authored follow-up flow for the
+	// giveaway feature's built-in "Draw giveaway winners" automation. The spine
+	// (the native draw + announce) is read-only, so like auto-roles only the
+	// post-draw tail saves; it runs on the giveaway_ended event.
+	saveGiveawayTail: (id: string, tail: unknown[]) =>
+		req<{ ok: boolean }>('POST', `/api/guilds/${id}/giveaway/actions`, { tail }),
+	// saveGiveawayEntryTail persists the canvas-authored follow-up flow for the
+	// giveaway feature's built-in "On giveaway entry" automation. The spine (Dia
+	// recording the entry + replying) is read-only, so like the draw flow only the
+	// post-entry tail saves; it runs on the giveaway_entered event.
+	saveGiveawayEntryTail: (id: string, tail: unknown[]) =>
+		req<{ ok: boolean }>('POST', `/api/guilds/${id}/giveaway/entry-actions`, { tail }),
 	// saveMenuTail persists the canvas-authored follow-up flow for one
 	// reaction-role menu. Like auto-roles the spine (the role-apply step) is
 	// read-only and there are no click actions, so only the post-pick tail saves.
@@ -270,11 +310,20 @@ export const api = {
 		req<{ ok: boolean }>('POST', `/api/guilds/${id}/automod/rules/${ruleId}/actions`, { tail }),
 	levelingVariables: (id: string) =>
 		req<{ variables: { token: string; desc: string }[] }>('GET', `/api/guilds/${id}/leveling/variables`),
-	// templatingPreview renders one template string and returns the text + any error.
-	templatingPreview: (id: string, template: string, extraVars?: Record<string, string>) =>
+	// templatingPreview renders one template string and returns the text + any
+	// error. Pass `sample` to render against a feature data map via the card
+	// engine (e.g. giveaway strings that use {{ .Prize }}); otherwise the default
+	// slash/message scope is used.
+	templatingPreview: (
+		id: string,
+		template: string,
+		extraVars?: Record<string, string>,
+		sample?: Record<string, unknown>
+	) =>
 		req<{ rendered: string; error: string }>('POST', `/api/guilds/${id}/templating/preview`, {
 			template,
-			extra_vars: extraVars
+			extra_vars: extraVars,
+			sample
 		})
 };
 

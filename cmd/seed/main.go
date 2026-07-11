@@ -40,6 +40,7 @@ import (
 
 	"github.com/dia-bot/dia/internal/features/automations"
 	"github.com/dia-bot/dia/internal/features/customcommands"
+	"github.com/dia-bot/dia/internal/features/giveaway"
 	"github.com/dia-bot/dia/internal/features/leveling"
 	"github.com/dia-bot/dia/internal/features/moderation"
 	"github.com/dia-bot/dia/internal/features/roles"
@@ -127,7 +128,7 @@ func run(ctx context.Context, st *store.Store) error {
 	fmt.Println("seed complete")
 	fmt.Printf("  primary guild : %d (Dia Dev Server)\n", primary)
 	fmt.Printf("  extra guilds  : %d, %d\n", auroraGuild, nebulaGuild)
-	fmt.Println("  features      : welcome, leveling, autorole, moderation, automod, customcommands, automations (enabled)")
+	fmt.Println("  features      : welcome, leveling, autorole, moderation, automod, customcommands, automations, giveaway (enabled)")
 	fmt.Printf("  leaderboard   : %d members; rewards at level 5 and 10\n", len(levelFixtures))
 	fmt.Println("  moderation    : warn + timeout + ban cases")
 	fmt.Println("  automod       : starter ruleset + blocked-words rule; escalation ladder; demo infractions")
@@ -219,6 +220,13 @@ func seedFeatures(ctx context.Context, st *store.Store, guildID int64) error {
 	tk.LogChannel = sid(logChannel)
 	tk.TranscriptChannel = sid(logChannel)
 
+	giv := giveaway.Default()
+	// Pre-fill the built-in preset's default channel so seeded giveaways post
+	// somewhere sensible out of the box.
+	if len(giv.Presets) > 0 {
+		giv.Presets[0].DefaultChannelID = sid(welcomeChannel)
+	}
+
 	configs := []struct {
 		key string
 		val any
@@ -231,6 +239,7 @@ func seedFeatures(ctx context.Context, st *store.Store, guildID int64) error {
 		{customcommands.FeatureKey, cc},
 		{automations.FeatureKey, auto},
 		{tickets.FeatureKey, tk},
+		{giveaway.FeatureKey, giv},
 	}
 	for _, c := range configs {
 		raw, err := json.Marshal(c.val)

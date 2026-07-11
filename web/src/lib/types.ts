@@ -46,11 +46,20 @@ export interface FeatureState {
 	config: Record<string, unknown>;
 }
 
+// GuildAccess is the current user's access to this guild's dashboard: admins
+// manage everything; otherwise `features` lists the delegated feature keys their
+// roles grant (e.g. { giveaway: true }).
+export interface GuildAccess {
+	admin: boolean;
+	features: Record<string, boolean>;
+}
+
 export interface GuildDetail {
 	guild: GuildMeta;
 	channels: Channel[];
 	roles: Role[];
 	features: Record<string, FeatureState>;
+	access: GuildAccess;
 }
 
 export interface Background {

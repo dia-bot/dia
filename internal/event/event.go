@@ -74,6 +74,21 @@ const (
 	TypeTicketClaimed Type = "TICKET_CLAIMED"
 	TypeTicketClosed  Type = "TICKET_CLOSED"
 	TypeTicketRated   Type = "TICKET_RATED"
+
+	// TypeGiveawayEnded is NOT a gateway event: the giveaway feature publishes it
+	// on the same stream when a giveaway is drawn (natural end, manual end, or
+	// reroll), so the automations runtime can trigger flows off giveaway results
+	// (announce winners elsewhere, grant a role to each winner, log the draw).
+	// Like TypeAutomodAction it has no gateway/Elixir mapper.
+	TypeGiveawayEnded Type = "GIVEAWAY_ENDED"
+
+	// TypeGiveawayEntered is NOT a gateway event: the giveaway feature publishes
+	// it on the same stream whenever a member clicks a giveaway's Enter button and
+	// the outcome is decided (entered, left, denied, or blocked), so the
+	// automations runtime can trigger the built-in "on entry" flow (reward a role
+	// on entry, log denials, DM a confirmation) branching on .Event.outcome. Like
+	// TypeAutomodAction it has no gateway/Elixir mapper.
+	TypeGiveawayEntered Type = "GIVEAWAY_ENTERED"
 )
 
 // SubjectPrefix is the JetStream subject root for forwarded gateway events.
@@ -373,6 +388,50 @@ type TicketEvent struct {
 	ClosedBy      string  `json:"closed_by,omitempty"`  // set on TICKET_CLOSED
 	Reason        string  `json:"reason,omitempty"`     // close reason
 	Rating        int     `json:"rating,omitempty"`     // set on TICKET_RATED (1..5)
+}
+
+// GiveawayEnded is published by the giveaway feature (not the gateway) when a
+// giveaway is drawn, on subject discord.events.GIVEAWAY_ENDED.<guild>. The
+// automations runtime consumes it as the "giveaway_ended" trigger, exposing
+// these fields to flows as .Event.* alongside the (first) winner as .User /
+// .Member. A giveaway that ended with no eligible entrants still publishes, with
+// empty Winners and WinnerCount 0.
+type GiveawayEnded struct {
+	GuildID     string   `json:"guild_id"`
+	GiveawayID  string   `json:"giveaway_id"`
+	ChannelID   string   `json:"channel_id,omitempty"` // where the giveaway lives
+	MessageID   string   `json:"message_id,omitempty"`
+	Prize       string   `json:"prize"`
+	HostID      string   `json:"host_id,omitempty"`
+	WinnerCount int      `json:"winner_count"`     // number of winners actually drawn
+	WinnerIDs   []string `json:"winner_ids"`       // decimal snowflakes of the winners
+	EntryCount  int      `json:"entry_count"`      // distinct entrants
+	Rerolled    bool     `json:"rerolled"`         // true when this draw was a reroll
+	User        User     `json:"user"`             // the first winner (zero value if none)
+	Member      *Member  `json:"member,omitempty"` // first winner's member, when available
+}
+
+// GiveawayEntered is published by the giveaway feature (not the gateway) when a
+// member clicks a giveaway's Enter button and the outcome is decided, on subject
+// discord.events.GIVEAWAY_ENTERED.<guild>. The automations runtime consumes it
+// as the "giveaway_entry" trigger, exposing these fields as .Event.* alongside
+// the clicking member as .User / .Member. Outcome is one of "entered", "left",
+// "denied" (failed a requirement) or "blocked" (a bot). Entries is the member's
+// weighted ticket count on a successful entry (0 otherwise); Reason carries the
+// denial explanation for outcome=="denied".
+type GiveawayEntered struct {
+	GuildID    string  `json:"guild_id"`
+	GiveawayID string  `json:"giveaway_id"`
+	ChannelID  string  `json:"channel_id,omitempty"`
+	MessageID  string  `json:"message_id,omitempty"`
+	Prize      string  `json:"prize"`
+	HostID     string  `json:"host_id,omitempty"`
+	Outcome    string  `json:"outcome"`          // entered | left | denied | blocked
+	Entries    int     `json:"entries"`          // weighted tickets on a successful entry
+	Reason     string  `json:"reason,omitempty"` // denial reason (outcome=="denied")
+	EntryCount int     `json:"entry_count"`      // distinct entrants after this click
+	User       User    `json:"user"`             // the member who clicked Enter
+	Member     *Member `json:"member,omitempty"`
 }
 
 // VoiceState is delivered on VOICE_STATE_UPDATE. ChannelID == "" means the
