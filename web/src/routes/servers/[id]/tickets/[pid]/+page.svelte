@@ -9,12 +9,15 @@
 		normalizePanelConfig,
 		newCategory,
 		TICKET_TEMPLATE_VARS,
-		type PanelConfig
+		type PanelConfig,
+		type CategoryConfig,
+		type TicketComponent
 	} from '$lib/tickets/types';
 	import type { Step } from '$lib/commands/types';
 	import { AUTOMATION_CTX, EXPR_SCOPE_CTX, type ExprScope } from '$lib/commands/expr-meta';
 	import MessageEditor from '$lib/components/commands/MessageEditor.svelte';
-	import CategoryEditor from '$lib/components/tickets/CategoryEditor.svelte';
+	import AutomationPicker from '$lib/components/commands/AutomationPicker.svelte';
+	import TicketTypeModal from '$lib/components/tickets/TicketTypeModal.svelte';
 	import ModSection from '$lib/components/moderation/ModSection.svelte';
 	import Field from '$lib/components/Field.svelte';
 	import Select from '$lib/components/Select.svelte';
@@ -22,7 +25,7 @@
 	import ChannelSelect from '$lib/components/ChannelSelect.svelte';
 	import TemplateGuide from '$lib/components/commands/TemplateGuide.svelte';
 	import ReleaseDock from '$lib/components/page/ReleaseDock.svelte';
-	import { ChevronLeft, Ticket, Plus, Trash2, Send, Save, BookOpen, ExternalLink } from 'lucide-svelte';
+	import { ChevronLeft, Ticket, Plus, Trash2, Send, Save, BookOpen, ExternalLink, Pencil } from 'lucide-svelte';
 
 	const store = getContext<GuildStore>(GUILD_CTX);
 
@@ -52,15 +55,18 @@
 	let channelId = $state(''); // where the panel is (or will be) posted
 	let messageId = $state('');
 
-	// The panel message (content + embeds) edited with the shared WYSIWYG editor.
-	let msgStep = $state<Step>({ id: 'panel-msg', kind: 'send_message', spec: { content: '', embeds: [] } });
+	// The panel message (content + embeds + its own buttons) edited with the
+	// shared WYSIWYG editor. Composed buttons are wired inline in the preview:
+	// open a ticket type, run an automation, or nothing.
+	let msgStep = $state<Step>({ id: 'panel-msg', kind: 'send_message', spec: { content: '', embeds: [], components: [] } });
 	function seedStep() {
 		msgStep = {
 			id: 'panel-msg',
 			kind: 'send_message',
 			spec: {
 				content: config.content ?? '',
-				embeds: JSON.parse(JSON.stringify(config.embeds ?? []))
+				embeds: JSON.parse(JSON.stringify(config.embeds ?? [])),
+				components: JSON.parse(JSON.stringify(config.components ?? []))
 			}
 		};
 	}
@@ -69,7 +75,69 @@
 		const s = msgStep.spec as any;
 		config.content = s.content ?? '';
 		config.embeds = s.embeds ?? [];
+		config.components = s.components ?? [];
 	});
+
+	// A panel button's action mode: open a ticket type, run an automation, or
+	// nothing (mirrors the giveaway editor's inline picker).
+	function panelButtonMode(suffix: string): 'open' | 'auto' | 'none' {
+		if (config.button_bindings[suffix]) return 'open';
+		if (suffix in config.button_actions) return 'auto';
+		return 'none';
+	}
+	function setPanelButtonMode(suffix: string, mode: 'open' | 'auto' | 'none') {
+		if (mode === 'open') {
+			if (!config.button_bindings[suffix]) config.button_bindings[suffix] = config.categories[0]?.id ?? '';
+			delete config.button_actions[suffix];
+			config.button_actions = { ...config.button_actions };
+		} else {
+			delete config.button_bindings[suffix];
+			config.button_bindings = { ...config.button_bindings };
+			if (mode === 'auto') {
+				if (!(suffix in config.button_actions)) config.button_actions[suffix] = '';
+			} else {
+				delete config.button_actions[suffix];
+				config.button_actions = { ...config.button_actions };
+			}
+		}
+	}
+	const typeOptions = $derived(
+		config.categories.map((c) => ({ value: c.id, label: `${c.emoji ?? ''} ${c.label || 'Untitled'}`.trim() }))
+	);
+	// The composed actionable buttons on the panel (link buttons excluded).
+	const panelButtons = $derived(
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		((((msgStep.spec as any)?.components ?? []) as { components?: TicketComponent[] }[])
+			.flatMap((r) => r.components ?? [])
+			.filter((c) => (c.type ?? 'button') === 'button' && c.style !== 'link' && !c.url && !!c.custom_id_suffix)
+			.map((c) => c.custom_id_suffix as string))
+	);
+	// With the buttons layout, composed buttons REPLACE the generated ones — warn
+	// when none of them opens an existing ticket type.
+	const panelMissingOpen = $derived(
+		style === 'buttons' &&
+			panelButtons.length > 0 &&
+			!panelButtons.some((s) => {
+				const cid = config.button_bindings[s];
+				return !!cid && config.categories.some((c) => c.id === cid);
+			})
+	);
+
+	// ── Ticket-type modal ──────────────────────────────────────────────────────
+	let typeModalOpen = $state(false);
+	let editingType = $state<CategoryConfig | null>(null);
+	function openType(cat: CategoryConfig) {
+		editingType = cat;
+		typeModalOpen = true;
+	}
+	function removeEditingType() {
+		if (!editingType) return;
+		if (!confirm(`Delete the "${editingType.label || 'untitled'}" ticket type?`)) return;
+		const id = editingType.id;
+		typeModalOpen = false;
+		editingType = null;
+		config.categories = config.categories.filter((c) => c.id !== id);
+	}
 
 	async function load() {
 		loadError = '';
@@ -151,6 +219,7 @@
 	function addCategory() {
 		if (config.categories.length >= 25) return;
 		config.categories = [...config.categories, newCategory('New ticket type')];
+		openType(config.categories[config.categories.length - 1]);
 	}
 	function removeCategory(i: number) {
 		config.categories = config.categories.filter((_, idx) => idx !== i);
@@ -209,6 +278,61 @@
 <svelte:head>
 	<title>{title} · Tickets · Dia</title>
 </svelte:head>
+
+<!-- Per-button action picker, rendered inline inside each panel button in the
+     message preview (MessageEditor buttonExtras). Edit the button's LOOK in
+     the preview; set what it DOES here: open a ticket type, run one of your
+     automations, or nothing. -->
+{#snippet panelButtonAction({ component }: { component: TicketComponent; ri: number; ci: number })}
+	{@const suffix = component.custom_id_suffix}
+	{#if suffix && component.style !== 'link' && !component.url}
+		{@const mode = panelButtonMode(suffix)}
+		<div class="mt-2 space-y-1.5">
+			<span class="font-mono text-[9.5px] font-medium uppercase tracking-[0.14em] text-muted-foreground">Action</span>
+			<div class="flex rounded-md border border-input p-0.5" role="radiogroup" aria-label="Button action">
+				<button
+					type="button"
+					role="radio"
+					aria-checked={mode === 'open'}
+					class="flex-1 rounded px-2 py-0.5 text-[10px] font-medium transition-colors {mode === 'open' ? 'bg-secondary text-foreground' : 'text-muted-foreground hover:text-foreground'}"
+					onclick={() => setPanelButtonMode(suffix, 'open')}
+				>
+					Open ticket
+				</button>
+				<button
+					type="button"
+					role="radio"
+					aria-checked={mode === 'auto'}
+					class="flex-1 rounded px-2 py-0.5 text-[10px] font-medium transition-colors {mode === 'auto' ? 'bg-secondary text-foreground' : 'text-muted-foreground hover:text-foreground'}"
+					onclick={() => setPanelButtonMode(suffix, 'auto')}
+				>
+					Run automation
+				</button>
+				<button
+					type="button"
+					role="radio"
+					aria-checked={mode === 'none'}
+					class="flex-1 rounded px-2 py-0.5 text-[10px] font-medium transition-colors {mode === 'none' ? 'bg-secondary text-foreground' : 'text-muted-foreground hover:text-foreground'}"
+					onclick={() => setPanelButtonMode(suffix, 'none')}
+				>
+					Nothing
+				</button>
+			</div>
+			{#if mode === 'open'}
+				{#if typeOptions.length === 0}
+					<p class="text-[10px] leading-snug text-muted-foreground">No ticket types yet — add one below first.</p>
+				{:else}
+					<Select bind:value={config.button_bindings[suffix]} options={typeOptions} />
+				{/if}
+			{:else if mode === 'auto'}
+				<AutomationPicker
+					value={config.button_actions[suffix] ?? ''}
+					onChange={(v) => (config.button_actions[suffix] = v)}
+				/>
+			{/if}
+		</div>
+	{/if}
+{/snippet}
 
 <div class="flex h-full flex-col bg-bg text-ink">
 	<!-- ── Header (matches the giveaway editor chrome) ─────────────────────────── -->
@@ -273,7 +397,7 @@
 			<div class="pb-24">
 				<ModSection
 					label="Panel message"
-					desc="The message members see in your channel. Compose it right here — content and as many embeds as you like. The open buttons (or dropdown) underneath come from your ticket types."
+					desc="The message members see in your channel. Compose it right here — content, embeds and buttons. Click a button to set what it does: open a ticket type, run one of your automations, or open a link. Compose no buttons and the classic per-type buttons (or dropdown) are generated for you."
 				>
 					<div class="max-w-2xl">
 						<div class="mb-2 flex flex-wrap items-center gap-2">
@@ -290,7 +414,14 @@
 								<BookOpen size={10} /> Template guide
 							</button>
 						</div>
-						<MessageEditor step={msgStep} embeds clickPaths={false} />
+						{#if panelMissingOpen}
+							<div class="mb-2 rounded-md border border-accent/40 bg-accent/5 px-2.5 py-1.5 text-[12px] text-accent-ink">
+								Your composed buttons replace the generated ones, but none of them opens a ticket.
+								Set a button's action to <span class="font-medium">Open ticket</span>, or members won't
+								be able to open one from this panel.
+							</div>
+						{/if}
+						<MessageEditor step={msgStep} embeds components clickPaths={false} buttonExtras={panelButtonAction} />
 					</div>
 				</ModSection>
 
@@ -328,7 +459,7 @@
 
 				<ModSection
 					label="Ticket types"
-					desc="Each type is its own button (or dropdown option) with its own private-channel permissions, opening message, pre-open form, transcript, feedback, auto-close and automations."
+					desc="Each type is its own button (or dropdown option) with its own private-channel permissions, opening message, pre-open form, transcript, feedback, auto-close and automations. Click one to edit everything about it."
 				>
 					{#snippet actions()}
 						<button
@@ -340,12 +471,42 @@
 							<Plus size={13} /> Add ticket type
 						</button>
 					{/snippet}
-					<div class="space-y-3">
+					<div class="divide-y divide-line">
 						{#each config.categories as cat, i (cat.id)}
-							<CategoryEditor category={cat} guildId={store.id} index={i} onRemove={() => removeCategory(i)} />
+							<div class="flex items-center gap-3 px-1 py-2.5">
+								<button type="button" class="flex min-w-0 flex-1 items-center gap-3 text-left" onclick={() => openType(cat)}>
+									<span class="text-lg leading-none">{cat.emoji || '🎫'}</span>
+									<span class="min-w-0">
+										<span class="block truncate text-[13px] font-semibold text-ink">{cat.label || 'Untitled ticket type'}</span>
+										<span class="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-muted">
+											<span>{cat.open_mode === 'thread' ? 'private thread' : 'private channel'}</span>
+											{#if (cat.form?.length ?? 0) > 0}<span>{cat.form?.length} form question{(cat.form?.length ?? 0) === 1 ? '' : 's'}</span>{/if}
+											{#if cat.claim_enabled}<span>claiming</span>{/if}
+											{#if cat.transcript.enabled}<span>transcript</span>{/if}
+											{#if cat.feedback.enabled}<span>feedback</span>{/if}
+											{#if cat.auto_close.enabled}<span>auto-close</span>{/if}
+										</span>
+									</span>
+								</button>
+								<button
+									type="button"
+									class="inline-flex h-7 items-center gap-1 rounded-md border border-line px-2.5 text-[12px] font-medium text-ink hover:border-line-strong"
+									onclick={() => openType(cat)}
+								>
+									<Pencil size={12} /> Edit
+								</button>
+								<button
+									type="button"
+									class="grid size-7 shrink-0 place-items-center rounded-md border border-line text-muted hover:border-line-strong hover:text-danger"
+									aria-label="Delete ticket type"
+									onclick={() => removeCategory(i)}
+								>
+									<Trash2 size={13} />
+								</button>
+							</div>
 						{/each}
 						{#if config.categories.length === 0}
-							<p class="text-sm text-muted">Add at least one ticket type so members have something to open.</p>
+							<p class="py-3 text-sm text-muted">Add at least one ticket type so members have something to open.</p>
 						{/if}
 					</div>
 				</ModSection>
@@ -357,3 +518,4 @@
 <svelte:window onkeydown={onKeydown} />
 <ReleaseDock {dirty} phase={savePhase} error={loadError} onsave={saveChanges} onreset={discardChanges} />
 <TemplateGuide bind:open={showGuide} variables={TICKET_TEMPLATE_VARS} variablesLabel="Ticket variables" lookups={false} />
+<TicketTypeModal bind:open={typeModalOpen} category={editingType} guildId={store.id} onRemove={removeEditingType} />

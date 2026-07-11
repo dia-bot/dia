@@ -77,6 +77,11 @@ export interface MessageSpec {
 	embeds?: TicketEmbed[];
 	components?: TicketComponentRow[];
 	button_actions?: Record<string, string>;
+	// button_bindings maps a composed button's custom_id_suffix to the SYSTEM
+	// action it performs on this surface (welcome: claim/close; closed:
+	// reopen/delete/transcript; close request: accept/deny). A binding wins over
+	// button_actions for the same suffix.
+	button_bindings?: Record<string, string>;
 	// Legacy (read-only): pre-rework panels stored a single embed.
 	use_embed?: boolean;
 	embed?: TicketEmbed;
@@ -160,6 +165,14 @@ export interface PanelConfig {
 	embeds?: TicketEmbed[];
 	select_placeholder?: string;
 	categories: CategoryConfig[];
+	// User-composed panel button rows: a button either opens the ticket type
+	// button_bindings maps its suffix to, runs the automation button_actions
+	// maps it to, or opens a link. With none composed the classic generated
+	// per-type buttons (or dropdown) are used. Always present after
+	// normalizePanelConfig / defaultPanelConfig so the editor can bind into them.
+	components: TicketComponentRow[];
+	button_bindings: Record<string, string>; // suffix → category id
+	button_actions: Record<string, string>; // suffix → automation id
 	// Legacy (read-only): pre-rework panels stored a single embed.
 	embed?: TicketEmbed;
 }
@@ -182,7 +195,7 @@ function shortId(): string {
 }
 
 export function emptyMessageSpec(): MessageSpec {
-	return { content: '', embeds: [], components: [], button_actions: {} };
+	return { content: '', embeds: [], components: [], button_actions: {}, button_bindings: {} };
 }
 
 export function emptySystemButton(): SystemButton {
@@ -208,7 +221,8 @@ export function normalizeMessageSpec(m: Partial<MessageSpec> | undefined): Messa
 		components: (m?.components ?? []).map((r) => ({
 			components: (r.components ?? []).map((c) => ({ ...c }))
 		})),
-		button_actions: { ...(m?.button_actions ?? {}) }
+		button_actions: { ...(m?.button_actions ?? {}) },
+		button_bindings: { ...(m?.button_bindings ?? {}) }
 	};
 	if (spec.embeds!.length === 0 && m?.use_embed && m.embed && Object.keys(m.embed).length > 0) {
 		spec.embeds = [{ ...m.embed }];
@@ -243,8 +257,19 @@ export function newCategory(label = 'Support'): CategoryConfig {
 					color: '#ff6363'
 				}
 			],
-			components: [],
-			button_actions: {}
+			// Real, visible Claim/Close buttons in the composition (edited in the
+			// preview like any other button); button_bindings routes their clicks
+			// to the native handlers. Mirrors Go DefaultCategory.
+			components: [
+				{
+					components: [
+						{ type: 'button', style: 'success', label: 'Claim', emoji: '🙋', custom_id_suffix: 'claim' },
+						{ type: 'button', style: 'danger', label: 'Close', emoji: '🔒', custom_id_suffix: 'close' }
+					]
+				}
+			],
+			button_actions: {},
+			button_bindings: { claim: 'claim', close: 'close' }
 		},
 		closed: emptyMessageSpec(),
 		close_request: emptyMessageSpec(),
@@ -280,7 +305,10 @@ export function defaultPanelConfig(): PanelConfig {
 			}
 		],
 		select_placeholder: 'Choose a ticket type',
-		categories: [newCategory('General support')]
+		categories: [newCategory('General support')],
+		components: [],
+		button_bindings: {},
+		button_actions: {}
 	};
 }
 
@@ -335,7 +363,12 @@ export function normalizePanelConfig(pc: Partial<PanelConfig> | undefined): Pane
 		content: pc?.content ?? '',
 		embeds,
 		select_placeholder: pc?.select_placeholder ?? d.select_placeholder,
-		categories: (pc?.categories ?? []).map(normalizeCategory)
+		categories: (pc?.categories ?? []).map(normalizeCategory),
+		components: (pc?.components ?? []).map((r) => ({
+			components: (r.components ?? []).map((c) => ({ ...c }))
+		})),
+		button_bindings: { ...(pc?.button_bindings ?? {}) },
+		button_actions: { ...(pc?.button_actions ?? {}) }
 	};
 }
 
