@@ -216,12 +216,23 @@ func renderSpec(spec MessageSpec, sc scope, fallbackColor int) (string, []*disco
 	return content, embeds
 }
 
+// specRoute describes where a bound composed button routes on the current
+// render. Label, when set, overrides the composed label (the claim button
+// reads "Unclaim" while the ticket is claimed).
+type specRoute struct {
+	ID    string
+	Label string
+}
+
 // renderSpecRows renders a spec's composed button rows with each click routed:
-// a link button opens its (templated) URL; any other button gets a
-// tkt:act:<ticketID>:<suffix> custom_id so its click runs the saved automation
-// ButtonActions points it at (or is acknowledged silently when unwired). Only
-// buttons are meaningful on a ticket surface; selects are skipped.
-func renderSpecRows(spec MessageSpec, sc scope, ticketID string) []discordgo.MessageComponent {
+// a button whose suffix is in ButtonBindings goes to the system action routes
+// maps it to (a binding with no route this render — claiming disabled, say —
+// drops the button); a link button opens its (templated) URL; any other button
+// gets a tkt:act:<ticketID>:<suffix> custom_id so its click runs the saved
+// automation ButtonActions points it at (or is acknowledged silently when
+// unwired). Only buttons are meaningful on a ticket surface; selects are
+// skipped.
+func renderSpecRows(spec MessageSpec, sc scope, ticketID string, routes map[string]specRoute) []discordgo.MessageComponent {
 	var out []discordgo.MessageComponent
 	for _, row := range spec.Components {
 		var comps []discordgo.MessageComponent
@@ -233,6 +244,24 @@ func renderSpecRows(spec MessageSpec, sc scope, ticketID string) []discordgo.Mes
 			if label == "" {
 				label = "Button"
 			}
+
+			// System binding (claim/close/reopen/…): route to the native handler.
+			if action := spec.ButtonBindings[c.CustomIDSuffix]; action != "" && c.CustomIDSuffix != "" {
+				route, ok := routes[action]
+				if !ok || route.ID == "" {
+					continue // action unavailable on this render
+				}
+				if route.Label != "" {
+					label = route.Label
+				}
+				btn := discordgo.Button{Label: label, Style: buttonStyle(c.Style), CustomID: route.ID, Disabled: c.Disabled}
+				if em := ticketEmoji(c.Emoji); em != nil {
+					btn.Emoji = em
+				}
+				comps = append(comps, btn)
+				continue
+			}
+
 			if strings.EqualFold(c.Style, "link") || c.URL != "" {
 				url := render(c.URL, sc)
 				if url == "" {

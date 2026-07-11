@@ -36,6 +36,12 @@ func actionButtonID(ticketID, suffix string) string {
 	return componentPrefix + "act:" + ticketID + ":" + suffix
 }
 
+// panelActionID routes a composed panel button that is wired to an automation
+// (rather than opening a ticket): tkt:pact:<panelID>:<suffix>.
+func panelActionID(panelID, suffix string) string {
+	return componentPrefix + "pact:" + panelID + ":" + suffix
+}
+
 // Rating select, DMed to the opener on close. The guild id is embedded because a
 // DM interaction carries no guild (mirrors welcome's welcome:dm:* scheme).
 func rateSelectID(guildID, ticketID string) string {

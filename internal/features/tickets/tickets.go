@@ -121,6 +121,11 @@ func (p *Plugin) handleComponent(c *interactions.Context, d plugin.Deps) error {
 			return c.DeferUpdate()
 		}
 		return p.handleActionButton(c, d, args[0], args[1])
+	case "pact":
+		if len(args) < 2 {
+			return c.DeferUpdate()
+		}
+		return p.handlePanelAction(c, d, args[0], args[1])
 	case "transcript":
 		return p.handleTranscriptButton(c, d, arg0(args))
 	case "rate":

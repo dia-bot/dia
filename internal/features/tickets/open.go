@@ -310,28 +310,43 @@ func (p *Plugin) buildOpening(cfg Config, cat CategoryConfig, tv ticketView, ope
 		content = "Ticket #" + strconv.Itoa(tv.number)
 	}
 
-	// Composed rows first (capped so the system row always fits), system row last.
-	rows := renderSpecRows(cat.Welcome, sc, tv.id)
-	if len(rows) > 4 {
-		rows = rows[:4]
-	}
-	var row discordgo.ActionsRow
+	// Composed rows carry the controls: buttons bound to claim/close route to
+	// the native handlers (the claim binding flips to Unclaim while claimed and
+	// disappears when claiming is off). Only when nothing composed survives the
+	// render does the classic system row stand in, so a ticket always has its
+	// controls.
+	routes := map[string]specRoute{"close": {ID: closeButtonID(tv.id)}}
 	if cat.ClaimEnabled {
 		if tv.claimerID == "" {
-			row.Components = append(row.Components,
-				systemButton(cat.Buttons.Claim, "Claim", "🙋", discordgo.SuccessButton, claimButtonID(tv.id)))
+			routes["claim"] = specRoute{ID: claimButtonID(tv.id)}
 		} else {
-			row.Components = append(row.Components,
-				systemButton(SystemButton{}, "Unclaim", "", discordgo.SecondaryButton, unclaimButtonID(tv.id)))
+			routes["claim"] = specRoute{ID: unclaimButtonID(tv.id), Label: "Unclaim"}
 		}
 	}
-	row.Components = append(row.Components,
-		systemButton(cat.Buttons.Close, "Close", "🔒", discordgo.DangerButton, closeButtonID(tv.id)))
+	rows := renderSpecRows(cat.Welcome, sc, tv.id, routes)
+	if len(rows) > 5 {
+		rows = rows[:5]
+	}
+	if len(rows) == 0 {
+		var row discordgo.ActionsRow
+		if cat.ClaimEnabled {
+			if tv.claimerID == "" {
+				row.Components = append(row.Components,
+					systemButton(cat.Buttons.Claim, "Claim", "🙋", discordgo.SuccessButton, claimButtonID(tv.id)))
+			} else {
+				row.Components = append(row.Components,
+					systemButton(SystemButton{}, "Unclaim", "", discordgo.SecondaryButton, unclaimButtonID(tv.id)))
+			}
+		}
+		row.Components = append(row.Components,
+			systemButton(cat.Buttons.Close, "Close", "🔒", discordgo.DangerButton, closeButtonID(tv.id)))
+		rows = []discordgo.MessageComponent{row}
+	}
 
 	return openingParts{
 		content:    content,
 		embeds:     embeds,
-		components: append(rows, row),
+		components: rows,
 		allowed:    am,
 	}
 }

@@ -3,6 +3,7 @@ package tickets
 import (
 	"context"
 	"errors"
+	"strings"
 
 	"github.com/dia-bot/dia/internal/discord"
 	"github.com/dia-bot/dia/internal/event"
@@ -45,14 +46,25 @@ func buildPanelMessage(panel store.TicketPanel, pc PanelConfig, guildID, guildNa
 	return send
 }
 
-// panelComponents renders a panel's open controls.
+// panelComponents renders a panel's open controls. User-composed components
+// (edited in the dashboard preview like a giveaway's) take precedence: each
+// composed button routes by its wiring — ButtonBindings opens a category,
+// ButtonActions runs a saved automation, a link opens its URL. The classic
+// generated controls are used when nothing is composed; with the "select"
+// style the dropdown always leads and composed rows follow it.
 func panelComponents(panel store.TicketPanel, pc PanelConfig, sc scope) []discordgo.MessageComponent {
+	composed := composedPanelRows(panel, pc, sc)
+
 	cats := pc.Categories
 	if len(cats) > maxCategories {
 		cats = cats[:maxCategories]
 	}
 	if len(cats) == 0 {
-		return nil
+		return composed
+	}
+
+	if panel.Style != "select" && len(composed) > 0 {
+		return composed
 	}
 
 	if panel.Style == "select" {
@@ -76,7 +88,12 @@ func panelComponents(panel store.TicketPanel, pc PanelConfig, sc scope) []discor
 			}
 			sel.Options = append(sel.Options, opt)
 		}
-		return []discordgo.MessageComponent{discordgo.ActionsRow{Components: []discordgo.MessageComponent{sel}}}
+		rows := []discordgo.MessageComponent{discordgo.ActionsRow{Components: []discordgo.MessageComponent{sel}}}
+		rows = append(rows, composed...)
+		if len(rows) > 5 {
+			rows = rows[:5]
+		}
+		return rows
 	}
 
 	// Buttons: up to 5 per row.
@@ -99,6 +116,62 @@ func panelComponents(panel store.TicketPanel, pc PanelConfig, sc scope) []discor
 	}
 	if len(row.Components) > 0 {
 		out = append(out, row)
+	}
+	return out
+}
+
+// composedPanelRows renders the panel's user-composed button rows, routing each
+// button: bound to a category → the open handler (dropped when the category no
+// longer exists); a link → its (templated) URL; anything else → the panel
+// action handler, which runs the saved automation ButtonActions maps it to (or
+// acknowledges silently when unwired).
+func composedPanelRows(panel store.TicketPanel, pc PanelConfig, sc scope) []discordgo.MessageComponent {
+	var out []discordgo.MessageComponent
+	for _, row := range pc.Components {
+		var comps []discordgo.MessageComponent
+		for _, c := range row.Components {
+			if c.Type != "" && c.Type != "button" {
+				continue
+			}
+			label := render(c.Label, sc)
+			if label == "" {
+				label = "Button"
+			}
+			if catID := pc.ButtonBindings[c.CustomIDSuffix]; catID != "" && c.CustomIDSuffix != "" {
+				if _, ok := pc.Category(catID); !ok {
+					continue // the bound ticket type was deleted
+				}
+				btn := discordgo.Button{Label: label, Style: buttonStyle(c.Style), CustomID: openButtonID(panel.ID, catID), Disabled: c.Disabled}
+				if em := ticketEmoji(c.Emoji); em != nil {
+					btn.Emoji = em
+				}
+				comps = append(comps, btn)
+				continue
+			}
+			if strings.EqualFold(c.Style, "link") || c.URL != "" {
+				url := render(c.URL, sc)
+				if url == "" {
+					continue
+				}
+				btn := discordgo.Button{Label: label, Style: discordgo.LinkButton, URL: url, Disabled: c.Disabled}
+				if em := ticketEmoji(c.Emoji); em != nil {
+					btn.Emoji = em
+				}
+				comps = append(comps, btn)
+				continue
+			}
+			btn := discordgo.Button{Label: label, Style: buttonStyle(c.Style), CustomID: panelActionID(panel.ID, c.CustomIDSuffix), Disabled: c.Disabled}
+			if em := ticketEmoji(c.Emoji); em != nil {
+				btn.Emoji = em
+			}
+			comps = append(comps, btn)
+		}
+		if len(comps) > 0 {
+			out = append(out, discordgo.ActionsRow{Components: comps})
+		}
+	}
+	if len(out) > 5 {
+		out = out[:5]
 	}
 	return out
 }

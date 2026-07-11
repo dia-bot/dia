@@ -47,10 +47,14 @@ func (p *Plugin) handleCloseRequest(c *interactions.Context, d plugin.Deps, cfg 
 	var embeds []*discordgo.MessageEmbed
 	var rows []discordgo.MessageComponent
 	if !cat.CloseRequest.Empty() {
+		routes := map[string]specRoute{
+			"accept": {ID: closeReqAcceptID(t.ID)},
+			"deny":   {ID: closeReqDenyID(t.ID)},
+		}
 		content, embeds = renderSpec(cat.CloseRequest, sc, brandColor)
-		rows = renderSpecRows(cat.CloseRequest, sc, t.ID)
-		if len(rows) > 4 {
-			rows = rows[:4]
+		rows = renderSpecRows(cat.CloseRequest, sc, t.ID, routes)
+		if len(rows) > 5 {
+			rows = rows[:5]
 		}
 	}
 	if content == "" && len(embeds) == 0 {
@@ -71,10 +75,14 @@ func (p *Plugin) handleCloseRequest(c *interactions.Context, d plugin.Deps, cfg 
 		content = openerMention + "\n" + content
 	}
 
-	rows = append(rows, discordgo.ActionsRow{Components: []discordgo.MessageComponent{
-		discordgo.Button{Style: discordgo.SuccessButton, Label: "Accept & close", CustomID: closeReqAcceptID(t.ID)},
-		discordgo.Button{Style: discordgo.SecondaryButton, Label: "Keep open", CustomID: closeReqDenyID(t.ID)},
-	}})
+	// The classic Accept / Keep-open row stands in only when the composition
+	// renders no buttons of its own (the opener must always be able to answer).
+	if len(rows) == 0 {
+		rows = append(rows, discordgo.ActionsRow{Components: []discordgo.MessageComponent{
+			discordgo.Button{Style: discordgo.SuccessButton, Label: "Accept & close", CustomID: closeReqAcceptID(t.ID)},
+			discordgo.Button{Style: discordgo.SecondaryButton, Label: "Keep open", CustomID: closeReqDenyID(t.ID)},
+		}})
+	}
 
 	_, sendErr := d.Discord.SendMessage(event.FormatID(t.ChannelID), &discordgo.MessageSend{
 		Content:         content,
@@ -169,7 +177,7 @@ func (p *Plugin) handleActionButton(c *interactions.Context, d plugin.Deps, tick
 	}
 	_, cat := p.resolveTicketConfig(c.Ctx, d, gid, t)
 	autoID := ""
-	for _, spec := range []MessageSpec{cat.Welcome, cat.Closed, cat.CloseRequest, cat.Feedback.Message} {
+	for _, spec := range []MessageSpec{cat.Welcome, cat.Closed, cat.CloseRequest, cat.Feedback.Message, cat.AutoClose.WarnMessage} {
 		if id := spec.ButtonActions[suffix]; id != "" {
 			autoID = id
 			break
@@ -184,6 +192,29 @@ func (p *Plugin) handleActionButton(c *interactions.Context, d plugin.Deps, tick
 	clicker := interactionUser(c)
 	gName := guildName(c.Ctx, d, gid)
 	p.runTicketAutomation(c.Ctx, d, gid, gName, autoID, "ticket_button", clicker, c.I.Member, t, cat, clicker.ID)
+	return nil
+}
+
+// handlePanelAction fires the saved automation a composed PANEL button points
+// at (tkt:pact:<panelID>:<suffix>) — a button on the panel that doesn't open a
+// ticket, e.g. "read the FAQ first" running a flow. No ticket exists yet, so
+// the event scope carries only the panel id; .User is the clicker.
+func (p *Plugin) handlePanelAction(c *interactions.Context, d plugin.Deps, panelID, suffix string) error {
+	gid, _ := event.ParseID(c.GuildID)
+	panel, err := d.Store.Tickets.GetPanel(c.Ctx, gid, panelID)
+	if err != nil {
+		return c.RespondEphemeral("This panel is no longer available.")
+	}
+	autoID := DecodePanel(panel.Config).ButtonActions[suffix]
+	if autoID == "" {
+		return c.DeferUpdate()
+	}
+	if err := c.DeferUpdate(); err != nil {
+		return err
+	}
+	clicker := interactionUser(c)
+	t := store.Ticket{GuildID: gid, PanelID: panel.ID}
+	p.runTicketAutomation(c.Ctx, d, gid, guildName(c.Ctx, d, gid), autoID, "ticket_panel_button", clicker, c.I.Member, t, CategoryConfig{}, clicker.ID)
 	return nil
 }
 

@@ -84,6 +84,19 @@ type PanelConfig struct {
 	Embeds            []cc.EmbedSpec   `json:"embeds,omitempty"`
 	SelectPlaceholder string           `json:"select_placeholder,omitempty"`
 	Categories        []CategoryConfig `json:"categories,omitempty"`
+
+	// Components are user-composed button rows for the panel (the same shape the
+	// shared MessageEditor produces). When present they replace the auto-generated
+	// per-category buttons ("buttons" style) or are appended after the select
+	// ("select" style), so the panel's buttons are edited in the preview exactly
+	// like a giveaway's. A button routes by what it's wired to: ButtonBindings
+	// maps its custom_id_suffix to the category it opens, ButtonActions maps it
+	// to a saved automation, a link button opens its URL, and an unwired button
+	// is acknowledged silently. With no composed components the classic generated
+	// controls are used, so a panel is always openable.
+	Components     []cc.ComponentRow `json:"components,omitempty"`
+	ButtonBindings map[string]string `json:"button_bindings,omitempty"` // suffix → category id
+	ButtonActions  map[string]string `json:"button_actions,omitempty"`  // suffix → automation id
 }
 
 // UnmarshalJSON folds the legacy single-embed shape ({"embed": {...}}) into
@@ -166,6 +179,13 @@ type MessageSpec struct {
 	// ButtonActions maps a composed button's custom_id_suffix to the saved
 	// automation it launches on click (mirrors giveaway Spec.ButtonActions).
 	ButtonActions map[string]string `json:"button_actions,omitempty"`
+	// ButtonBindings maps a composed button's custom_id_suffix to the SYSTEM
+	// action it performs on this surface (welcome: claim/close; closed:
+	// reopen/delete/transcript; close request: accept/deny), so the built-in
+	// controls are composed and edited in the preview like any other button. A
+	// binding wins over ButtonActions for the same suffix. When a surface
+	// composes no buttons at all, the classic system row is appended instead.
+	ButtonBindings map[string]string `json:"button_bindings,omitempty"`
 }
 
 // UnmarshalJSON also accepts the legacy single-embed shape
@@ -311,6 +331,14 @@ func DefaultCategory(id, label string) CategoryConfig {
 				Description: "Thanks for reaching out, {{ .User.Mention }}. Describe your issue and a staff member will help you soon.\n\nUse the buttons below to claim or close this ticket.",
 				Color:       "#ff6363",
 			}},
+			// Real, visible Claim/Close buttons in the composition (edited in the
+			// preview like any other button); ButtonBindings routes their clicks to
+			// the native handlers. Nothing is appended invisibly.
+			Components: []cc.ComponentRow{{Components: []cc.Component{
+				{Type: "button", Style: "success", Label: "Claim", Emoji: "🙋", CustomIDSuffix: "claim"},
+				{Type: "button", Style: "danger", Label: "Close", Emoji: "🔒", CustomIDSuffix: "close"},
+			}}},
+			ButtonBindings: map[string]string{"claim": "claim", "close": "close"},
 		},
 		Transcript:   TranscriptConfig{Enabled: true},
 		Feedback:     FeedbackConfig{Enabled: false, Prompt: "How was your support experience?"},

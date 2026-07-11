@@ -139,10 +139,15 @@ func (p *Plugin) postClosedMessage(ctx context.Context, d plugin.Deps, cfg Confi
 	var embeds []*discordgo.MessageEmbed
 	var rows []discordgo.MessageComponent
 	if !cat.Closed.Empty() {
+		routes := map[string]specRoute{
+			"reopen":     {ID: reopenButtonID(t.ID)},
+			"delete":     {ID: deleteButtonID(t.ID)},
+			"transcript": {ID: transcriptButtonID(t.ID)},
+		}
 		content, embeds = renderSpec(cat.Closed, sc, colorClosed)
-		rows = renderSpecRows(cat.Closed, sc, t.ID)
-		if len(rows) > 4 {
-			rows = rows[:4]
+		rows = renderSpecRows(cat.Closed, sc, t.ID, routes)
+		if len(rows) > 5 {
+			rows = rows[:5]
 		}
 	}
 	if content == "" && len(embeds) == 0 {
@@ -156,22 +161,26 @@ func (p *Plugin) postClosedMessage(ctx context.Context, d plugin.Deps, cfg Confi
 		embeds = []*discordgo.MessageEmbed{{Title: "Ticket closed", Description: desc, Color: colorClosed}}
 	}
 
-	var row discordgo.ActionsRow
-	if !cat.Buttons.Reopen.Hide {
-		row.Components = append(row.Components, systemButton(cat.Buttons.Reopen, "Reopen", "", discordgo.SuccessButton, reopenButtonID(t.ID)))
-	}
-	if !cat.Buttons.Delete.Hide {
-		row.Components = append(row.Components, systemButton(cat.Buttons.Delete, "Delete", "", discordgo.DangerButton, deleteButtonID(t.ID)))
-	}
-	if transcriptURL != "" {
-		tb := systemButton(cat.Buttons.Transcript, "Transcript", "", discordgo.LinkButton, "")
-		tb.Style, tb.CustomID, tb.URL = discordgo.LinkButton, "", transcriptURL
-		row.Components = append(row.Components, tb)
-	} else if !cat.Buttons.Transcript.Hide {
-		row.Components = append(row.Components, systemButton(cat.Buttons.Transcript, "Transcript", "", discordgo.SecondaryButton, transcriptButtonID(t.ID)))
-	}
-	if len(row.Components) > 0 {
-		rows = append(rows, row)
+	// The classic system row stands in only when the composition renders no
+	// buttons of its own.
+	if len(rows) == 0 {
+		var row discordgo.ActionsRow
+		if !cat.Buttons.Reopen.Hide {
+			row.Components = append(row.Components, systemButton(cat.Buttons.Reopen, "Reopen", "", discordgo.SuccessButton, reopenButtonID(t.ID)))
+		}
+		if !cat.Buttons.Delete.Hide {
+			row.Components = append(row.Components, systemButton(cat.Buttons.Delete, "Delete", "", discordgo.DangerButton, deleteButtonID(t.ID)))
+		}
+		if transcriptURL != "" {
+			tb := systemButton(cat.Buttons.Transcript, "Transcript", "", discordgo.LinkButton, "")
+			tb.Style, tb.CustomID, tb.URL = discordgo.LinkButton, "", transcriptURL
+			row.Components = append(row.Components, tb)
+		} else if !cat.Buttons.Transcript.Hide {
+			row.Components = append(row.Components, systemButton(cat.Buttons.Transcript, "Transcript", "", discordgo.SecondaryButton, transcriptButtonID(t.ID)))
+		}
+		if len(row.Components) > 0 {
+			rows = append(rows, row)
+		}
 	}
 
 	_, _ = d.Discord.SendMessage(event.FormatID(t.ChannelID), &discordgo.MessageSend{
@@ -195,7 +204,7 @@ func (p *Plugin) sendFeedbackPrompt(ctx context.Context, d plugin.Deps, cat Cate
 	var rows []discordgo.MessageComponent
 	if !cat.Feedback.Message.Empty() {
 		content, embeds = renderSpec(cat.Feedback.Message, sc, brandColor)
-		rows = renderSpecRows(cat.Feedback.Message, sc, t.ID)
+		rows = renderSpecRows(cat.Feedback.Message, sc, t.ID, nil)
 		if len(rows) > 4 {
 			rows = rows[:4]
 		}

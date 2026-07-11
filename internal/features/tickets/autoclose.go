@@ -90,7 +90,7 @@ func (p *Plugin) postInactivityWarning(ctx context.Context, d plugin.Deps, t sto
 		tv := viewOf(t)
 		sc := ticketScope(event.FormatID(t.GuildID), guildName(ctx, d, t.GuildID), openerUser(t), cat, &tv)
 		send.Content, send.Embeds = renderSpec(cat.AutoClose.WarnMessage, sc, brandColor)
-		if rows := renderSpecRows(cat.AutoClose.WarnMessage, sc, t.ID); len(rows) > 0 {
+		if rows := renderSpecRows(cat.AutoClose.WarnMessage, sc, t.ID, nil); len(rows) > 0 {
 			send.Components = rows
 		}
 	}
