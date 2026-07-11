@@ -14,6 +14,7 @@ import (
 	"github.com/dia-bot/dia/internal/config"
 	"github.com/dia-bot/dia/internal/discord"
 	"github.com/dia-bot/dia/internal/eventbus"
+	"github.com/dia-bot/dia/internal/features/giveaway"
 	"github.com/dia-bot/dia/internal/guildstate"
 	"github.com/dia-bot/dia/internal/imaging"
 	"github.com/dia-bot/dia/internal/realtime"
@@ -125,9 +126,7 @@ func (s *Server) Handler() http.Handler {
 
 	g := authed.Group("/guilds/:id")
 	g.Use(s.requireGuild())
-	g.GET("", s.handleGetGuild)
 	g.GET("/features", s.handleListFeatures)
-	g.GET("/features/:key", s.handleGetFeature)
 	g.PUT("/features/:key", s.handlePutFeature)
 	g.POST("/uploads", s.handleUpload)
 	g.GET("/fonts", s.handleListFonts)
@@ -150,6 +149,8 @@ func (s *Server) Handler() http.Handler {
 	g.GET("/leveling/variables", s.handleLevelingVariables)
 	g.POST("/leveling/actions", s.handleLevelingActions)
 	g.POST("/autorole/actions", s.handleAutoroleActions)
+	g.POST("/giveaway/actions", s.handleGiveawayActions)
+	g.POST("/giveaway/entry-actions", s.handleGiveawayEntryActions)
 
 	g.GET("/leaderboard", s.handleLeaderboard)
 	g.GET("/level-rewards", s.handleListRewards)
@@ -199,6 +200,28 @@ func (s *Server) Handler() http.Handler {
 	// Dia automod rules (the "automod" feature config), not the Discord-native
 	// /automod-rules above: the per-rule canvas-owned follow-up flow.
 	g.POST("/automod/rules/:rid/actions", s.handleAutomodRuleActions)
+
+	// Feature managers (non-admins holding a feature's configured manager roles)
+	// reach these shared read surfaces to load their delegated tab. Guild detail
+	// returns only the features they can access; the per-feature GET checks the
+	// key. Writing feature config (PUT /features/:key above) stays admin-only.
+	gm := authed.Group("/guilds/:id")
+	gm.Use(s.requireGuildAccess())
+	gm.GET("", s.handleGetGuild)
+	gm.GET("/features/:key", s.handleGetFeature)
+
+	// Giveaway operations are open to admins and giveaway managers alike.
+	gv := authed.Group("/guilds/:id")
+	gv.Use(s.requireFeature(giveaway.FeatureKey))
+	gv.GET("/giveaways", s.handleListGiveaways)
+	gv.POST("/giveaways", s.handleCreateGiveaway)
+	gv.GET("/giveaways/:gwid", s.handleGetGiveaway)
+	gv.PATCH("/giveaways/:gwid", s.handleUpdateGiveaway)
+	gv.DELETE("/giveaways/:gwid", s.handleDeleteGiveaway)
+	gv.POST("/giveaways/:gwid/start", s.handleStartGiveaway)
+	gv.POST("/giveaways/:gwid/end", s.handleEndGiveaway)
+	gv.POST("/giveaways/:gwid/reroll", s.handleRerollGiveaway)
+	gv.POST("/giveaways/:gwid/cancel", s.handleCancelGiveaway)
 
 	return r
 }

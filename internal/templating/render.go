@@ -48,6 +48,22 @@ func Preview(ctx context.Context, src string, data *Context, tokens map[string]s
 	return applyTokens(out, tokens), ""
 }
 
+// PreviewCard renders a "test render" against a caller-supplied sample data
+// map via the CARD engine — the same engine that renders giveaway (and card)
+// strings at runtime, where the scope is a data map addressed with fields like
+// {{ .Prize }} rather than the slash/message *Context struct. Rendering those
+// strings through Preview (the *Context engine) fails with "can't evaluate
+// field Prize in type *templating.Context"; this path resolves them correctly.
+// Any template error is returned as a human-readable string so authors see
+// mistakes. Pure + safe: no store access (getKV is nil for this ctx).
+func PreviewCard(ctx context.Context, src string, data map[string]any) (rendered, errMsg string) {
+	out, err := shared.RenderCardStrict(ctx, src, data)
+	if err != nil {
+		return "", err.Error()
+	}
+	return out, ""
+}
+
 // applyTokens replaces the brace-delimited {token} shorthands. Tokens are
 // distinct (the closing brace disambiguates {user} from {user.name}), so order
 // is irrelevant and a single Replacer pass is safe.

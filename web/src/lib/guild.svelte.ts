@@ -8,6 +8,7 @@ import {
 	CHANNEL_ANNOUNCEMENT,
 	CHANNEL_CATEGORY,
 	type Channel,
+	type GuildAccess,
 	type GuildDetail,
 	type RealtimeMessage,
 	type Role
@@ -63,6 +64,21 @@ export class GuildStore {
 
 	feature(key: string) {
 		return this.detail?.features[key] ?? { enabled: false, config: {} };
+	}
+
+	// ── Access (feature delegation) ──────────────────────────────────────────
+	get access(): GuildAccess {
+		return this.detail?.access ?? { admin: false, features: {} };
+	}
+	// admin: the user is a server admin/owner (full dashboard access).
+	get admin(): boolean {
+		return this.access.admin;
+	}
+	// canAccess reports whether the user may use a given feature key (admins can
+	// use everything; a manager only the features their roles grant).
+	canAccess(featureKey: string): boolean {
+		const a = this.access;
+		return a.admin || !!a.features[featureKey];
 	}
 
 	textChannelOptions() {

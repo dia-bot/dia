@@ -910,6 +910,17 @@
 					<input class="input" value={spec.action ?? ''} oninput={(e) => set('action', (e.currentTarget as HTMLInputElement).value)} />
 				</Field>
 				<Field label="Detail (JSON object)"><ExprField {...exprBind('detail')} placeholder={'{"foo": "bar"}'} /></Field>
+			{:else if step.kind === 'giveaway_start'}
+				<Field label="Preset" hint="The saved giveaway preset to start from (see the Giveaways tab). Blank = the default preset.">
+					<input class="input" value={spec.preset ?? ''} oninput={(e) => set('preset', (e.currentTarget as HTMLInputElement).value)} placeholder="default" />
+				</Field>
+				<Field label="Prize"><ExprField {...exprBind('prize')} placeholder="Discord Nitro" /></Field>
+				<Field label="Channel" hint="Optional — defaults to the preset's channel."><ChannelExprField {...exprBind('channel')} /></Field>
+				<Field label="Duration" hint="Optional — e.g. 24h, 3d, 1w. Defaults to the preset."><ExprField {...exprBind('duration')} placeholder="24h" /></Field>
+				<Field label="Winners" hint="Optional — defaults to the preset."><ExprField {...exprBind('winners')} placeholder="1" /></Field>
+				<Field label="Save giveaway id to" hint="The new giveaway id is stored under this name.">
+					<input class="input" value={spec.into ?? ''} oninput={(e) => set('into', (e.currentTarget as HTMLInputElement).value)} />
+				</Field>
 			{:else if step.kind === 'modal_open'}
 				<Field label="Title">
 					<input class="input" maxlength="45" value={spec.title ?? ''} oninput={(e) => set('title', (e.currentTarget as HTMLInputElement).value)} />

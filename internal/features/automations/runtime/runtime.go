@@ -21,6 +21,7 @@ import (
 	"github.com/dia-bot/dia/internal/features/automations"
 	cc "github.com/dia-bot/dia/internal/features/customcommands"
 	"github.com/dia-bot/dia/internal/features/customcommands/exec"
+	"github.com/dia-bot/dia/internal/features/giveaway"
 	"github.com/dia-bot/dia/internal/interactions"
 	"github.com/dia-bot/dia/internal/plugin"
 	"github.com/dia-bot/dia/internal/store"
@@ -57,11 +58,12 @@ func (*Plugin) Info() plugin.Info {
 func (p *Plugin) Init(ctx context.Context, d plugin.Deps, reg *plugin.Registrar) error {
 	p.deps = d
 	p.eng = exec.New(exec.Deps{
-		Log:     d.Log,
-		Discord: &exec.DiscordAdapter{C: d.Discord},
-		Store:   &exec.StoreAdapter{S: d.Store},
-		Imaging: &exec.ImagingAdapter{R: d.Imaging},
-		HTTP:    &exec.HTTPAdapter{Client: &http.Client{Timeout: 10 * time.Second}},
+		Log:       d.Log,
+		Discord:   &exec.DiscordAdapter{C: d.Discord},
+		Store:     &exec.StoreAdapter{S: d.Store},
+		Imaging:   &exec.ImagingAdapter{R: d.Imaging},
+		HTTP:      &exec.HTTPAdapter{Client: &http.Client{Timeout: 10 * time.Second}},
+		Giveaways: giveaway.NewManager(d),
 	})
 	p.eng.SetRouting(routePrefix, noopPrefix)
 	// Event runs have no interaction keeping them "live", so cap every wait_for
@@ -103,7 +105,14 @@ func (p *Plugin) handleEvent(ctx context.Context, et event.Type, env *event.Enve
 		waiting, _ = p.deps.Store.AutomationRuns.FindWaitingByKind(ctx, gid, waitKind)
 	}
 
-	if len(autos) == 0 && len(waiting) == 0 {
+	// The giveaway feature's two built-in automations carry editable follow-up
+	// tails (stored on its config) that run alongside any user-authored automations
+	// on their respective events: "Draw giveaway winners" on giveaway_ended and "On
+	// giveaway entry" on giveaway_entered. Load whichever matches (only touches the
+	// store on those two events) so an otherwise-empty dispatch still runs it.
+	drawTail, entryTail := p.giveawayTails(ctx, et, gid)
+
+	if len(autos) == 0 && len(waiting) == 0 && len(drawTail) == 0 && len(entryTail) == 0 {
 		return nil
 	}
 
@@ -123,6 +132,13 @@ func (p *Plugin) handleEvent(ctx context.Context, et event.Type, env *event.Enve
 		if err := p.run(ctx, a, ec); err != nil {
 			p.deps.Log.Warn("automation run error", "automation", a.ID, "trigger", a.TriggerType, "err", err)
 		}
+	}
+
+	if len(drawTail) > 0 {
+		p.runBuiltinTail(ctx, "giveaway.ended", "giveaway_ended", drawTail, ec)
+	}
+	if len(entryTail) > 0 {
+		p.runBuiltinTail(ctx, "giveaway.entry", "giveaway_entry", entryTail, ec)
 	}
 
 	if len(waiting) > 0 {
@@ -385,6 +401,46 @@ func (p *Plugin) prepare(ctx context.Context, et event.Type, env *event.Envelope
 			"values":     r.Values,
 			"added":      r.Added,
 			"removed":    r.Removed,
+		}
+
+	case event.TypeGiveawayEnded:
+		g, err := plugin.DecodeData[event.GiveawayEnded](env)
+		if err != nil {
+			return nil, false
+		}
+		ec.user = g.User // the first winner (zero value when nobody won)
+		ec.member = g.Member
+		ec.channelID = g.ChannelID
+		ec.eventMap = map[string]any{
+			"giveaway_id":  g.GiveawayID,
+			"prize":        g.Prize,
+			"host_id":      g.HostID,
+			"winner_count": g.WinnerCount,
+			"winner_ids":   g.WinnerIDs,
+			"entry_count":  g.EntryCount,
+			"rerolled":     g.Rerolled,
+			"message_id":   g.MessageID,
+			"channel_id":   g.ChannelID,
+		}
+
+	case event.TypeGiveawayEntered:
+		g, err := plugin.DecodeData[event.GiveawayEntered](env)
+		if err != nil {
+			return nil, false
+		}
+		ec.user = g.User // the member who clicked Enter
+		ec.member = g.Member
+		ec.channelID = g.ChannelID
+		ec.eventMap = map[string]any{
+			"giveaway_id": g.GiveawayID,
+			"prize":       g.Prize,
+			"host_id":     g.HostID,
+			"outcome":     g.Outcome,
+			"entries":     g.Entries,
+			"reason":      g.Reason,
+			"entry_count": g.EntryCount,
+			"message_id":  g.MessageID,
+			"channel_id":  g.ChannelID,
 		}
 
 	case event.TypeMessageCreate, event.TypeMessageUpdate:
@@ -651,6 +707,80 @@ func (p *Plugin) run(ctx context.Context, a store.Automation, ec *eventContext) 
 	}
 	p.persistInitial(ctx, run, scope, pause, outcome)
 	return nil
+}
+
+// giveawayTails returns the giveaway feature's built-in follow-up flows for the
+// event being dispatched: the post-draw tail (Config.Tail) on giveaway_ended and
+// the on-entry tail (Config.EntryTail) on giveaway_entered. Both are nil when the
+// event is something else, the feature is off, or no tail is wired. It only reads
+// the store on those two events, so every other event stays a cheap no-op.
+func (p *Plugin) giveawayTails(ctx context.Context, et event.Type, gid int64) (draw, entry []cc.Step) {
+	if et != event.TypeGiveawayEnded && et != event.TypeGiveawayEntered {
+		return nil, nil
+	}
+	fc, err := p.deps.Store.Features.Get(ctx, gid, giveaway.FeatureKey)
+	if err != nil || !fc.Enabled || len(fc.Config) == 0 {
+		return nil, nil
+	}
+	var cfg giveaway.Config
+	if json.Unmarshal(fc.Config, &cfg) != nil {
+		return nil, nil
+	}
+	if et == event.TypeGiveawayEntered {
+		return nil, cfg.EntryTail
+	}
+	return cfg.Tail, nil
+}
+
+// runBuiltinTail runs a managed feature's built-in follow-up flow as a durable
+// automation run, reusing the same execution + persistence path as a
+// user-authored automation. autoID mirrors the built-in's key (e.g.
+// "giveaway.ended") so its runs share that flow's KV scope and show under the
+// built-in in the Runs tab. The tail sees exactly the trigger's .Event scope
+// (set on ec in prepare), so it behaves like a hand-built automation.
+func (p *Plugin) runBuiltinTail(ctx context.Context, autoID, triggerType string, tail []cc.Step, ec *eventContext) {
+	raw, err := json.Marshal(cc.Definition{Steps: tail})
+	if err != nil {
+		return
+	}
+	synth := store.Automation{
+		ID:          autoID,
+		Version:     1,
+		TriggerType: triggerType,
+		Definition:  raw,
+	}
+	if err := p.run(ctx, synth, ec); err != nil {
+		p.deps.Log.Warn("builtin tail run error", "automation", autoID, "err", err)
+	}
+}
+
+// RunAutomation runs a saved, enabled automation on demand — the cross-feature
+// bridge (e.g. a giveaway action-button click) that satisfies
+// giveaway.AutomationRunner. The caller supplies the actor, channel and .Event
+// scope; a disabled automation is a silent no-op and a missing one is an error.
+func (p *Plugin) RunAutomation(ctx context.Context, guildID, automationID string, user event.User, member *event.Member, channelID string, eventMap map[string]any) error {
+	gid, ok := event.ParseID(guildID)
+	if !ok {
+		return fmt.Errorf("run automation: bad guild id %q", guildID)
+	}
+	a, err := p.deps.Store.Automations.Get(ctx, gid, automationID)
+	if err != nil {
+		return err
+	}
+	if !a.Enabled {
+		return nil
+	}
+	if eventMap == nil {
+		eventMap = map[string]any{}
+	}
+	ec := &eventContext{
+		guildID:   guildID,
+		channelID: channelID,
+		user:      user,
+		member:    member,
+		eventMap:  eventMap,
+	}
+	return p.run(ctx, a, ec)
 }
 
 // persistInitial records the first execution of an automation: it inserts the

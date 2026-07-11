@@ -129,6 +129,8 @@ export function stepSummary(s: Step): string {
 			return spec.automation ? 'launch automation' : '?';
 		case 'audit_note':
 			return spec.action || '';
+		case 'giveaway_start':
+			return `start giveaway · ${trunc(exprSrc(spec.prize))}`;
 	}
 	return '';
 }

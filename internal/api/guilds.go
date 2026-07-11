@@ -10,6 +10,7 @@ import (
 
 	"github.com/dia-bot/dia/internal/discord"
 	"github.com/dia-bot/dia/internal/event"
+	"github.com/dia-bot/dia/internal/features/giveaway"
 	"github.com/dia-bot/dia/internal/features/leveling"
 	"github.com/dia-bot/dia/internal/features/moderation"
 	"github.com/dia-bot/dia/internal/features/roles"
@@ -23,7 +24,7 @@ import (
 var knownFeatures = map[string]bool{
 	"welcome": true, "leveling": true, "autorole": true,
 	"moderation": true, "automod": true, "verification": true, "logging": true,
-	"customcommands": true, "reactionroles": true,
+	"customcommands": true, "reactionroles": true, "giveaway": true,
 }
 
 // botInvitePerms is the permission requested in the bot invite URL: Administrator,
@@ -53,13 +54,11 @@ func (s *Server) handleListGuilds(c *gin.Context) {
 		}
 	}
 
+	// Collect ids for the bulk presence lookup across ALL the user's guilds — a
+	// feature manager may not be a server admin, so we can't pre-filter to
+	// canManage here anymore.
 	var ids []int64
-	manageable := make([]UserGuild, 0)
 	for _, g := range sess.Guilds {
-		if !canManage(sess, g.ID) {
-			continue
-		}
-		manageable = append(manageable, g)
 		if id, ok := event.ParseID(g.ID); ok {
 			ids = append(ids, id)
 		}
@@ -71,9 +70,8 @@ func (s *Server) handleListGuilds(c *gin.Context) {
 	// reflects the bot's real membership even when gateway events lag or drop.
 	// IMPORTANT: the bulk lookup + live botSet must agree with the middleware's
 	// botInGuild helper; otherwise the dashboard shows "Add" for guilds that
-	// would actually pass the requireGuild check (the user's complaint). We
-	// pre-warm the live set once, then use it inline so each item is computed
-	// the same way the middleware does.
+	// would actually pass the guild gate. We pre-warm the live set once, then use
+	// it inline so each item is computed the same way the middleware does.
 	present := map[string]bool{}
 	if rows, err := s.store.Guilds.ListByIDs(ctx, ids); err == nil {
 		for _, r := range rows {
@@ -81,10 +79,10 @@ func (s *Server) handleListGuilds(c *gin.Context) {
 		}
 	}
 	botSet := s.botGuildIDs(ctx)
-	s.log.Info("list guilds", "manageable", len(manageable), "db_present", len(present), "live_bot_set", len(botSet))
 
-	out := make([]gin.H, 0, len(manageable))
-	for _, g := range manageable {
+	out := make([]gin.H, 0, len(sess.Guilds))
+	for _, g := range sess.Guilds {
+		admin := canManage(sess, g.ID)
 		inGuild := present[g.ID] || botSet[g.ID]
 		// Per-guild fallback: when a guild was missed by both signals (race
 		// between OAuth list refresh and worker syncing GUILD_CREATE rows),
@@ -95,6 +93,14 @@ func (s *Server) handleListGuilds(c *gin.Context) {
 					inGuild = true
 					present[g.ID] = true
 				}
+			}
+		}
+		if !admin {
+			// A non-admin sees the server only when the bot is present AND they
+			// manage at least one delegated feature there (so it stays out of the
+			// switcher for everyone else).
+			if !inGuild || !s.accessFor(ctx, sess, g.ID).any() {
+				continue
 			}
 		}
 		item := gin.H{
@@ -262,10 +268,20 @@ func (s *Server) handleGetGuild(c *gin.Context) {
 			}
 		}
 	}
+	// A non-admin feature manager only sees the config of the features they can
+	// manage — never another feature's config.
+	acc := accessFromCtx(c)
 	features, _ := s.store.Features.GetAll(c.Request.Context(), gidInt)
 	featOut := map[string]gin.H{}
 	for k, fc := range features {
+		if !acc.can(k) {
+			continue
+		}
 		featOut[k] = gin.H{"enabled": fc.Enabled, "config": json.RawMessage(fc.Config)}
+	}
+	accFeatures := map[string]bool{}
+	for k := range acc.Features {
+		accFeatures[k] = true
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -273,6 +289,7 @@ func (s *Server) handleGetGuild(c *gin.Context) {
 		"channels": snap.Channels,
 		"roles":    snap.Roles,
 		"features": featOut,
+		"access":   gin.H{"admin": acc.Admin, "features": accFeatures},
 	})
 }
 
@@ -296,6 +313,11 @@ func (s *Server) handleGetFeature(c *gin.Context) {
 	key := c.Param("key")
 	if !knownFeatures[key] {
 		fail(c, http.StatusNotFound, "unknown feature")
+		return
+	}
+	// A non-admin manager may only read the config of a feature they manage.
+	if !accessFromCtx(c).can(key) {
+		fail(c, http.StatusForbidden, "you don't have access to this feature")
 		return
 	}
 	gidInt, _ := event.ParseID(guildID(c))
@@ -344,13 +366,13 @@ func (s *Server) handlePutFeature(c *gin.Context) {
 	}
 	gid := guildID(c)
 	gidInt, _ := event.ParseID(gid)
-	// Welcome's, leveling's, auto-roles' and automod's canvas-owned programs
-	// (button click actions and/or the follow-up flows) are owned by the
+	// Welcome's, leveling's, auto-roles', automod's and giveaways' canvas-owned
+	// programs (button click actions and/or the follow-up flows) are owned by the
 	// automation flow (saved via /welcome/actions, /leveling/actions,
-	// /autorole/actions or /automod/rules/:rid/actions), not the settings page.
-	// Keep the stored copy authoritative so a settings save can't clobber a flow
-	// wired meanwhile on the canvas.
-	if len(req.Config) > 0 && (key == welcome.FeatureKey || key == leveling.FeatureKey || key == roles.FeatureKey || key == moderation.AutomodKey) {
+	// /autorole/actions, /automod/rules/:rid/actions or /giveaway/actions), not
+	// the settings page. Keep the stored copy authoritative so a settings save
+	// can't clobber a flow wired meanwhile on the canvas.
+	if len(req.Config) > 0 && (key == welcome.FeatureKey || key == leveling.FeatureKey || key == roles.FeatureKey || key == moderation.AutomodKey || key == giveaway.FeatureKey) {
 		if existing, err := s.store.Features.Get(c.Request.Context(), gidInt, key); err == nil && len(existing.Config) > 0 {
 			switch key {
 			case welcome.FeatureKey:
@@ -361,6 +383,8 @@ func (s *Server) handlePutFeature(c *gin.Context) {
 				req.Config = roles.MergeStoredActions(req.Config, existing.Config)
 			case moderation.AutomodKey:
 				req.Config = moderation.MergeStoredRuleTails(req.Config, existing.Config)
+			case giveaway.FeatureKey:
+				req.Config = giveaway.MergeStoredTail(req.Config, existing.Config)
 			}
 		}
 	}

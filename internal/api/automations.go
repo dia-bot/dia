@@ -9,6 +9,7 @@ import (
 	"github.com/dia-bot/dia/internal/event"
 	"github.com/dia-bot/dia/internal/features/automations"
 	cc "github.com/dia-bot/dia/internal/features/customcommands"
+	"github.com/dia-bot/dia/internal/features/giveaway"
 	"github.com/dia-bot/dia/internal/features/leveling"
 	"github.com/dia-bot/dia/internal/features/moderation"
 	"github.com/dia-bot/dia/internal/features/roles"
@@ -332,7 +333,7 @@ func (s *Server) builtinList(c *gin.Context, gidInt int64) []automations.Builtin
 	// Load every feature that owns a built-in so its flow renders from the live
 	// config (not defaults): welcome, leveling, auto-roles, reaction roles and
 	// automod.
-	for _, key := range []string{welcome.FeatureKey, leveling.FeatureKey, roles.FeatureKey, roles.ReactionRolesKey, moderation.AutomodKey} {
+	for _, key := range []string{welcome.FeatureKey, leveling.FeatureKey, roles.FeatureKey, roles.ReactionRolesKey, moderation.AutomodKey, giveaway.FeatureKey} {
 		if fc, err := s.store.Features.Get(c.Request.Context(), gidInt, key); err == nil {
 			configs[key] = fc.Config
 			enabled[key] = fc.Enabled

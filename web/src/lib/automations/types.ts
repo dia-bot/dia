@@ -51,7 +51,8 @@ export const TRIGGER_CATEGORIES: { id: string; label: string }[] = [
 	{ id: 'reactions', label: 'Reactions' },
 	{ id: 'voice', label: 'Voice' },
 	{ id: 'moderation', label: 'Moderation' },
-	{ id: 'channels', label: 'Channels & threads' }
+	{ id: 'channels', label: 'Channels & threads' },
+	{ id: 'giveaways', label: 'Giveaways' }
 ];
 
 const v = (path: string, type: string, short: string): TmplVar => ({
@@ -159,6 +160,30 @@ const MODACTION_EVENT_VARS: TmplVar[] = [
 	v('.Event.moderator_name', 'string', "The moderator's name"),
 	v('.Event.case_number', 'int', 'The mod-log case number'),
 	v('.Event.duration_seconds', 'int', 'Timeout/temp-ban duration in seconds (0 if none)')
+];
+
+const GIVEAWAY_EVENT_VARS: TmplVar[] = [
+	v('.Event.giveaway_id', 'string', 'The giveaway id'),
+	v('.Event.prize', 'string', 'The prize'),
+	v('.Event.host_id', 'snowflake', 'The host who started it'),
+	v('.Event.winner_count', 'int', 'Number of winners drawn'),
+	v('.Event.winner_ids', 'list', 'Winner user ids (loop these to reward each)'),
+	v('.Event.entry_count', 'int', 'Number of distinct entrants'),
+	v('.Event.rerolled', 'bool', 'True when this was a reroll'),
+	v('.Event.message_id', 'snowflake', 'The giveaway message id'),
+	v('.Event.channel_id', 'snowflake', 'The channel the giveaway lives in')
+];
+
+const GIVEAWAY_ENTRY_EVENT_VARS: TmplVar[] = [
+	v('.Event.giveaway_id', 'string', 'The giveaway id'),
+	v('.Event.prize', 'string', 'The prize'),
+	v('.Event.host_id', 'snowflake', 'The host who started it'),
+	v('.Event.outcome', 'string', 'entered, left, denied, or blocked'),
+	v('.Event.entries', 'int', 'The member’s weighted tickets (on a successful entry)'),
+	v('.Event.reason', 'string', 'Why entry was denied (outcome=="denied")'),
+	v('.Event.entry_count', 'int', 'Distinct entrants after this click'),
+	v('.Event.message_id', 'snowflake', 'The giveaway message id'),
+	v('.Event.channel_id', 'snowflake', 'The channel the giveaway lives in')
 ];
 
 export const TRIGGERS: TriggerKindMeta[] = [
@@ -439,6 +464,30 @@ export const TRIGGERS: TriggerKindMeta[] = [
 		hasChannel: true,
 		filters: [],
 		eventVars: CHANNEL_EVENT_VARS
+	},
+	{
+		key: 'giveaway_ended',
+		label: 'Giveaway ends',
+		description:
+			'A giveaway is drawn (natural end, manual end, or reroll). .User is the first winner; loop .Event.winner_ids for all winners.',
+		category: 'giveaways',
+		event: 'GIVEAWAY_ENDED',
+		actor: 'the first winner (if any)',
+		hasChannel: true,
+		filters: ['channels', 'cooldown'],
+		eventVars: GIVEAWAY_EVENT_VARS
+	},
+	{
+		key: 'giveaway_entry',
+		label: 'Giveaway entered',
+		description:
+			"A member clicks a giveaway's Enter button. Branch on .Event.outcome (entered, left, denied, blocked). .User is the member who clicked.",
+		category: 'giveaways',
+		event: 'GIVEAWAY_ENTERED',
+		actor: 'the member who clicked Enter',
+		hasChannel: true,
+		filters: ['channels', 'ignore_bots', 'cooldown'],
+		eventVars: GIVEAWAY_ENTRY_EVENT_VARS
 	}
 ];
 

@@ -38,7 +38,8 @@
 		onreset,
 		actions,
 		children,
-		skeleton
+		skeleton,
+		configReadOnly = false
 	}: {
 		icon?: LucideIcon;
 		title: string;
@@ -57,6 +58,9 @@
 		actions?: Snippet;
 		children: Snippet;
 		skeleton?: Snippet;
+		// configReadOnly hides the enable toggle + save dock — for viewers who can
+		// use the feature but not change its config (non-admin feature managers).
+		configReadOnly?: boolean;
 	} = $props();
 
 	const HeaderIcon = $derived(icon);
@@ -95,7 +99,7 @@
 			{#if actions}
 				{@render actions()}
 			{/if}
-			{#if ready && !error}
+			{#if ready && !error && !configReadOnly}
 				<label class="ml-0.5 flex items-center gap-2 text-[12px]">
 					<span class="hidden text-muted sm:inline">{enabled ? 'On' : 'Off'}</span>
 					<Toggle bind:checked={enabled} label={toggleLabel ?? title} />
@@ -156,7 +160,7 @@
 	</div>
 
 	<!-- ── Save dock: the shared floating pill, centered on the viewport ── -->
-	{#if ready && !error}
+	{#if ready && !error && !configReadOnly}
 		<ReleaseDock {dirty} phase={saving ? 'saving' : 'idle'} {onsave} {onreset} />
 	{/if}
 </div>
