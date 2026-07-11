@@ -288,6 +288,57 @@ export function newFormField(): FormField {
 	return { id: shortId(), label: '', placeholder: '', style: 'short', required: true };
 }
 
+// mergeButtons fills in any missing system-button overrides.
+export function mergeButtons(b: Partial<ControlButtons> | undefined): ControlButtons {
+	const d = defaultControlButtons();
+	return {
+		claim: { ...d.claim, ...(b?.claim ?? {}) },
+		close: { ...d.close, ...(b?.close ?? {}) },
+		reopen: { ...d.reopen, ...(b?.reopen ?? {}) },
+		delete: { ...d.delete, ...(b?.delete ?? {}) },
+		transcript: { ...d.transcript, ...(b?.transcript ?? {}) }
+	};
+}
+
+// normalizeCategory upgrades a stored category to the current shape (folding
+// the legacy single-embed welcome into embeds, mirroring the Go decoder).
+export function normalizeCategory(c: Partial<CategoryConfig>): CategoryConfig {
+	const base = newCategory();
+	return {
+		...base,
+		...c,
+		welcome: normalizeMessageSpec(c.welcome ?? base.welcome),
+		closed: normalizeMessageSpec(c.closed),
+		close_request: normalizeMessageSpec(c.close_request),
+		buttons: mergeButtons(c.buttons),
+		transcript: { ...base.transcript, ...(c.transcript ?? {}) },
+		feedback: { ...base.feedback, ...(c.feedback ?? {}), message: normalizeMessageSpec(c.feedback?.message) },
+		auto_close: {
+			...base.auto_close,
+			...(c.auto_close ?? {}),
+			warn_message: normalizeMessageSpec(c.auto_close?.warn_message)
+		},
+		form: c.form ?? []
+	};
+}
+
+// normalizePanelConfig upgrades a stored panel config (legacy single embed →
+// embeds) and normalizes every category.
+export function normalizePanelConfig(pc: Partial<PanelConfig> | undefined): PanelConfig {
+	const d = defaultPanelConfig();
+	let embeds = (pc?.embeds ?? []).map((e) => ({ ...e }));
+	if (embeds.length === 0 && pc?.embed && Object.keys(pc.embed).length > 0) {
+		embeds = [{ ...pc.embed }]; // legacy single-embed panel
+	}
+	if (!pc) embeds = d.embeds ?? [];
+	return {
+		content: pc?.content ?? '',
+		embeds,
+		select_placeholder: pc?.select_placeholder ?? d.select_placeholder,
+		categories: (pc?.categories ?? []).map(normalizeCategory)
+	};
+}
+
 // ── Queue + analytics ──
 export interface TicketRow {
 	id: string;

@@ -1,24 +1,15 @@
 <script lang="ts">
-	import { onMount, getContext, setContext } from 'svelte';
+	import { onMount, getContext } from 'svelte';
+	import { goto } from '$app/navigation';
 	import { GuildStore, GUILD_CTX } from '$lib/guild.svelte';
-	import { api, ApiError } from '$lib/api';
+	import { api } from '$lib/api';
 	import {
 		defaultTicketsConfig,
-		defaultPanelConfig,
-		defaultControlButtons,
-		newCategory,
-		normalizeMessageSpec,
-		TICKET_TEMPLATE_VARS,
 		type TicketsConfig,
 		type PanelSummary,
-		type PanelConfig,
-		type CategoryConfig,
-		type ControlButtons,
 		type TicketRow,
 		type TicketStats
 	} from '$lib/tickets/types';
-	import type { Step } from '$lib/commands/types';
-	import { AUTOMATION_CTX, EXPR_SCOPE_CTX, type ExprScope } from '$lib/commands/expr-meta';
 	import ModerationShell, { type ModTab } from '$lib/components/moderation/ModerationShell.svelte';
 	import ModSection from '$lib/components/moderation/ModSection.svelte';
 	import TabSwipe from '$lib/components/page/TabSwipe.svelte';
@@ -28,20 +19,16 @@
 	import ChannelPicker from '$lib/components/ChannelPicker.svelte';
 	import NumberField from '$lib/components/ui/NumberField.svelte';
 	import Select from '$lib/components/Select.svelte';
-	import Toggle from '$lib/components/Toggle.svelte';
-	import MessageEditor from '$lib/components/commands/MessageEditor.svelte';
-	import CategoryEditor from '$lib/components/tickets/CategoryEditor.svelte';
 	import {
 		Ticket,
 		LayoutList,
 		ListChecks,
 		BarChart3,
 		BookOpen,
+		Settings,
 		Plus,
 		Trash2,
-		Send,
-		ArrowLeft,
-		Save,
+		Pencil,
 		RefreshCw,
 		ExternalLink
 	} from 'lucide-svelte';
@@ -49,33 +36,29 @@
 	const store = getContext<GuildStore>(GUILD_CTX);
 	const FEATURE = 'tickets';
 
-	// Every MessageEditor on this page (panel + category surfaces) offers the
-	// ticket template variables in its picker, in the non-automation form.
-	setContext(AUTOMATION_CTX, false);
-	setContext(EXPR_SCOPE_CTX, {
-		options: [],
-		variables: [],
-		steps: [],
-		extraVars: TICKET_TEMPLATE_VARS
-	} satisfies ExprScope);
-
 	let enabled = $state(false);
 	let cfg = $state<TicketsConfig>(defaultTicketsConfig());
 	let loaded = $state(false);
 	let loadError = $state('');
 	let saving = $state(false);
 	let baseline = $state('');
-	let tab = $state('setup');
+	let tab = $state('setups');
 
 	const dirty = $derived(loaded && JSON.stringify({ enabled, cfg }) !== baseline);
 	const inputCls =
 		'w-full rounded-md border border-line bg-bg px-3 py-2 text-sm text-ink outline-none focus:border-line-strong';
 
+	// Ticket setups (panels) — listed here, edited on their own full page.
+	let panels = $state<PanelSummary[]>([]);
+	let panelsLoaded = $state(false);
+	let panelsError = $state('');
+	let panelBusy = $state('');
+
 	const tabs = $derived<ModTab[]>([
-		{ key: 'setup', label: 'Setup', icon: Ticket },
-		{ key: 'panels', label: 'Panels', icon: LayoutList },
+		{ key: 'setups', label: 'Setups', icon: LayoutList, badge: panels.length || '' },
 		{ key: 'queue', label: 'Queue', icon: ListChecks },
 		{ key: 'analytics', label: 'Analytics', icon: BarChart3 },
+		{ key: 'settings', label: 'Settings', icon: Settings },
 		{ key: 'guide', label: 'How it works', icon: BookOpen }
 	]);
 
@@ -88,6 +71,7 @@
 			enabled = f.enabled;
 			baseline = JSON.stringify({ enabled, cfg });
 			loaded = true;
+			loadPanels();
 		} catch (e) {
 			loadError = e instanceof Error ? e.message : 'Could not load tickets.';
 		}
@@ -111,185 +95,40 @@
 		cfg = b.cfg;
 	}
 
-	// ── Panels ────────────────────────────────────────────────
-	let panels = $state<PanelSummary[]>([]);
-	let panelsLoaded = $state(false);
-	let panelsError = $state('');
-	let editing = $state<PanelSummary | null>(null);
-	let panelSaving = $state(false);
-	let panelStatus = $state('');
-	let publishChannel = $state('');
-
-	// mergeButtons fills in any missing system-button overrides.
-	function mergeButtons(b: Partial<ControlButtons> | undefined): ControlButtons {
-		const d = defaultControlButtons();
-		return {
-			claim: { ...d.claim, ...(b?.claim ?? {}) },
-			close: { ...d.close, ...(b?.close ?? {}) },
-			reopen: { ...d.reopen, ...(b?.reopen ?? {}) },
-			delete: { ...d.delete, ...(b?.delete ?? {}) },
-			transcript: { ...d.transcript, ...(b?.transcript ?? {}) }
-		};
-	}
-	// normalizeCategory upgrades stored categories to the current shape (folding
-	// the legacy single-embed welcome into embeds, mirroring the Go decoder).
-	function normalizeCategory(c: Partial<CategoryConfig>): CategoryConfig {
-		const base = newCategory();
-		return {
-			...base,
-			...c,
-			welcome: normalizeMessageSpec(c.welcome ?? base.welcome),
-			closed: normalizeMessageSpec(c.closed),
-			close_request: normalizeMessageSpec(c.close_request),
-			buttons: mergeButtons(c.buttons),
-			transcript: { ...base.transcript, ...(c.transcript ?? {}) },
-			feedback: { ...base.feedback, ...(c.feedback ?? {}), message: normalizeMessageSpec(c.feedback?.message) },
-			auto_close: {
-				...base.auto_close,
-				...(c.auto_close ?? {}),
-				warn_message: normalizeMessageSpec(c.auto_close?.warn_message)
-			},
-			form: c.form ?? []
-		};
-	}
-	function normalizeConfig(pc: Partial<PanelConfig> | undefined): PanelConfig {
-		const d = defaultPanelConfig();
-		let embeds = (pc?.embeds ?? []).map((e) => ({ ...e }));
-		if (embeds.length === 0 && pc?.embed && Object.keys(pc.embed).length > 0) {
-			embeds = [{ ...pc.embed }]; // legacy single-embed panel
-		}
-		if (!pc) embeds = d.embeds ?? [];
-		return {
-			content: pc?.content ?? '',
-			embeds,
-			select_placeholder: pc?.select_placeholder ?? d.select_placeholder,
-			categories: (pc?.categories ?? []).map(normalizeCategory)
-		};
-	}
-
-	// The panel message is edited with the shared WYSIWYG MessageEditor; the step
-	// is (re)seeded when a panel is opened for editing and the effect below syncs
-	// edits back into the panel config being edited.
-	let panelEditSeq = $state(0);
-	let panelStep = $state<Step>({ id: 'panel-msg', kind: 'send_message', spec: { content: '', embeds: [] } });
-	function seedPanelStep(pc: PanelConfig) {
-		panelStep = {
-			id: 'panel-msg',
-			kind: 'send_message',
-			spec: { content: pc.content ?? '', embeds: JSON.parse(JSON.stringify(pc.embeds ?? [])) }
-		};
-		panelEditSeq++;
-	}
-	$effect(() => {
-		// eslint-disable-next-line @typescript-eslint/no-explicit-any
-		const s = panelStep.spec as any;
-		if (!editing) return;
-		editing.config.content = s.content ?? '';
-		editing.config.embeds = s.embeds ?? [];
-	});
-
 	async function loadPanels() {
 		panelsError = '';
 		try {
 			const r = await api.ticketPanels(store.id);
-			panels = (r.panels ?? []).map((p) => ({ ...p, config: normalizeConfig(p.config) }));
+			panels = (r.panels ?? []) as PanelSummary[];
 		} catch (e) {
-			panelsError = e instanceof Error ? e.message : 'Could not load panels.';
+			panelsError = e instanceof Error ? e.message : 'Could not load ticket setups.';
 		} finally {
 			panelsLoaded = true;
 		}
 	}
 
-	function newPanel() {
-		editing = {
-			id: '',
-			name: 'Support',
-			style: 'buttons',
-			enabled: true,
-			position: 0,
-			channel_id: '',
-			message_id: '',
-			config: defaultPanelConfig()
-		};
-		seedPanelStep(editing.config);
-		publishChannel = '';
-		panelStatus = '';
+	function editorPath(pid: string): string {
+		return `/servers/${store.id}/tickets/${pid}`;
 	}
-	function editPanel(p: PanelSummary) {
-		editing = { ...p, config: normalizeConfig(p.config) };
-		seedPanelStep(editing.config);
-		publishChannel = '';
-		panelStatus = '';
+	function newSetup() {
+		goto(editorPath('new'));
 	}
-	function addCategory() {
-		if (!editing) return;
-		if (editing.config.categories.length >= 25) return;
-		editing.config.categories = [...editing.config.categories, newCategory('New category')];
-	}
-	function removeCategory(i: number) {
-		if (!editing) return;
-		editing.config.categories = editing.config.categories.filter((_, idx) => idx !== i);
-	}
-
-	async function savePanel() {
-		if (!editing) return;
-		panelSaving = true;
-		panelStatus = '';
-		try {
-			const res = await api.upsertTicketPanel(store.id, {
-				id: editing.id,
-				name: editing.name,
-				style: editing.style,
-				enabled: editing.enabled,
-				config: editing.config
-			});
-			editing.id = res.id;
-			panelStatus = 'Saved.';
-			await loadPanels();
-		} catch (e) {
-			panelStatus = e instanceof ApiError ? e.message : 'Could not save the panel.';
-		} finally {
-			panelSaving = false;
-		}
-	}
-
-	async function publishPanel() {
-		if (!editing) return;
-		if (!publishChannel) {
-			panelStatus = 'Pick a channel to post the panel in.';
-			return;
-		}
-		panelSaving = true;
-		try {
-			// Persist the on-screen edits first: PostPanel renders from the stored
-			// row, so publishing without saving would post the last-saved config.
-			const res = await api.upsertTicketPanel(store.id, {
-				id: editing.id,
-				name: editing.name,
-				style: editing.style,
-				enabled: editing.enabled,
-				config: editing.config
-			});
-			editing.id = res.id;
-			await api.publishTicketPanel(store.id, editing.id, publishChannel);
-			panelStatus = 'Panel posted.';
-			await loadPanels();
-		} catch (e) {
-			panelStatus = e instanceof ApiError ? e.message : 'Could not post the panel.';
-		} finally {
-			panelSaving = false;
-		}
-	}
-
 	async function deletePanel(p: PanelSummary) {
-		if (!confirm(`Delete the "${p.name}" panel? Existing tickets stay open.`)) return;
+		if (!confirm(`Delete the "${p.name || 'untitled'}" setup? Existing tickets stay open.`)) return;
+		if (panelBusy) return;
+		panelBusy = p.id;
 		try {
 			await api.deleteTicketPanel(store.id, p.id);
-			if (editing?.id === p.id) editing = null;
 			await loadPanels();
-		} catch {
-			/* best-effort */
+		} finally {
+			panelBusy = '';
 		}
+	}
+	function isPosted(p: PanelSummary): boolean {
+		return p.message_id !== '0' && p.message_id !== '' && p.channel_id !== '0' && p.channel_id !== '';
+	}
+	function panelLink(p: PanelSummary): string {
+		return `https://discord.com/channels/${store.id}/${p.channel_id}/${p.message_id}`;
 	}
 
 	// ── Queue ─────────────────────────────────────────────────
@@ -334,10 +173,9 @@
 		}
 	}
 
-	// Lazy-load panels + analytics the first time their tab is opened. The loaders
-	// only ever flip their *Loaded flag true, so this never re-fires itself.
+	// Lazy-load analytics the first time its tab is opened. The loader only ever
+	// flips its *Loaded flag true, so this never re-fires itself.
 	$effect(() => {
-		if (tab === 'panels' && !panelsLoaded) loadPanels();
 		if (tab === 'analytics' && !statsLoaded) loadStats();
 	});
 	// The queue reloads on open and whenever the status filter changes; loadQueue
@@ -346,11 +184,6 @@
 		queueFilter; // track filter changes
 		if (tab === 'queue') loadQueue();
 	});
-
-	const styleOptions = [
-		{ value: 'buttons', label: 'Buttons (one per category)' },
-		{ value: 'select', label: 'Dropdown menu' }
-	];
 
 	function channelLink(channelId: string) {
 		return `https://discord.com/channels/${store.id}/${channelId}`;
@@ -376,10 +209,14 @@
 	}
 </script>
 
+<svelte:head>
+	<title>Tickets · {store.name} · Dia</title>
+</svelte:head>
+
 <ModerationShell
 	icon={Ticket}
 	title="Tickets"
-	blurb="Let members open private support tickets from a panel. Fully customizable channels, forms, claiming, transcripts, ratings and auto-close."
+	blurb="Let members open private support tickets from a panel. Fully customizable channels, messages, forms, claiming, close requests, transcripts, ratings and auto-close."
 	bind:enabled
 	ready={loaded}
 	error={loadError}
@@ -393,135 +230,82 @@
 	onreset={reset}
 >
 	<TabSwipe key={tab} index={tabs.findIndex((t) => t.key === tab)}>
-		{#if tab === 'setup'}
-			<ModSection label="Staff & channels" desc="Who handles tickets and where activity is logged.">
-				<div class="grid gap-4 sm:grid-cols-2">
-					<Field label="Support staff roles" hint="Added to every ticket and allowed to run ticket commands">
-						<RolePicker multiple value={cfg.staff_role_ids} onChange={(v) => (cfg.staff_role_ids = v as string[])} />
-					</Field>
-					<Field label="Default ticket category" hint="Discord category new ticket channels are created under">
-						<ChannelPicker kind="all" value={cfg.default_parent_id} placeholder="None" onChange={(v) => (cfg.default_parent_id = v as string)} />
-					</Field>
-					<Field label="Log channel" hint="Open / claim / close / delete events">
-						<ChannelSelect bind:value={cfg.log_channel} placeholder="No log channel" />
-					</Field>
-					<Field label="Transcript channel" hint="Where closing transcripts are posted (defaults to the log channel)">
-						<ChannelSelect bind:value={cfg.transcript_channel} placeholder="Use log channel" />
-					</Field>
+		{#if tab === 'setups'}
+			<div class="flex items-center justify-between px-4 py-3 sm:px-5">
+				<div class="text-[12px] text-muted">
+					{panels.length} setup{panels.length === 1 ? '' : 's'} · each one is a panel message with its own ticket types
 				</div>
-			</ModSection>
+				<button
+					type="button"
+					onclick={newSetup}
+					class="inline-flex h-8 items-center gap-1.5 rounded-md bg-ink px-3 text-[12px] font-semibold text-bg hover:bg-ink/90"
+				>
+					<Plus size={14} /> New setup
+				</button>
+			</div>
 
-			<ModSection label="Limits" desc="Guard against ticket spam.">
-				<div class="grid gap-4 sm:grid-cols-2">
-					<Field label="Max open tickets per member" hint="0 = unlimited; a category can tighten this"><NumberField bind:value={cfg.max_open_per_user} min={0} /></Field>
-					<Field label="Channel name prefix" hint="Used when a category has no name template"><input class={inputCls} bind:value={cfg.name_prefix} placeholder="ticket" /></Field>
+			{#if !panelsLoaded}
+				<div class="px-5 py-16 text-center text-[13px] text-muted">Loading…</div>
+			{:else if panelsError}
+				<div class="px-5 py-16 text-center text-[13px] text-accent-ink">{panelsError}</div>
+			{:else if panels.length === 0}
+				<div class="px-5 py-16 text-center">
+					<p class="text-[13px] font-medium text-ink">No ticket setups yet</p>
+					<p class="mt-1 text-[12px] text-muted">
+						Create one with <span class="font-medium">New setup</span>: compose the panel message,
+						add ticket types, and publish it to a channel. Members click a button and get their own
+						private channel with your team.
+					</p>
 				</div>
-			</ModSection>
-
-			<ModSection label="Blacklist" desc="Roles and members that can never open a ticket.">
-				<div class="grid gap-4 sm:grid-cols-2">
-					<Field label="Blacklisted roles">
-						<RolePicker multiple value={cfg.blacklist_role_ids} onChange={(v) => (cfg.blacklist_role_ids = v as string[])} />
-					</Field>
-				</div>
-			</ModSection>
-		{:else if tab === 'panels'}
-			{#if editing}
-				<ModSection label={editing.id ? 'Edit panel' : 'New panel'} desc="The message members click to open a ticket. Each category is its own ticket type.">
-					{#snippet actions()}
-						<button type="button" class="flex items-center gap-1.5 text-sm text-muted hover:text-ink" onclick={() => (editing = null)}>
-							<ArrowLeft class="h-4 w-4" /> Back
-						</button>
-					{/snippet}
-
-					<div class="space-y-5">
-						<div class="grid gap-4 sm:grid-cols-2">
-							<Field label="Panel name" hint="For your reference only"><input class={inputCls} bind:value={editing.name} placeholder="Support" /></Field>
-							<Field label="Layout"><Select bind:value={editing.style} options={styleOptions} /></Field>
-						</div>
-						{#if editing.style === 'select'}
-							<Field label="Dropdown placeholder"><input class={inputCls} bind:value={editing.config.select_placeholder} placeholder="Choose a ticket type" /></Field>
-						{/if}
-						<label class="flex items-center gap-3 text-sm text-ink">
-							<Toggle bind:checked={editing.enabled} label="Enabled" /> Panel enabled (disabled panels refuse new tickets)
-						</label>
-
-						<div class="space-y-3">
-							<p class="eyebrow">Panel message</p>
-							<p class="text-xs text-muted">
-								Compose the message members see — content and as many embeds as you like. The open
-								buttons (or dropdown) below it come from the categories.
-							</p>
-							{#key panelEditSeq}
-								<MessageEditor step={panelStep} embeds clickPaths={false} />
-							{/key}
-						</div>
-
-						<div class="space-y-3 border-t border-line pt-4">
-							<div class="flex items-center justify-between">
-								<p class="eyebrow">Categories <span class="text-faint">({editing.config.categories.length}/25)</span></p>
-								<button type="button" class="flex items-center gap-1 text-xs text-accent-ink hover:underline disabled:opacity-40" disabled={editing.config.categories.length >= 25} onclick={addCategory}>
-									<Plus class="h-3.5 w-3.5" /> Add category
-								</button>
-							</div>
-							{#each editing.config.categories as cat, i (cat.id)}
-								<CategoryEditor category={cat} guildId={store.id} index={i} onRemove={() => removeCategory(i)} />
-							{/each}
-							{#if editing.config.categories.length === 0}
-								<p class="text-sm text-muted">Add at least one category so members have something to open.</p>
-							{/if}
-						</div>
-
-						<div class="flex flex-wrap items-center gap-3 border-t border-line pt-4">
-							<button type="button" class="flex items-center gap-1.5 rounded-md bg-ink px-3 py-2 text-sm font-medium text-bg disabled:opacity-50" disabled={panelSaving} onclick={savePanel}>
-								<Save class="h-4 w-4" /> Save panel
-							</button>
-							<div class="flex items-center gap-2">
-								<div class="w-56"><ChannelSelect bind:value={publishChannel} placeholder="Post to channel…" /></div>
-								<button type="button" class="flex items-center gap-1.5 rounded-md border border-line px-3 py-2 text-sm text-ink hover:border-line-strong disabled:opacity-50" disabled={panelSaving} onclick={publishPanel}>
-									<Send class="h-4 w-4" /> Publish
-								</button>
-							</div>
-							{#if panelStatus}<span class="text-sm text-muted">{panelStatus}</span>{/if}
-						</div>
-					</div>
-				</ModSection>
 			{:else}
-				<ModSection label="Panels" desc="Design the messages members use to open tickets.">
-					{#snippet actions()}
-						<button type="button" class="flex items-center gap-1.5 rounded-md bg-ink px-3 py-1.5 text-sm font-medium text-bg" onclick={newPanel}>
-							<Plus class="h-4 w-4" /> New panel
-						</button>
-					{/snippet}
-					{#if !panelsLoaded}
-						<p class="text-sm text-muted">Loading…</p>
-					{:else if panelsError}
-						<p class="text-sm text-accent-ink">{panelsError}</p>
-					{:else if panels.length === 0}
-						<p class="text-sm text-muted">No panels yet. Create one, add categories, then publish it to a channel.</p>
-					{:else}
-						<div class="space-y-2">
-							{#each panels as p (p.id)}
-								<div class="flex items-center gap-4 rounded-lg border border-line bg-surface px-4 py-3">
-									<div class="flex-1">
-										<div class="flex items-center gap-2">
-											<span class="font-medium text-ink">{p.name || '(untitled)'}</span>
-											{#if !p.enabled}<span class="rounded bg-line px-1.5 py-0.5 text-[10px] uppercase text-muted">disabled</span>{/if}
-										</div>
-										<p class="text-xs text-muted">
-											{p.config.categories.length} categor{p.config.categories.length === 1 ? 'y' : 'ies'} · {p.style}
-											{#if p.message_id !== '0' && p.channel_id !== '0'}
-												· <a class="text-accent-ink hover:underline" href={channelLink(p.channel_id)} target="_blank" rel="noreferrer">posted</a>
-											{:else}· not posted{/if}
-										</p>
-									</div>
-									<button type="button" class="text-sm text-muted hover:text-ink" onclick={() => editPanel(p)}>Edit</button>
-									<button type="button" class="text-muted hover:text-accent-ink" title="Delete" onclick={() => deletePanel(p)}><Trash2 class="h-4 w-4" /></button>
+				<div class="divide-y divide-line">
+					{#each panels as p (p.id)}
+						<div class="flex items-center gap-3 px-4 py-3 sm:px-5">
+							<div class="min-w-0 flex-1">
+								<div class="flex items-center gap-2">
+									<span class="truncate text-[13px] font-semibold text-ink">{p.name || '(untitled)'}</span>
+									<span
+										class="shrink-0 rounded-full border border-line px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide {isPosted(p) ? 'text-accent-ink' : 'text-muted'}"
+									>
+										{isPosted(p) ? 'posted' : 'not posted'}
+									</span>
+									{#if !p.enabled}
+										<span class="shrink-0 rounded-full border border-line px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-faint">disabled</span>
+									{/if}
 								</div>
-							{/each}
+								<div class="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-muted">
+									<span>{p.config?.categories?.length ?? 0} ticket type{(p.config?.categories?.length ?? 0) === 1 ? '' : 's'}</span>
+									<span>{p.style === 'select' ? 'dropdown' : 'buttons'}</span>
+									{#if isPosted(p)}
+										<a
+											class="inline-flex items-center gap-0.5 text-accent-ink hover:underline"
+											href={panelLink(p)}
+											target="_blank"
+											rel="noreferrer">jump <ExternalLink size={11} /></a
+										>
+									{/if}
+								</div>
+							</div>
+							<div class="flex shrink-0 items-center gap-1.5">
+								<a
+									href={editorPath(p.id)}
+									class="inline-flex h-7 items-center gap-1 rounded-md border border-line px-2.5 text-[12px] font-medium text-ink hover:border-line-strong"
+								>
+									<Pencil size={12} /> Edit
+								</a>
+								<button
+									type="button"
+									disabled={panelBusy === p.id}
+									onclick={() => deletePanel(p)}
+									class="grid size-7 shrink-0 place-items-center rounded-md border border-line text-muted hover:border-line-strong hover:text-danger disabled:opacity-50"
+									aria-label="Delete setup"
+								>
+									<Trash2 size={13} />
+								</button>
+							</div>
 						</div>
-					{/if}
-				</ModSection>
+					{/each}
+				</div>
 			{/if}
 		{:else if tab === 'queue'}
 			<ModSection label="Ticket queue" desc="Live and closed tickets across the server.">
@@ -593,16 +377,48 @@
 					</div>
 				{/if}
 			</ModSection>
+		{:else if tab === 'settings'}
+			<ModSection label="Staff & channels" desc="Who handles tickets and where activity is logged.">
+				<div class="grid gap-4 sm:grid-cols-2">
+					<Field label="Support staff roles" hint="Added to every ticket and allowed to run ticket commands">
+						<RolePicker multiple value={cfg.staff_role_ids} onChange={(v) => (cfg.staff_role_ids = v as string[])} />
+					</Field>
+					<Field label="Default ticket category" hint="Discord category new ticket channels are created under">
+						<ChannelPicker kind="all" value={cfg.default_parent_id} placeholder="None" onChange={(v) => (cfg.default_parent_id = v as string)} />
+					</Field>
+					<Field label="Log channel" hint="Open / claim / close / delete events">
+						<ChannelSelect bind:value={cfg.log_channel} placeholder="No log channel" />
+					</Field>
+					<Field label="Transcript channel" hint="Where closing transcripts are posted (defaults to the log channel)">
+						<ChannelSelect bind:value={cfg.transcript_channel} placeholder="Use log channel" />
+					</Field>
+				</div>
+			</ModSection>
+
+			<ModSection label="Limits" desc="Guard against ticket spam.">
+				<div class="grid gap-4 sm:grid-cols-2">
+					<Field label="Max open tickets per member" hint="0 = unlimited; a ticket type can tighten this"><NumberField bind:value={cfg.max_open_per_user} min={0} /></Field>
+					<Field label="Channel name prefix" hint="Used when a ticket type has no name template"><input class={inputCls} bind:value={cfg.name_prefix} placeholder="ticket" /></Field>
+				</div>
+			</ModSection>
+
+			<ModSection label="Blacklist" desc="Roles and members that can never open a ticket.">
+				<div class="grid gap-4 sm:grid-cols-2">
+					<Field label="Blacklisted roles">
+						<RolePicker multiple value={cfg.blacklist_role_ids} onChange={(v) => (cfg.blacklist_role_ids = v as string[])} />
+					</Field>
+				</div>
+			</ModSection>
 		{:else if tab === 'guide'}
 			<ModSection label="How ticketing works" desc="From panel to transcript.">
 				<div class="max-w-2xl space-y-4 text-sm text-muted">
-					<p><span class="text-ink">1. Design a panel.</span> A panel is an embed with buttons (or a dropdown). Each button is a category — its own ticket type with its own permissions, opening message, form and rules.</p>
-					<p><span class="text-ink">2. Publish it.</span> Post the panel to a channel. Members click to open a ticket. If the category has a form, they fill it first.</p>
+					<p><span class="text-ink">1. Create a setup.</span> A setup is a panel message with buttons (or a dropdown). Each button is a ticket type — its own permissions, opening message, pre-open form and rules. You can run as many setups as you like in different channels.</p>
+					<p><span class="text-ink">2. Publish it.</span> Post the panel to a channel. Members click to open a ticket. If the type has a form, they fill it first.</p>
 					<p><span class="text-ink">3. A private channel opens.</span> Only the opener and your support roles can see it. Staff can claim it, add or remove members, rename it, and leave private notes.</p>
 					<p><span class="text-ink">4. Close politely.</span> Staff can close outright, or send a close request with <code class="text-ink">/ticket closerequest</code> — the opener confirms with a button, and an optional delay closes the ticket automatically if they never answer.</p>
 					<p><span class="text-ink">5. Follow up.</span> Closing generates an HTML transcript (posted to your transcript channel and optionally DMed to the opener) and can ask the opener to rate the help. Inactive tickets can auto-close after a warning.</p>
-					<p><span class="text-ink">6. Make it yours.</span> Every message — panel, opening, closed card, close request, inactivity warning, feedback DM — is fully composable (content, embeds, buttons), and the built-in Claim/Close/Reopen buttons can be restyled per category.</p>
-					<p><span class="text-ink">7. Automate it.</span> Every ticket event (opened, claimed, closed, close requested, rated) is a trigger in Automations; each category can launch a saved automation on open or close; and any button you add to a ticket message can run an automation when clicked.</p>
+					<p><span class="text-ink">6. Make it yours.</span> Every message — panel, opening, closed card, close request, inactivity warning, feedback DM — is fully composable (content, embeds, buttons), and the built-in Claim/Close/Reopen buttons can be restyled per ticket type.</p>
+					<p><span class="text-ink">7. Automate it.</span> Every ticket event (opened, claimed, closed, close requested, rated) is a trigger in Automations; each ticket type can launch a saved automation on open or close; and any button you add to a ticket message can run an automation when clicked.</p>
 					<p>Staff also get <code class="text-ink">/ticket</code> commands (close, closerequest, claim, add, remove, rename, note, transcript) inside any ticket channel, and admins can post a panel with <code class="text-ink">/tickets post</code>.</p>
 				</div>
 			</ModSection>
