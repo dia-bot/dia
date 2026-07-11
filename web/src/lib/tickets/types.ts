@@ -294,6 +294,7 @@ export function newCategory(label = 'Support'): CategoryConfig {
 }
 
 export function defaultPanelConfig(): PanelConfig {
+	const cat = newCategory('General support');
 	return {
 		content: '',
 		embeds: [
@@ -305,9 +306,17 @@ export function defaultPanelConfig(): PanelConfig {
 			}
 		],
 		select_placeholder: 'Choose a ticket type',
-		categories: [newCategory('General support')],
-		components: [],
-		button_bindings: {},
+		categories: [cat],
+		// A real, visible open button in the composition, bound to the category
+		// (mirrors Go DefaultPanelConfig).
+		components: [
+			{
+				components: [
+					{ type: 'button', style: 'primary', label: cat.label, emoji: '🎫', custom_id_suffix: cat.id }
+				]
+			}
+		],
+		button_bindings: { [cat.id]: cat.id },
 		button_actions: {}
 	};
 }

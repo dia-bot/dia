@@ -136,7 +136,8 @@
 		const id = editingType.id;
 		typeModalOpen = false;
 		editingType = null;
-		config.categories = config.categories.filter((c) => c.id !== id);
+		const i = config.categories.findIndex((c) => c.id === id);
+		if (i >= 0) removeCategory(i);
 	}
 
 	async function load() {
@@ -216,13 +217,61 @@
 		});
 	}
 
+	// appendTypeButton drops a ready-bound open button for the type into the
+	// panel composition (into the last row with room, else a new row).
+	function appendTypeButton(cat: CategoryConfig) {
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		const s = msgStep.spec as any;
+		const rows = ((s.components ?? []) as { components: TicketComponent[] }[]).map((r) => ({
+			components: [...(r.components ?? [])]
+		}));
+		const btn: TicketComponent = {
+			type: 'button',
+			style: 'primary',
+			label: cat.label || 'Open ticket',
+			emoji: cat.emoji || '🎫',
+			custom_id_suffix: cat.id
+		};
+		const last = rows[rows.length - 1];
+		if (last && last.components.length < 5) last.components.push(btn);
+		else rows.push({ components: [btn] });
+		msgStep.spec = { ...s, components: rows };
+		config.button_bindings[cat.id] = cat.id;
+	}
+
 	function addCategory() {
 		if (config.categories.length >= 25) return;
 		config.categories = [...config.categories, newCategory('New ticket type')];
-		openType(config.categories[config.categories.length - 1]);
+		const cat = config.categories[config.categories.length - 1];
+		appendTypeButton(cat);
+		openType(cat);
 	}
 	function removeCategory(i: number) {
+		const removed = config.categories[i];
 		config.categories = config.categories.filter((_, idx) => idx !== i);
+		if (!removed) return;
+		// Also drop the panel buttons that opened this type, and their bindings.
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		const s = msgStep.spec as any;
+		const rows = ((s.components ?? []) as { components: TicketComponent[] }[])
+			.map((r) => ({
+				components: (r.components ?? []).filter(
+					(c) => config.button_bindings[c.custom_id_suffix ?? ''] !== removed.id
+				)
+			}))
+			.filter((r) => r.components.length > 0);
+		msgStep.spec = { ...s, components: rows };
+		for (const [suffix, cid] of Object.entries(config.button_bindings)) {
+			if (cid === removed.id) delete config.button_bindings[suffix];
+		}
+		config.button_bindings = { ...config.button_bindings };
+	}
+
+	// With the buttons layout, a type is only reachable if some composed button
+	// opens it (unless nothing is composed and the generated fallback applies).
+	function typeHasButton(cat: CategoryConfig): boolean {
+		if (style !== 'buttons' || panelButtons.length === 0) return true;
+		return panelButtons.some((s) => config.button_bindings[s] === cat.id);
 	}
 
 	const canPublish = $derived(!!channelId && config.categories.length > 0);
@@ -477,7 +526,12 @@
 								<button type="button" class="flex min-w-0 flex-1 items-center gap-3 text-left" onclick={() => openType(cat)}>
 									<span class="text-lg leading-none">{cat.emoji || '🎫'}</span>
 									<span class="min-w-0">
-										<span class="block truncate text-[13px] font-semibold text-ink">{cat.label || 'Untitled ticket type'}</span>
+										<span class="flex items-center gap-2">
+											<span class="truncate text-[13px] font-semibold text-ink">{cat.label || 'Untitled ticket type'}</span>
+											{#if !typeHasButton(cat)}
+												<span class="shrink-0 rounded-full border border-accent/40 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-accent-ink">no panel button</span>
+											{/if}
+										</span>
 										<span class="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-muted">
 											<span>{cat.open_mode === 'thread' ? 'private thread' : 'private channel'}</span>
 											{#if (cat.form?.length ?? 0) > 0}<span>{cat.form?.length} form question{(cat.form?.length ?? 0) === 1 ? '' : 's'}</span>{/if}
@@ -488,6 +542,16 @@
 										</span>
 									</span>
 								</button>
+								{#if !typeHasButton(cat)}
+									<button
+										type="button"
+										class="inline-flex h-7 items-center gap-1 rounded-md border border-line px-2.5 text-[12px] font-medium text-ink hover:border-line-strong"
+										title="Add an open button for this type to the panel message"
+										onclick={() => appendTypeButton(cat)}
+									>
+										<Plus size={12} /> Add button
+									</button>
+								{/if}
 								<button
 									type="button"
 									class="inline-flex h-7 items-center gap-1 rounded-md border border-line px-2.5 text-[12px] font-medium text-ink hover:border-line-strong"
@@ -499,7 +563,9 @@
 									type="button"
 									class="grid size-7 shrink-0 place-items-center rounded-md border border-line text-muted hover:border-line-strong hover:text-danger"
 									aria-label="Delete ticket type"
-									onclick={() => removeCategory(i)}
+									onclick={() => {
+										if (confirm(`Delete the "${cat.label || 'untitled'}" ticket type?`)) removeCategory(i);
+									}}
 								>
 									<Trash2 size={13} />
 								</button>
@@ -518,4 +584,4 @@
 <svelte:window onkeydown={onKeydown} />
 <ReleaseDock {dirty} phase={savePhase} error={loadError} onsave={saveChanges} onreset={discardChanges} />
 <TemplateGuide bind:open={showGuide} variables={TICKET_TEMPLATE_VARS} variablesLabel="Ticket variables" lookups={false} />
-<TicketTypeModal bind:open={typeModalOpen} category={editingType} guildId={store.id} onRemove={removeEditingType} />
+<TicketTypeModal bind:open={typeModalOpen} category={editingType} guildId={store.id} panelStyle={style} onRemove={removeEditingType} />

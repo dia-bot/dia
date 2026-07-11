@@ -18,10 +18,15 @@
 
 	let {
 		category,
-		guildId
+		guildId,
+		panelStyle = 'buttons'
 	}: {
 		category: CategoryConfig;
 		guildId: string;
+		// The parent setup's layout: with a dropdown the option's emoji and
+		// description are edited here; with buttons the panel composer owns the
+		// button's whole look.
+		panelStyle?: string;
 	} = $props();
 
 	// Advanced message surfaces are collapsed until needed (the built-in message
@@ -95,12 +100,21 @@
 </script>
 
 <div class="space-y-5">
-	<!-- Button / entry -->
+	<!-- Identity. The panel button's look (label, emoji, colour) is edited on the
+	     button itself in the panel composer; only the dropdown layout needs its
+	     option fields here. -->
 	<div class="grid gap-4 sm:grid-cols-2">
-		<Field label="Label"><input class={inputCls} bind:value={category.label} placeholder="General support" /></Field>
-		<Field label="Emoji" hint="Unicode or <:name:id>"><input class={inputCls} bind:value={category.emoji} placeholder="🎫" /></Field>
-		<Field label="Description" hint="Shown on the select option"><input class={inputCls} bind:value={category.description} placeholder="Questions and general help" /></Field>
-		<Field label="Button color" hint="For the auto-generated panel button"><Select bind:value={category.button_style} options={styleOptions} /></Field>
+		<Field label="Name" hint="Shown in the queue, logs and {'{{ .Ticket.Category }}'}">
+			<input class={inputCls} bind:value={category.label} placeholder="General support" />
+		</Field>
+		{#if panelStyle === 'select'}
+			<Field label="Option emoji" hint="On the dropdown option">
+				<input class={inputCls} bind:value={category.emoji} placeholder="🎫" />
+			</Field>
+			<Field label="Option description" hint="Shown under the dropdown option">
+				<input class={inputCls} bind:value={category.description} placeholder="Questions and general help" />
+			</Field>
+		{/if}
 	</div>
 
 	<!-- Channel / thread -->

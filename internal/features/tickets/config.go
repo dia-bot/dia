@@ -310,6 +310,12 @@ func DefaultPanelConfig() PanelConfig {
 		}},
 		SelectPlaceholder: "Choose a ticket type",
 		Categories:        []CategoryConfig{DefaultCategory("support", "General support")},
+		// A real, visible open button in the composition (edited in the preview
+		// like any other button); ButtonBindings routes its click to the category.
+		Components: []cc.ComponentRow{{Components: []cc.Component{
+			{Type: "button", Style: "primary", Label: "General support", Emoji: "🎫", CustomIDSuffix: "support"},
+		}}},
+		ButtonBindings: map[string]string{"support": "support"},
 	}
 }
 

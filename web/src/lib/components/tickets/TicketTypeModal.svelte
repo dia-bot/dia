@@ -15,11 +15,13 @@
 		open = $bindable(false),
 		category,
 		guildId,
+		panelStyle = 'buttons',
 		onRemove
 	}: {
 		open?: boolean;
 		category: CategoryConfig | null;
 		guildId: string;
+		panelStyle?: string;
 		// Deletes the ticket type (the host closes the modal after).
 		onRemove?: () => void;
 	} = $props();
@@ -90,7 +92,7 @@
 			</div>
 
 			<div class="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-5">
-				<CategoryEditor {category} {guildId} />
+				<CategoryEditor {category} {guildId} {panelStyle} />
 			</div>
 		</div>
 	</div>
