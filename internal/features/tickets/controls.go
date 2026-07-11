@@ -43,6 +43,12 @@ func (p *Plugin) handleTicketCommand(c *interactions.Context, d plugin.Deps) err
 		_, _ = c.FollowupContent("Ticket closed.")
 		return nil
 
+	case "closerequest":
+		if !staff {
+			return c.RespondEphemeral("Only staff can request a close.")
+		}
+		return p.handleCloseRequest(c, d, cfg, cat, t)
+
 	case "claim", "unclaim":
 		if !staff {
 			return c.RespondEphemeral("Only staff can claim tickets.")
@@ -123,12 +129,12 @@ func (p *Plugin) handleClaim(c *interactions.Context, d plugin.Deps, ticketID st
 	if err := p.applyClaim(c.Ctx, d, cfg, cat, t, actor, actorID, claim); err != nil {
 		return c.RespondEphemeral("Couldn't update the claim.")
 	}
-	var claimedBy int64
+	tv := viewOf(t)
+	tv.claimerID = ""
 	if claim {
-		claimedBy = actorID
+		tv.claimerID = actor.ID
 	}
-	tv := ticketView{id: t.ID, number: t.Number, subject: t.Subject, channelID: event.FormatID(t.ChannelID)}
-	parts := p.buildOpening(cfg, cat, tv, openerUser(t), c.GuildID, guildName(c.Ctx, d, gid), claimedBy, false)
+	parts := p.buildOpening(cfg, cat, tv, openerUser(t), c.GuildID, guildName(c.Ctx, d, gid), false)
 	return c.UpdateMessage(&discordgo.InteractionResponseData{
 		Content:         parts.content,
 		Embeds:          parts.embeds,

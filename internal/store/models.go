@@ -320,6 +320,9 @@ type Ticket struct {
 	FirstResponseAt    *time.Time
 	LastActivityAt     time.Time
 	CloseWarnedAt      *time.Time
+	CloseRequestedBy   int64  // staff member with a pending close request (0 = none)
+	CloseRequestReason string // reason attached to the pending close request
+	CloseRequestAt     *time.Time
 	ClosedAt           *time.Time
 	ClosedBy           int64
 	CloseReason        string

@@ -572,7 +572,8 @@ func (p *Plugin) prepare(ctx context.Context, et event.Type, env *event.Envelope
 			"duration_seconds": a.DurationSeconds,
 		}
 
-	case event.TypeTicketOpened, event.TypeTicketClaimed, event.TypeTicketClosed, event.TypeTicketRated:
+	case event.TypeTicketOpened, event.TypeTicketClaimed, event.TypeTicketClosed,
+		event.TypeTicketCloseRequested, event.TypeTicketRated:
 		tk, err := plugin.DecodeData[event.TicketEvent](env)
 		if err != nil {
 			return nil, false

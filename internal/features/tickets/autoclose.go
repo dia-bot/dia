@@ -7,6 +7,7 @@ import (
 
 	"github.com/dia-bot/dia/internal/event"
 	"github.com/dia-bot/dia/internal/plugin"
+	"github.com/dia-bot/dia/internal/store"
 	"github.com/dia-bot/dia/pkg/discordgo"
 )
 
@@ -44,11 +45,7 @@ func (p *Plugin) sweepAutoClose(ctx context.Context, d plugin.Deps) {
 		// Stage 1: warn, if a warning grace is configured and none sent yet.
 		if t.AutoWarnMinutes > 0 && t.CloseWarnedAt == nil {
 			if ok, _ := d.Store.Tickets.MarkWarned(ctx, t.ID); ok && t.ChannelID != 0 {
-				_, _ = d.Discord.SendMessage(event.FormatID(t.ChannelID), &discordgo.MessageSend{
-					Content: fmt.Sprintf("<@%s> This ticket will close in %d minute(s) due to inactivity. Send a message to keep it open.",
-						event.FormatID(t.OpenerID), t.AutoWarnMinutes),
-					AllowedMentions: &discordgo.MessageAllowedMentions{Parse: []discordgo.AllowedMentionType{}, Users: []string{event.FormatID(t.OpenerID)}},
-				})
+				p.postInactivityWarning(ctx, d, t)
 			}
 			continue
 		}
@@ -61,4 +58,45 @@ func (p *Plugin) sweepAutoClose(ctx context.Context, d plugin.Deps) {
 		cfg, cat := p.resolveTicketConfig(ctx, d, t.GuildID, t)
 		p.performClose(ctx, d, cfg, cat, t, event.User{}, 0, "Closed automatically due to inactivity.", "auto")
 	}
+
+	// Close requests whose auto-accept deadline passed close on behalf of the
+	// requesting staff member. CloseTicket is conditional, so an opener clicking
+	// Keep-open in the same instant wins at most once.
+	reqs, err := d.Store.Tickets.DueCloseRequests(ctx, 25)
+	if err != nil {
+		d.Log.Warn("tickets: scan due close requests", "err", err)
+		return
+	}
+	for _, t := range reqs {
+		cfg, cat := p.resolveTicketConfig(ctx, d, t.GuildID, t)
+		actor := event.User{ID: event.FormatID(t.CloseRequestedBy)}
+		reason := t.CloseRequestReason
+		if reason == "" {
+			reason = "Close request accepted automatically."
+		}
+		p.performClose(ctx, d, cfg, cat, t, actor, t.CloseRequestedBy, reason, "close_request")
+	}
+}
+
+// postInactivityWarning posts the category's composed auto-close warning (or
+// the built-in line) in the ticket channel, pinging the opener.
+func (p *Plugin) postInactivityWarning(ctx context.Context, d plugin.Deps, t store.Ticket) {
+	opener := event.FormatID(t.OpenerID)
+	send := &discordgo.MessageSend{
+		AllowedMentions: &discordgo.MessageAllowedMentions{Parse: []discordgo.AllowedMentionType{}, Users: []string{opener}},
+	}
+	_, cat := p.resolveTicketConfig(ctx, d, t.GuildID, t)
+	if !cat.AutoClose.WarnMessage.Empty() {
+		tv := viewOf(t)
+		sc := ticketScope(event.FormatID(t.GuildID), guildName(ctx, d, t.GuildID), openerUser(t), cat, &tv)
+		send.Content, send.Embeds = renderSpec(cat.AutoClose.WarnMessage, sc, brandColor)
+		if rows := renderSpecRows(cat.AutoClose.WarnMessage, sc, t.ID); len(rows) > 0 {
+			send.Components = rows
+		}
+	}
+	if send.Content == "" && len(send.Embeds) == 0 {
+		send.Content = fmt.Sprintf("<@%s> This ticket will close in %d minute(s) due to inactivity. Send a message to keep it open.",
+			opener, t.AutoWarnMinutes)
+	}
+	_, _ = d.Discord.SendMessage(event.FormatID(t.ChannelID), send)
 }

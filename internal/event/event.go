@@ -70,10 +70,11 @@ const (
 	// These are worker-published like TypeAutomodAction (no gateway/Elixir
 	// mapper): the ticketing feature emits them across a ticket's lifecycle so
 	// the automations runtime can trigger flows off ticket activity.
-	TypeTicketOpened  Type = "TICKET_OPENED"
-	TypeTicketClaimed Type = "TICKET_CLAIMED"
-	TypeTicketClosed  Type = "TICKET_CLOSED"
-	TypeTicketRated   Type = "TICKET_RATED"
+	TypeTicketOpened         Type = "TICKET_OPENED"
+	TypeTicketClaimed        Type = "TICKET_CLAIMED"
+	TypeTicketClosed         Type = "TICKET_CLOSED"
+	TypeTicketCloseRequested Type = "TICKET_CLOSE_REQUESTED"
+	TypeTicketRated          Type = "TICKET_RATED"
 
 	// TypeGiveawayEnded is NOT a gateway event: the giveaway feature publishes it
 	// on the same stream when a giveaway is drawn (natural end, manual end, or
@@ -383,10 +384,10 @@ type TicketEvent struct {
 	Subject       string  `json:"subject,omitempty"`
 	User          User    `json:"user"` // the ticket opener
 	Member        *Member `json:"member,omitempty"`
-	ActorID       string  `json:"actor_id,omitempty"`   // who claimed/closed (may differ from opener)
+	ActorID       string  `json:"actor_id,omitempty"`   // who claimed/closed/requested (may differ from opener)
 	ClaimedBy     string  `json:"claimed_by,omitempty"` // set on TICKET_CLAIMED
 	ClosedBy      string  `json:"closed_by,omitempty"`  // set on TICKET_CLOSED
-	Reason        string  `json:"reason,omitempty"`     // close reason
+	Reason        string  `json:"reason,omitempty"`     // close / close-request reason
 	Rating        int     `json:"rating,omitempty"`     // set on TICKET_RATED (1..5)
 }
 

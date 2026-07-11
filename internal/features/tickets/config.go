@@ -75,14 +75,33 @@ func (c Config) StaffRoles(cat CategoryConfig) []string {
 	return out
 }
 
-// PanelConfig is the JSONB shape stored on a ticket_panels row: the panel message
-// (embed + optional content) plus its categories. Kept in lockstep with
+// PanelConfig is the JSONB shape stored on a ticket_panels row: the panel
+// message (fully composed: content + any number of embeds, the same shape the
+// shared MessageEditor produces) plus its categories. Kept in lockstep with
 // web/src/lib/tickets/types.ts.
 type PanelConfig struct {
 	Content           string           `json:"content,omitempty"`
-	Embed             cc.EmbedSpec     `json:"embed"`
+	Embeds            []cc.EmbedSpec   `json:"embeds,omitempty"`
 	SelectPlaceholder string           `json:"select_placeholder,omitempty"`
 	Categories        []CategoryConfig `json:"categories,omitempty"`
+}
+
+// UnmarshalJSON folds the legacy single-embed shape ({"embed": {...}}) into
+// Embeds so panels saved before the composed-message rework keep rendering.
+func (pc *PanelConfig) UnmarshalJSON(b []byte) error {
+	type alias PanelConfig
+	var a struct {
+		alias
+		Embed *cc.EmbedSpec `json:"embed"`
+	}
+	if err := json.Unmarshal(b, &a); err != nil {
+		return err
+	}
+	*pc = PanelConfig(a.alias)
+	if len(pc.Embeds) == 0 && a.Embed != nil && !embedSpecEmpty(*a.Embed) {
+		pc.Embeds = []cc.EmbedSpec{*a.Embed}
+	}
+	return nil
 }
 
 // CategoryConfig is one ticket type on a panel: the button/select entry plus all
@@ -108,6 +127,20 @@ type CategoryConfig struct {
 	Form    []FormField `json:"form,omitempty"` // pre-open modal (max 5 fields)
 	Welcome MessageSpec `json:"welcome"`        // the ticket's opening message
 
+	// Closed is the message posted in a channel-mode ticket when it closes
+	// (empty = the built-in closed card). The system Reopen / Delete / Transcript
+	// buttons are appended after any composed rows.
+	Closed MessageSpec `json:"closed"`
+
+	// CloseRequest is the message /ticket closerequest posts to ask the opener to
+	// confirm a close (empty = the built-in card). The system Accept / Keep-open
+	// buttons are appended after any composed rows.
+	CloseRequest MessageSpec `json:"close_request"`
+
+	// Buttons restyles the system control buttons (label / emoji / style, and for
+	// the optional ones a hide toggle). Zero values keep the built-in look.
+	Buttons ControlButtons `json:"buttons"`
+
 	Transcript TranscriptConfig `json:"transcript"`
 	Feedback   FeedbackConfig   `json:"feedback"`
 	AutoClose  AutoCloseConfig  `json:"auto_close"`
@@ -120,11 +153,71 @@ type CategoryConfig struct {
 	OnCloseAutomation string `json:"on_close_automation,omitempty"`
 }
 
-// MessageSpec is a customizable content + embed message (ticket opening message).
+// MessageSpec is one fully-composed ticket message: content + embeds + extra
+// button rows, the same shape the shared MessageEditor produces (and welcome /
+// giveaway render). Composed buttons route by style: a link button opens its
+// URL, any other button runs the saved automation ButtonActions points its
+// custom_id_suffix at (or acknowledges silently when unwired). System control
+// buttons (Claim/Close/…) are appended by the renderer, never composed here.
 type MessageSpec struct {
-	Content  string       `json:"content,omitempty"`
-	UseEmbed bool         `json:"use_embed,omitempty"`
-	Embed    cc.EmbedSpec `json:"embed"`
+	Content    string            `json:"content,omitempty"`
+	Embeds     []cc.EmbedSpec    `json:"embeds,omitempty"`
+	Components []cc.ComponentRow `json:"components,omitempty"`
+	// ButtonActions maps a composed button's custom_id_suffix to the saved
+	// automation it launches on click (mirrors giveaway Spec.ButtonActions).
+	ButtonActions map[string]string `json:"button_actions,omitempty"`
+}
+
+// UnmarshalJSON also accepts the legacy single-embed shape
+// ({content, use_embed, embed}) so panels saved before the composed-message
+// rework keep decoding: the legacy embed becomes Embeds[0] when it was in use.
+func (m *MessageSpec) UnmarshalJSON(b []byte) error {
+	type alias MessageSpec
+	var a struct {
+		alias
+		UseEmbed bool          `json:"use_embed"`
+		Embed    *cc.EmbedSpec `json:"embed"`
+	}
+	if err := json.Unmarshal(b, &a); err != nil {
+		return err
+	}
+	*m = MessageSpec(a.alias)
+	if len(m.Embeds) == 0 && a.UseEmbed && a.Embed != nil && !embedSpecEmpty(*a.Embed) {
+		m.Embeds = []cc.EmbedSpec{*a.Embed}
+	}
+	return nil
+}
+
+// Empty reports whether the spec composes nothing (so the renderer should fall
+// back to the built-in message).
+func (m MessageSpec) Empty() bool {
+	return m.Content == "" && len(m.Embeds) == 0 && len(m.Components) == 0
+}
+
+// embedSpecEmpty reports whether a composed embed carries nothing displayable.
+func embedSpecEmpty(e cc.EmbedSpec) bool {
+	return e.Title == "" && e.Description == "" && e.AuthorName == "" &&
+		e.ImageURL == "" && e.Thumbnail == "" && e.FooterText == "" && len(e.Fields) == 0
+}
+
+// ControlButtons restyles the system buttons the bot places on ticket messages.
+type ControlButtons struct {
+	Claim      SystemButton `json:"claim"`
+	Close      SystemButton `json:"close"`
+	Reopen     SystemButton `json:"reopen"`
+	Delete     SystemButton `json:"delete"`
+	Transcript SystemButton `json:"transcript"`
+}
+
+// SystemButton customizes one system control button. Zero values keep the
+// built-in label / emoji / style. Hide removes the button entirely; it is
+// honoured for Reopen / Delete / Transcript (the actions stay reachable via
+// /ticket) but ignored for Close so a ticket can always be closed in place.
+type SystemButton struct {
+	Label string `json:"label,omitempty"`
+	Emoji string `json:"emoji,omitempty"`
+	Style string `json:"style,omitempty"` // primary | secondary | success | danger
+	Hide  bool   `json:"hide,omitempty"`
 }
 
 // FormField is one input in a category's pre-open modal form.
@@ -145,16 +238,25 @@ type TranscriptConfig struct {
 }
 
 // FeedbackConfig controls the post-close rating prompt DMed to the opener.
+// Message fully composes the DM above the rating select; when empty the
+// built-in card (with Prompt as its description) is used. ThanksMessage is the
+// templated reply shown after the opener picks a rating ({{ .Ticket.Rating }}
+// is set; empty = the built-in thanks).
 type FeedbackConfig struct {
-	Enabled bool   `json:"enabled,omitempty"`
-	Prompt  string `json:"prompt,omitempty"`
+	Enabled       bool        `json:"enabled,omitempty"`
+	Prompt        string      `json:"prompt,omitempty"`
+	Message       MessageSpec `json:"message"`
+	ThanksMessage string      `json:"thanks_message,omitempty"`
 }
 
-// AutoCloseConfig closes a ticket after a period of inactivity.
+// AutoCloseConfig closes a ticket after a period of inactivity. WarnMessage
+// fully composes the inactivity warning (empty = the built-in line); it renders
+// with the ticket scope and should tell the opener how to keep the ticket open.
 type AutoCloseConfig struct {
-	Enabled           bool `json:"enabled,omitempty"`
-	InactivityMinutes int  `json:"inactivity_minutes,omitempty"`
-	WarnMinutes       int  `json:"warn_minutes,omitempty"` // grace after the warning (0 = close at once)
+	Enabled           bool        `json:"enabled,omitempty"`
+	InactivityMinutes int         `json:"inactivity_minutes,omitempty"`
+	WarnMinutes       int         `json:"warn_minutes,omitempty"` // grace after the warning (0 = close at once)
+	WarnMessage       MessageSpec `json:"warn_message"`
 }
 
 // Category finds a category by id (ok=false if not present).
@@ -181,35 +283,38 @@ func DecodePanel(raw json.RawMessage) PanelConfig {
 func DefaultPanelConfig() PanelConfig {
 	return PanelConfig{
 		Content: "",
-		Embed: cc.EmbedSpec{
+		Embeds: []cc.EmbedSpec{{
 			Title:       "Need help?",
 			Description: "Open a ticket and our team will be with you shortly. Pick the option that best fits your request below.",
 			Color:       "#ff6363",
-		},
+		}},
 		SelectPlaceholder: "Choose a ticket type",
-		Categories: []CategoryConfig{
-			{
-				ID:          "support",
-				Label:       "General support",
-				Emoji:       "🎫",
-				Description: "Questions and general help",
-				ButtonStyle: "primary",
-				OpenMode:    OpenModeChannel,
-				NameScheme:  "ticket-{{ printf \"%04d\" .Ticket.Number }}",
-				Welcome: MessageSpec{
-					Content:  "{{ .User.Mention }}",
-					UseEmbed: true,
-					Embed: cc.EmbedSpec{
-						Title:       "Ticket #{{ .Ticket.Number }}",
-						Description: "Thanks for reaching out, {{ .User.Mention }}. Describe your issue and a staff member will help you soon.\n\nUse the buttons below to claim or close this ticket.",
-						Color:       "#ff6363",
-					},
-				},
-				Transcript:   TranscriptConfig{Enabled: true},
-				Feedback:     FeedbackConfig{Enabled: false, Prompt: "How was your support experience?"},
-				AutoClose:    AutoCloseConfig{Enabled: false, InactivityMinutes: 1440, WarnMinutes: 60},
-				ClaimEnabled: true,
-			},
+		Categories:        []CategoryConfig{DefaultCategory("support", "General support")},
+	}
+}
+
+// DefaultCategory returns a ready-to-use general-support category, shared by
+// the default panel and the dashboard's "add category" (via the TS mirror).
+func DefaultCategory(id, label string) CategoryConfig {
+	return CategoryConfig{
+		ID:          id,
+		Label:       label,
+		Emoji:       "🎫",
+		Description: "Questions and general help",
+		ButtonStyle: "primary",
+		OpenMode:    OpenModeChannel,
+		NameScheme:  "ticket-{{ printf \"%04d\" .Ticket.Number }}",
+		Welcome: MessageSpec{
+			Content: "{{ .User.Mention }}",
+			Embeds: []cc.EmbedSpec{{
+				Title:       "Ticket #{{ .Ticket.Number }}",
+				Description: "Thanks for reaching out, {{ .User.Mention }}. Describe your issue and a staff member will help you soon.\n\nUse the buttons below to claim or close this ticket.",
+				Color:       "#ff6363",
+			}},
 		},
+		Transcript:   TranscriptConfig{Enabled: true},
+		Feedback:     FeedbackConfig{Enabled: false, Prompt: "How was your support experience?"},
+		AutoClose:    AutoCloseConfig{Enabled: false, InactivityMinutes: 1440, WarnMinutes: 60},
+		ClaimEnabled: true,
 	}
 }

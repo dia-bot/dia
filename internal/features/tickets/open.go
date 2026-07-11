@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -191,7 +192,7 @@ func (p *Plugin) createAndOpen(c *interactions.Context, d plugin.Deps, cfg Confi
 
 	// Opening message with the control buttons.
 	tv.channelID = ch.ID
-	parts := p.buildOpening(cfg, cat, tv, opener, c.GuildID, gName, 0, true)
+	parts := p.buildOpening(cfg, cat, tv, opener, c.GuildID, gName, true)
 	_, _ = d.Discord.SendMessage(ch.ID, &discordgo.MessageSend{
 		Content:         parts.content,
 		Embeds:          parts.embeds,
@@ -203,7 +204,7 @@ func (p *Plugin) createAndOpen(c *interactions.Context, d plugin.Deps, cfg Confi
 	payload := ticketPayload(event.TypeTicketOpened, t, cat, opener, c.I.Member)
 	publishTicket(c.Ctx, d, event.TypeTicketOpened, payload)
 	postLog(d, cfg, logEmbed("Ticket opened", colorOpened, t, openerID))
-	p.runCategoryAutomation(c.Ctx, d, gid, gName, cat.OnOpenAutomation, "ticket_opened", opener, c.I.Member, t, cat, opener.ID)
+	p.runTicketAutomation(c.Ctx, d, gid, gName, cat.OnOpenAutomation, "ticket_opened", opener, c.I.Member, t, cat, opener.ID)
 
 	_, _ = c.FollowupContent("Opened your ticket: <#" + ch.ID + ">")
 	return nil
@@ -261,11 +262,14 @@ func ticketOverwrites(guildID, openerID string, supportRoles []string) []*discor
 }
 
 // buildOpening assembles a ticket's opening message (also used to rebuild it on
-// claim/unclaim). ping controls whether support roles / the opener are actually
-// pinged (true on first post, false on later edits).
-func (p *Plugin) buildOpening(cfg Config, cat CategoryConfig, tv ticketView, opener event.User, guildID, gName string, claimedBy int64, ping bool) openingParts {
+// claim/unclaim): the category's fully-composed Welcome spec, any composed
+// action/link buttons, then the system Claim/Close row (restyled by
+// cat.Buttons). ping controls whether support roles / the opener are actually
+// pinged (true on first post, false on later edits). tv.claimerID drives the
+// claimed state.
+func (p *Plugin) buildOpening(cfg Config, cat CategoryConfig, tv ticketView, opener event.User, guildID, gName string, ping bool) openingParts {
 	sc := ticketScope(guildID, gName, opener, cat, &tv)
-	content := render(cat.Welcome.Content, sc)
+	content, embeds := renderSpec(cat.Welcome, sc, brandColor)
 
 	am := &discordgo.MessageAllowedMentions{Parse: []discordgo.AllowedMentionType{}}
 	if ping {
@@ -290,46 +294,44 @@ func (p *Plugin) buildOpening(cfg Config, cat CategoryConfig, tv ticketView, ope
 		}
 	}
 
-	var embeds []*discordgo.MessageEmbed
-	if cat.Welcome.UseEmbed {
-		if em := renderEmbed(cat.Welcome.Embed, sc, brandColor); em != nil {
-			embeds = append(embeds, em)
-		}
-	}
-	if claimedBy != 0 {
-		claimField := field("Claimed by", "<@"+event.FormatID(claimedBy)+">", true)
+	if tv.claimerID != "" {
+		claimField := field("Claimed by", "<@"+tv.claimerID+">", true)
 		if len(embeds) > 0 {
 			embeds[0].Fields = append(embeds[0].Fields, claimField)
 		} else {
 			embeds = append(embeds, &discordgo.MessageEmbed{
-				Description: "Claimed by <@" + event.FormatID(claimedBy) + ">",
+				Description: "Claimed by <@" + tv.claimerID + ">",
 				Color:       colorClaimed,
 			})
 		}
 	}
+	// A components-only message is rejected by Discord; never post one.
+	if content == "" && len(embeds) == 0 {
+		content = "Ticket #" + strconv.Itoa(tv.number)
+	}
 
+	// Composed rows first (capped so the system row always fits), system row last.
+	rows := renderSpecRows(cat.Welcome, sc, tv.id)
+	if len(rows) > 4 {
+		rows = rows[:4]
+	}
 	var row discordgo.ActionsRow
 	if cat.ClaimEnabled {
-		if claimedBy == 0 {
-			row.Components = append(row.Components, discordgo.Button{
-				Style: discordgo.SuccessButton, Label: "Claim",
-				Emoji: &discordgo.ComponentEmoji{Name: "🙋"}, CustomID: claimButtonID(tv.id),
-			})
+		if tv.claimerID == "" {
+			row.Components = append(row.Components,
+				systemButton(cat.Buttons.Claim, "Claim", "🙋", discordgo.SuccessButton, claimButtonID(tv.id)))
 		} else {
-			row.Components = append(row.Components, discordgo.Button{
-				Style: discordgo.SecondaryButton, Label: "Unclaim", CustomID: unclaimButtonID(tv.id),
-			})
+			row.Components = append(row.Components,
+				systemButton(SystemButton{}, "Unclaim", "", discordgo.SecondaryButton, unclaimButtonID(tv.id)))
 		}
 	}
-	row.Components = append(row.Components, discordgo.Button{
-		Style: discordgo.DangerButton, Label: "Close",
-		Emoji: &discordgo.ComponentEmoji{Name: "🔒"}, CustomID: closeButtonID(tv.id),
-	})
+	row.Components = append(row.Components,
+		systemButton(cat.Buttons.Close, "Close", "🔒", discordgo.DangerButton, closeButtonID(tv.id)))
 
 	return openingParts{
 		content:    content,
 		embeds:     embeds,
-		components: []discordgo.MessageComponent{row},
+		components: append(rows, row),
 		allowed:    am,
 	}
 }

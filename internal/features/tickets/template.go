@@ -9,6 +9,7 @@ import (
 
 	"github.com/dia-bot/dia/internal/event"
 	cc "github.com/dia-bot/dia/internal/features/customcommands"
+	"github.com/dia-bot/dia/internal/store"
 	"github.com/dia-bot/dia/pkg/discordgo"
 )
 
@@ -17,7 +18,8 @@ import (
 // {{ .Guild.Name }} placeholders) and adds a {{ .Ticket.* }} namespace. It is
 // kept in lockstep with the variable picker in web/src/lib/tickets/types.ts.
 type scope struct {
-	User    scopeUser
+	User    scopeUser // the ticket opener
+	Actor   scopeUser // whoever performed the current action (closer / requester)
 	Guild   scopeGuild
 	Channel scopeChannel
 	Ticket  scopeTicket
@@ -47,6 +49,11 @@ type scopeTicket struct {
 	Subject  string
 	Category string
 	Channel  string // channel mention
+	Claimer  string // mention of the claiming staff member ("" = unclaimed)
+	Closer   string // mention of whoever closed / requested the close
+	Reason   string // close / close-request reason
+	Rating   int    // 1-5 once rated
+	Deadline string // Discord timestamp of a pending auto-accept close request
 }
 
 // panelScope builds the (opener-less) scope a panel message renders against.
@@ -68,21 +75,60 @@ func ticketScope(guildID, guildName string, opener event.User, cat CategoryConfi
 			ID:       t.id,
 			Subject:  t.subject,
 			Category: cat.Label,
+			Reason:   t.reason,
+			Rating:   t.rating,
 		},
 	}
 	if t.channelID != "" {
 		s.Ticket.Channel = "<#" + t.channelID + ">"
 	}
+	if t.claimerID != "" {
+		s.Ticket.Claimer = "<@" + t.claimerID + ">"
+	}
+	if t.closerID != "" {
+		s.Ticket.Closer = "<@" + t.closerID + ">"
+	}
+	if t.deadline != nil {
+		s.Ticket.Deadline = "<t:" + strconv.FormatInt(t.deadline.Unix(), 10) + ":R>"
+	}
+	return s
+}
+
+// withActor returns the scope with .Actor set to the acting user.
+func (s scope) withActor(actor event.User) scope {
+	s.Actor = userScope(actor)
 	return s
 }
 
 // ticketView is the minimal ticket data the renderers need, decoupled from the
-// store row so both the create path and later rebuilds (claim) can use it.
+// store row so both the create path and later rebuilds (claim) can use it. The
+// action fields (claimer/closer/reason/rating/deadline) are set only on the
+// surfaces where they exist.
 type ticketView struct {
 	id        string
 	number    int
 	subject   string
 	channelID string
+	claimerID string
+	closerID  string
+	reason    string
+	rating    int
+	deadline  *time.Time
+}
+
+// viewOf builds a ticketView from a store row.
+func viewOf(t store.Ticket) ticketView {
+	tv := ticketView{id: t.ID, number: t.Number, subject: t.Subject, reason: t.CloseReason, rating: t.Rating}
+	if t.ChannelID != 0 {
+		tv.channelID = event.FormatID(t.ChannelID)
+	}
+	if t.ClaimedBy != 0 {
+		tv.claimerID = event.FormatID(t.ClaimedBy)
+	}
+	if t.ClosedBy != 0 {
+		tv.closerID = event.FormatID(t.ClosedBy)
+	}
+	return tv
 }
 
 func userScope(u event.User) scopeUser {
@@ -157,6 +203,88 @@ func renderEmbed(e cc.EmbedSpec, sc scope, fallbackColor int) *discordgo.Message
 	return em
 }
 
+// renderSpec renders a composed MessageSpec's content + embeds against sc,
+// dropping embeds that render empty (Discord rejects them).
+func renderSpec(spec MessageSpec, sc scope, fallbackColor int) (string, []*discordgo.MessageEmbed) {
+	content := render(spec.Content, sc)
+	var embeds []*discordgo.MessageEmbed
+	for _, e := range spec.Embeds {
+		if em := renderEmbed(e, sc, fallbackColor); em != nil {
+			embeds = append(embeds, em)
+		}
+	}
+	return content, embeds
+}
+
+// renderSpecRows renders a spec's composed button rows with each click routed:
+// a link button opens its (templated) URL; any other button gets a
+// tkt:act:<ticketID>:<suffix> custom_id so its click runs the saved automation
+// ButtonActions points it at (or is acknowledged silently when unwired). Only
+// buttons are meaningful on a ticket surface; selects are skipped.
+func renderSpecRows(spec MessageSpec, sc scope, ticketID string) []discordgo.MessageComponent {
+	var out []discordgo.MessageComponent
+	for _, row := range spec.Components {
+		var comps []discordgo.MessageComponent
+		for _, c := range row.Components {
+			if c.Type != "" && c.Type != "button" {
+				continue
+			}
+			label := render(c.Label, sc)
+			if label == "" {
+				label = "Button"
+			}
+			if strings.EqualFold(c.Style, "link") || c.URL != "" {
+				url := render(c.URL, sc)
+				if url == "" {
+					continue
+				}
+				btn := discordgo.Button{Label: label, Style: discordgo.LinkButton, URL: url, Disabled: c.Disabled}
+				if em := ticketEmoji(c.Emoji); em != nil {
+					btn.Emoji = em
+				}
+				comps = append(comps, btn)
+				continue
+			}
+			btn := discordgo.Button{
+				Label:    label,
+				Style:    buttonStyle(c.Style),
+				CustomID: actionButtonID(ticketID, c.CustomIDSuffix),
+				Disabled: c.Disabled,
+			}
+			if em := ticketEmoji(c.Emoji); em != nil {
+				btn.Emoji = em
+			}
+			comps = append(comps, btn)
+		}
+		if len(comps) > 0 {
+			out = append(out, discordgo.ActionsRow{Components: comps})
+		}
+	}
+	return out
+}
+
+// systemButton builds one system control button, applying the category's
+// SystemButton override on top of the built-in default look.
+func systemButton(sb SystemButton, defLabel, defEmoji string, defStyle discordgo.ButtonStyle, customID string) discordgo.Button {
+	label := strings.TrimSpace(sb.Label)
+	if label == "" {
+		label = defLabel
+	}
+	style := defStyle
+	if sb.Style != "" {
+		style = buttonStyle(sb.Style)
+	}
+	emoji := sb.Emoji
+	if strings.TrimSpace(emoji) == "" {
+		emoji = defEmoji
+	}
+	btn := discordgo.Button{Label: label, Style: style, CustomID: customID}
+	if em := ticketEmoji(emoji); em != nil {
+		btn.Emoji = em
+	}
+	return btn
+}
+
 // channelName renders a category's name scheme and slugifies the result to
 // Discord's channel-name rules (lowercase, hyphenated, <=100 chars).
 func channelName(scheme string, sc scope, prefix string, number int) string {
@@ -214,23 +342,37 @@ func buttonStyle(s string) discordgo.ButtonStyle {
 	return discordgo.SecondaryButton
 }
 
-// ticketEmoji parses a dashboard-authored emoji string (unicode glyph or a
-// "<:name:id>" / "<a:name:id>" custom emoji) into a ComponentEmoji, or nil.
+// ticketEmoji parses a dashboard-authored emoji string into a ComponentEmoji:
+// a unicode glyph passes through as Name; a custom emoji arrives as "name:id"
+// from the shared editor (the pasted "<:name:id>" / "<a:name:id>" forms are
+// also tolerated). Empty → nil. Mirrors giveaway's componentEmoji.
 func ticketEmoji(s string) *discordgo.ComponentEmoji {
-	s = strings.TrimSpace(s)
+	s = strings.Trim(strings.TrimSpace(s), "<>")
 	if s == "" {
 		return nil
 	}
-	if strings.HasPrefix(s, "<") && strings.HasSuffix(s, ">") {
-		body := strings.Trim(s, "<>")
-		animated := strings.HasPrefix(body, "a:")
-		body = strings.TrimPrefix(body, "a:")
-		parts := strings.Split(body, ":")
-		if len(parts) == 2 {
-			return &discordgo.ComponentEmoji{Name: parts[0], ID: parts[1], Animated: animated}
+	parts := strings.Split(s, ":")
+	last := parts[len(parts)-1]
+	if len(parts) >= 2 && isSnowflakeID(last) {
+		e := &discordgo.ComponentEmoji{Name: parts[len(parts)-2], ID: last}
+		if len(parts) >= 3 && parts[0] == "a" {
+			e.Animated = true
 		}
+		return e
 	}
 	return &discordgo.ComponentEmoji{Name: s}
+}
+
+func isSnowflakeID(s string) bool {
+	if len(s) < 15 || len(s) > 21 {
+		return false
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // colorInt converts a #RRGGBB string to a Discord embed color int.

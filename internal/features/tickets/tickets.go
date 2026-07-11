@@ -51,6 +51,10 @@ func (p *Plugin) Init(ctx context.Context, d plugin.Deps, reg *plugin.Registrar)
 		Def: interactions.Slash("ticket", "Manage the current ticket",
 			interactions.SubCommand("close", "Close this ticket",
 				interactions.StringOpt("reason", "Why the ticket is being closed", false)),
+			interactions.SubCommand("closerequest", "Ask the opener to confirm closing this ticket",
+				interactions.StringOpt("reason", "Why the ticket should be closed", false),
+				interactions.WithChoices(interactions.IntOpt("delay", "Close automatically after this long unless the opener objects", false),
+					closeRequestDelayChoices()...)),
 			interactions.SubCommand("claim", "Claim this ticket so members know who's helping"),
 			interactions.SubCommand("unclaim", "Release your claim on this ticket"),
 			interactions.SubCommand("add", "Add a member to this ticket",
@@ -108,6 +112,15 @@ func (p *Plugin) handleComponent(c *interactions.Context, d plugin.Deps) error {
 		return p.handleReopen(c, d, arg0(args))
 	case "delete":
 		return p.handleDelete(c, d, arg0(args))
+	case "crok":
+		return p.handleCloseReqAccept(c, d, arg0(args))
+	case "crno":
+		return p.handleCloseReqDeny(c, d, arg0(args))
+	case "act":
+		if len(args) < 2 {
+			return c.DeferUpdate()
+		}
+		return p.handleActionButton(c, d, args[0], args[1])
 	case "transcript":
 		return p.handleTranscriptButton(c, d, arg0(args))
 	case "rate":

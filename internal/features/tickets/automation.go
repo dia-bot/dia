@@ -13,12 +13,13 @@ import (
 	"github.com/dia-bot/dia/internal/store"
 )
 
-// runCategoryAutomation launches a category's optional on-open / on-close
-// automation (by id) as a durable run, exactly like verification's automation
-// hook. The scope mirrors the ticket_* trigger (.User is the opener, .Event.*
-// carries the ticket fields), so a saved automation behaves identically whether
-// it is fired by the built-in trigger or wired here as a per-category hook.
-func (p *Plugin) runCategoryAutomation(ctx context.Context, d plugin.Deps, gid int64, gName, automationID, triggerKind string, opener event.User, member *event.Member, t store.Ticket, cat CategoryConfig, actorID string) {
+// runTicketAutomation launches a saved automation (by id) as a durable run for
+// a ticket, exactly like verification's automation hook. It backs both the
+// per-category on-open / on-close hooks and composed action buttons. The scope
+// mirrors the ticket_* triggers (.User is the passed user, .Event.* carries the
+// ticket fields), so a saved automation behaves identically whether it is fired
+// by the built-in trigger, a category hook, or a button click.
+func (p *Plugin) runTicketAutomation(ctx context.Context, d plugin.Deps, gid int64, gName, automationID, triggerKind string, opener event.User, member *event.Member, t store.Ticket, cat CategoryConfig, actorID string) {
 	automationID = strings.TrimSpace(automationID)
 	if automationID == "" || p.runner == nil {
 		return

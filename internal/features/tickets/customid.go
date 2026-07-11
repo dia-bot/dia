@@ -25,6 +25,17 @@ func reopenButtonID(ticketID string) string     { return componentPrefix + "reop
 func deleteButtonID(ticketID string) string     { return componentPrefix + "delete:" + ticketID }
 func transcriptButtonID(ticketID string) string { return componentPrefix + "transcript:" + ticketID }
 
+// Close-request controls (opener confirms or declines a staff close request).
+func closeReqAcceptID(ticketID string) string { return componentPrefix + "crok:" + ticketID }
+func closeReqDenyID(ticketID string) string   { return componentPrefix + "crno:" + ticketID }
+
+// actionButtonID routes a composed (non-link) ticket button back here:
+// tkt:act:<ticketID>:<suffix>. The click runs the saved automation the
+// category's ButtonActions maps the suffix to.
+func actionButtonID(ticketID, suffix string) string {
+	return componentPrefix + "act:" + ticketID + ":" + suffix
+}
+
 // Rating select, DMed to the opener on close. The guild id is embedded because a
 // DM interaction carries no guild (mirrors welcome's welcome:dm:* scheme).
 func rateSelectID(guildID, ticketID string) string {

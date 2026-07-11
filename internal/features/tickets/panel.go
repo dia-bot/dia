@@ -33,8 +33,10 @@ func buildPanelMessage(panel store.TicketPanel, pc PanelConfig, guildID, guildNa
 	if body := render(pc.Content, sc); body != "" {
 		send.Content = body
 	}
-	if em := renderEmbed(pc.Embed, sc, brandColor); em != nil {
-		send.Embeds = []*discordgo.MessageEmbed{em}
+	for _, e := range pc.Embeds {
+		if em := renderEmbed(e, sc, brandColor); em != nil {
+			send.Embeds = append(send.Embeds, em)
+		}
 	}
 	send.Components = panelComponents(panel, pc, sc)
 	if send.Content == "" && len(send.Embeds) == 0 {

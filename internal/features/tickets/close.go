@@ -95,7 +95,7 @@ func (p *Plugin) performClose(ctx context.Context, d plugin.Deps, cfg Config, ca
 				discordgo.PermissionViewChannel|discordgo.PermissionReadMessageHistory,
 				discordgo.PermissionSendMessages, "ticket: closed")
 			_, _ = d.Discord.EditChannel(chID, &discordgo.ChannelEdit{Name: "closed-" + strconv.Itoa(t.Number)}, "ticket: closed")
-			p.postClosedMessage(d, t, actorID, reason, transcriptURL)
+			p.postClosedMessage(ctx, d, cfg, cat, t, actor, actorID, reason, transcriptURL)
 		}
 	}
 
@@ -116,45 +116,102 @@ func (p *Plugin) performClose(ctx context.Context, d plugin.Deps, cfg Config, ca
 	postLog(d, cfg, logEmbed("Ticket closed", colorClosed, t, actorID, extra...))
 
 	gName := guildName(ctx, d, t.GuildID)
-	p.runCategoryAutomation(ctx, d, t.GuildID, gName, cat.OnCloseAutomation, "ticket_closed", openerUser(t), nil, t, cat, event.FormatID(actorID))
+	p.runTicketAutomation(ctx, d, t.GuildID, gName, cat.OnCloseAutomation, "ticket_closed", openerUser(t), nil, t, cat, event.FormatID(actorID))
 
 	if cat.Feedback.Enabled {
-		p.sendFeedbackPrompt(d, cat, t)
+		p.sendFeedbackPrompt(ctx, d, cat, t, reason)
 	}
 }
 
-// postClosedMessage posts the staff control row (reopen / delete / transcript)
-// in a closed channel-mode ticket.
-func (p *Plugin) postClosedMessage(d plugin.Deps, t store.Ticket, actorID int64, reason, transcriptURL string) {
-	desc := "This ticket has been closed."
+// postClosedMessage posts the closed-state message in a channel-mode ticket:
+// the category's composed Closed spec (falling back to the built-in card) plus
+// the system Reopen / Delete / Transcript row (restyled by cat.Buttons; the
+// optional buttons honour Hide).
+func (p *Plugin) postClosedMessage(ctx context.Context, d plugin.Deps, cfg Config, cat CategoryConfig, t store.Ticket, actor event.User, actorID int64, reason, transcriptURL string) {
+	tv := viewOf(t)
+	tv.reason = reason
 	if actorID != 0 {
-		desc = "Closed by <@" + event.FormatID(actorID) + ">."
+		tv.closerID = event.FormatID(actorID)
 	}
-	if reason != "" {
-		desc += "\n**Reason:** " + trimTo(reason, 500)
+	sc := ticketScope(event.FormatID(t.GuildID), guildName(ctx, d, t.GuildID), openerUser(t), cat, &tv).withActor(actor)
+
+	var content string
+	var embeds []*discordgo.MessageEmbed
+	var rows []discordgo.MessageComponent
+	if !cat.Closed.Empty() {
+		content, embeds = renderSpec(cat.Closed, sc, colorClosed)
+		rows = renderSpecRows(cat.Closed, sc, t.ID)
+		if len(rows) > 4 {
+			rows = rows[:4]
+		}
 	}
-	row := discordgo.ActionsRow{Components: []discordgo.MessageComponent{
-		discordgo.Button{Style: discordgo.SuccessButton, Label: "Reopen", CustomID: reopenButtonID(t.ID)},
-		discordgo.Button{Style: discordgo.DangerButton, Label: "Delete", CustomID: deleteButtonID(t.ID)},
-	}}
+	if content == "" && len(embeds) == 0 {
+		desc := "This ticket has been closed."
+		if actorID != 0 {
+			desc = "Closed by <@" + event.FormatID(actorID) + ">."
+		}
+		if reason != "" {
+			desc += "\n**Reason:** " + trimTo(reason, 500)
+		}
+		embeds = []*discordgo.MessageEmbed{{Title: "Ticket closed", Description: desc, Color: colorClosed}}
+	}
+
+	var row discordgo.ActionsRow
+	if !cat.Buttons.Reopen.Hide {
+		row.Components = append(row.Components, systemButton(cat.Buttons.Reopen, "Reopen", "", discordgo.SuccessButton, reopenButtonID(t.ID)))
+	}
+	if !cat.Buttons.Delete.Hide {
+		row.Components = append(row.Components, systemButton(cat.Buttons.Delete, "Delete", "", discordgo.DangerButton, deleteButtonID(t.ID)))
+	}
 	if transcriptURL != "" {
-		row.Components = append(row.Components, discordgo.Button{Style: discordgo.LinkButton, Label: "Transcript", URL: transcriptURL})
-	} else {
-		row.Components = append(row.Components, discordgo.Button{Style: discordgo.SecondaryButton, Label: "Transcript", CustomID: transcriptButtonID(t.ID)})
+		tb := systemButton(cat.Buttons.Transcript, "Transcript", "", discordgo.LinkButton, "")
+		tb.Style, tb.CustomID, tb.URL = discordgo.LinkButton, "", transcriptURL
+		row.Components = append(row.Components, tb)
+	} else if !cat.Buttons.Transcript.Hide {
+		row.Components = append(row.Components, systemButton(cat.Buttons.Transcript, "Transcript", "", discordgo.SecondaryButton, transcriptButtonID(t.ID)))
 	}
+	if len(row.Components) > 0 {
+		rows = append(rows, row)
+	}
+
 	_, _ = d.Discord.SendMessage(event.FormatID(t.ChannelID), &discordgo.MessageSend{
-		Embeds:          []*discordgo.MessageEmbed{{Title: "Ticket closed", Description: desc, Color: colorClosed}},
-		Components:      []discordgo.MessageComponent{row},
+		Content:         content,
+		Embeds:          embeds,
+		Components:      rows,
 		AllowedMentions: &discordgo.MessageAllowedMentions{Parse: []discordgo.AllowedMentionType{}},
 	})
 }
 
-// sendFeedbackPrompt DMs the opener a 1-5 star rating select after close.
-func (p *Plugin) sendFeedbackPrompt(d plugin.Deps, cat CategoryConfig, t store.Ticket) {
-	prompt := cat.Feedback.Prompt
-	if strings.TrimSpace(prompt) == "" {
-		prompt = "How was your support experience?"
+// sendFeedbackPrompt DMs the opener a 1-5 star rating select after close. The
+// message above the select is the category's composed Feedback.Message (falling
+// back to the built-in card with Feedback.Prompt as its description).
+func (p *Plugin) sendFeedbackPrompt(ctx context.Context, d plugin.Deps, cat CategoryConfig, t store.Ticket, reason string) {
+	tv := viewOf(t)
+	tv.reason = reason
+	sc := ticketScope(event.FormatID(t.GuildID), guildName(ctx, d, t.GuildID), openerUser(t), cat, &tv)
+
+	var content string
+	var embeds []*discordgo.MessageEmbed
+	var rows []discordgo.MessageComponent
+	if !cat.Feedback.Message.Empty() {
+		content, embeds = renderSpec(cat.Feedback.Message, sc, brandColor)
+		rows = renderSpecRows(cat.Feedback.Message, sc, t.ID)
+		if len(rows) > 4 {
+			rows = rows[:4]
+		}
 	}
+	if content == "" && len(embeds) == 0 {
+		prompt := render(cat.Feedback.Prompt, sc)
+		if strings.TrimSpace(prompt) == "" {
+			prompt = "How was your support experience?"
+		}
+		embeds = []*discordgo.MessageEmbed{{
+			Title:       "Ticket #" + strconv.Itoa(t.Number) + " closed",
+			Description: prompt,
+			Color:       brandColor,
+		}}
+	}
+
 	sel := discordgo.SelectMenu{
 		MenuType:    discordgo.StringSelectMenu,
 		CustomID:    rateSelectID(event.FormatID(t.GuildID), t.ID),
@@ -164,13 +221,12 @@ func (p *Plugin) sendFeedbackPrompt(d plugin.Deps, cat CategoryConfig, t store.T
 	for i, label := range labels {
 		sel.Options = append(sel.Options, discordgo.SelectMenuOption{Label: label, Value: strconv.Itoa(i + 1)})
 	}
+	rows = append(rows, discordgo.ActionsRow{Components: []discordgo.MessageComponent{sel}})
+
 	_, _ = d.Discord.SendDMComplex(event.FormatID(t.OpenerID), &discordgo.MessageSend{
-		Embeds: []*discordgo.MessageEmbed{{
-			Title:       "Ticket #" + strconv.Itoa(t.Number) + " closed",
-			Description: prompt,
-			Color:       brandColor,
-		}},
-		Components: []discordgo.MessageComponent{discordgo.ActionsRow{Components: []discordgo.MessageComponent{sel}}},
+		Content:    content,
+		Embeds:     embeds,
+		Components: rows,
 	})
 }
 
@@ -204,10 +260,20 @@ func (p *Plugin) handleRate(c *interactions.Context, d plugin.Deps, guildID, tic
 	payload.Rating = rating
 	publishTicket(c.Ctx, d, event.TypeTicketRated, payload)
 	postLog(d, cfg, logEmbed("Ticket rated", colorRated, t, actorID, field("Rating", ratingStars(rating), true)))
+
+	thanks := ratingStars(rating)
+	if strings.TrimSpace(cat.Feedback.ThanksMessage) != "" {
+		tv := viewOf(t)
+		tv.rating = rating
+		sc := ticketScope(guildID, guildName(c.Ctx, d, gid), openerUser(t), cat, &tv)
+		if msg := strings.TrimSpace(render(cat.Feedback.ThanksMessage, sc)); msg != "" {
+			thanks = msg
+		}
+	}
 	return c.UpdateMessage(&discordgo.InteractionResponseData{
 		Embeds: []*discordgo.MessageEmbed{{
 			Title:       "Thanks for your feedback!",
-			Description: ratingStars(rating),
+			Description: thanks,
 			Color:       brandColor,
 		}},
 		Components: []discordgo.MessageComponent{},

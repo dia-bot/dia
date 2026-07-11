@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -112,14 +113,15 @@ func (r *TicketRepo) DeletePanel(ctx context.Context, guildID int64, id string) 
 const ticketCols = `id, guild_id, number, COALESCE(panel_id, '') AS panel_id, category_id, category_label,
 	channel_id, is_thread, opener_id, opener_username, opener_global_name, subject, status, claimed_by,
 	form_answers, auto_close_minutes, auto_warn_minutes, opened_at, claimed_at, first_response_at,
-	last_activity_at, close_warned_at, closed_at, closed_by, close_reason, rating,
-	feedback, transcript_url, transcript_messages`
+	last_activity_at, close_warned_at, close_requested_by, close_request_reason, close_request_at,
+	closed_at, closed_by, close_reason, rating, feedback, transcript_url, transcript_messages`
 
 func scanTicket(row pgx.Row, t *Ticket) error {
 	return row.Scan(&t.ID, &t.GuildID, &t.Number, &t.PanelID, &t.CategoryID, &t.CategoryLabel,
 		&t.ChannelID, &t.IsThread, &t.OpenerID, &t.OpenerUsername, &t.OpenerGlobalName, &t.Subject,
 		&t.Status, &t.ClaimedBy, &t.FormAnswers, &t.AutoCloseMinutes, &t.AutoWarnMinutes, &t.OpenedAt,
-		&t.ClaimedAt, &t.FirstResponseAt, &t.LastActivityAt, &t.CloseWarnedAt, &t.ClosedAt, &t.ClosedBy,
+		&t.ClaimedAt, &t.FirstResponseAt, &t.LastActivityAt, &t.CloseWarnedAt, &t.CloseRequestedBy,
+		&t.CloseRequestReason, &t.CloseRequestAt, &t.ClosedAt, &t.ClosedBy,
 		&t.CloseReason, &t.Rating, &t.Feedback, &t.TranscriptURL, &t.TranscriptMessages)
 }
 
@@ -337,7 +339,8 @@ func (r *TicketRepo) SetFirstResponse(ctx context.Context, id string) error {
 // run the close side effects: ok reports whether this call performed the close.
 func (r *TicketRepo) CloseTicket(ctx context.Context, guildID int64, id string, closedBy int64, reason string) (bool, error) {
 	ct, err := r.pool.Exec(ctx,
-		`UPDATE tickets SET status = 'closed', closed_at = now(), closed_by = $3, close_reason = $4
+		`UPDATE tickets SET status = 'closed', closed_at = now(), closed_by = $3, close_reason = $4,
+			close_requested_by = 0, close_request_reason = '', close_request_at = NULL
 		 WHERE id = $1 AND guild_id = $2 AND status = 'open'`, id, guildID, closedBy, reason)
 	if err != nil {
 		return false, err
@@ -389,6 +392,59 @@ func (r *TicketRepo) MarkWarned(ctx context.Context, id string) (bool, error) {
 		return false, err
 	}
 	return ct.RowsAffected() > 0, nil
+}
+
+// SetCloseRequest records a pending staff close request (overwriting any
+// earlier one). deadline is the auto-accept time (nil = wait for the opener).
+// Conditional on status='open'; ok reports whether the request was recorded.
+func (r *TicketRepo) SetCloseRequest(ctx context.Context, guildID int64, id string, byID int64, reason string, deadline *time.Time) (bool, error) {
+	ct, err := r.pool.Exec(ctx,
+		`UPDATE tickets SET close_requested_by = $3, close_request_reason = $4, close_request_at = $5
+		 WHERE id = $1 AND guild_id = $2 AND status = 'open'`, id, guildID, byID, reason, deadline)
+	if err != nil {
+		return false, err
+	}
+	return ct.RowsAffected() > 0, nil
+}
+
+// ClearCloseRequest withdraws a pending close request. ok is true only for the
+// caller that cleared it (single-flight: a deny click racing the auto-accept
+// sweep resolves to exactly one winner).
+func (r *TicketRepo) ClearCloseRequest(ctx context.Context, guildID int64, id string) (bool, error) {
+	ct, err := r.pool.Exec(ctx,
+		`UPDATE tickets SET close_requested_by = 0, close_request_reason = '', close_request_at = NULL
+		 WHERE id = $1 AND guild_id = $2 AND close_requested_by <> 0`, id, guildID)
+	if err != nil {
+		return false, err
+	}
+	return ct.RowsAffected() > 0, nil
+}
+
+// DueCloseRequests returns open tickets whose close-request auto-accept
+// deadline has passed. Closing them goes through CloseTicket, which is
+// conditional, so replicas can't double-close.
+func (r *TicketRepo) DueCloseRequests(ctx context.Context, limit int) ([]Ticket, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	rows, err := r.pool.Query(ctx, `
+		SELECT `+ticketCols+` FROM tickets
+		WHERE status = 'open' AND close_request_at IS NOT NULL AND close_request_at <= now()
+		ORDER BY close_request_at
+		LIMIT $1`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Ticket
+	for rows.Next() {
+		var t Ticket
+		if err := scanTicket(rows, &t); err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
 }
 
 // DueAutoClose returns open tickets whose inactivity window has elapsed. The
