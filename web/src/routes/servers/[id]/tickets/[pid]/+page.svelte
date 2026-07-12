@@ -1,5 +1,9 @@
 <script lang="ts">
 	import { onMount, getContext, setContext } from 'svelte';
+	import { slide } from 'svelte/transition';
+	import { flip } from 'svelte/animate';
+	import { cubicOut } from 'svelte/easing';
+	import { dur } from '$lib/motion';
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
 	import { GuildStore, GUILD_CTX } from '$lib/guild.svelte';
@@ -522,7 +526,12 @@
 					{/snippet}
 					<div class="divide-y divide-line">
 						{#each config.categories as cat, i (cat.id)}
-							<div class="flex items-center gap-3 px-1 py-2.5">
+							<div
+								class="flex items-center gap-3 px-1 py-2.5"
+								animate:flip={{ duration: dur(200), easing: cubicOut }}
+								in:slide={{ duration: dur(180), easing: cubicOut }}
+								out:slide={{ duration: dur(150), easing: cubicOut }}
+							>
 								<button type="button" class="flex min-w-0 flex-1 items-center gap-3 text-left" onclick={() => openType(cat)}>
 									<span class="text-lg leading-none">{cat.emoji || '🎫'}</span>
 									<span class="min-w-0">

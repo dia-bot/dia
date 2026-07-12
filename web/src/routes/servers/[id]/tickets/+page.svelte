@@ -1,5 +1,9 @@
 <script lang="ts">
 	import { onMount, getContext } from 'svelte';
+	import { slide } from 'svelte/transition';
+	import { flip } from 'svelte/animate';
+	import { cubicOut } from 'svelte/easing';
+	import { dur } from '$lib/motion';
 	import { goto } from '$app/navigation';
 	import { GuildStore, GUILD_CTX } from '$lib/guild.svelte';
 	import { api } from '$lib/api';
@@ -264,7 +268,12 @@
 			{:else}
 				<div class="divide-y divide-line">
 					{#each panels as p (p.id)}
-						<div class="flex items-center gap-3 px-4 py-3 sm:px-5">
+						<div
+							class="flex items-center gap-3 px-4 py-3 sm:px-5"
+							animate:flip={{ duration: dur(200), easing: cubicOut }}
+							in:slide={{ duration: dur(180), easing: cubicOut }}
+							out:slide={{ duration: dur(150), easing: cubicOut }}
+						>
 							<div class="min-w-0 flex-1">
 								<div class="flex items-center gap-2">
 									<span class="truncate text-[13px] font-semibold text-ink">{p.name || '(untitled)'}</span>
