@@ -183,7 +183,7 @@ func (p *Plugin) createAndOpen(c *interactions.Context, d plugin.Deps, cfg Confi
 
 	tv := ticketView{id: t.ID, number: t.Number, subject: subject}
 	sc := ticketScope(c.GuildID, gName, opener, cat, &tv)
-	name := channelName(cat.NameScheme, sc, cfg.NamePrefix, t.Number)
+	name := channelName(cat.NameScheme, sc, t.Number)
 
 	ch, isThread, err := p.createTicketChannel(c, d, cfg, cat, name, opener, t.Number)
 	if err != nil {
@@ -237,15 +237,11 @@ func (p *Plugin) createTicketChannel(c *interactions.Context, d plugin.Deps, cfg
 		return ch, true, nil
 	}
 
-	parent := cat.ParentID
-	if parent == "" {
-		parent = cfg.DefaultParentID
-	}
 	ch, err := d.Discord.CreateChannel(c.GuildID, discordgo.GuildChannelCreateData{
 		Name:                 name,
 		Type:                 discordgo.ChannelTypeGuildText,
 		Topic:                fmt.Sprintf("Ticket #%d • opened by <@%s>", number, opener.ID),
-		ParentID:             parent,
+		ParentID:             cat.ParentID,
 		PermissionOverwrites: ticketOverwrites(c.GuildID, opener.ID, cfg.StaffRoles(cat)),
 	}, "ticket opened")
 	if err != nil {

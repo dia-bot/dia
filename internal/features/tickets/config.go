@@ -43,12 +43,9 @@ type Config struct {
 	BlacklistUserIDs []string `json:"blacklist_user_ids,omitempty"`
 	// MaxOpenPerUser caps how many tickets one member may have open at once
 	// across all categories (0 = unlimited). A category can tighten this further.
+	// Where a ticket's channel is created and how it is named live on the ticket
+	// type itself (CategoryConfig.ParentID / NameScheme), not here.
 	MaxOpenPerUser int `json:"max_open_per_user"`
-	// DefaultParentID is the Discord category new ticket channels are created
-	// under when a ticket category doesn't set its own.
-	DefaultParentID string `json:"default_parent_id,omitempty"`
-	// NamePrefix is the default ticket channel name prefix (e.g. "ticket").
-	NamePrefix string `json:"name_prefix,omitempty"`
 	// Messages customizes every short system reply the bot sends around the
 	// composed surfaces (denials, confirmations, the little status cards).
 	Messages SystemMessages `json:"messages"`
@@ -82,7 +79,6 @@ type SystemMessages struct {
 func Default() Config {
 	return Config{
 		MaxOpenPerUser: 3,
-		NamePrefix:     "ticket",
 	}
 }
 

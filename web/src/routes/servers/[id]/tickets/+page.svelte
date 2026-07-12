@@ -18,7 +18,6 @@
 	import Field from '$lib/components/Field.svelte';
 	import RolePicker from '$lib/components/RolePicker.svelte';
 	import ChannelSelect from '$lib/components/ChannelSelect.svelte';
-	import ChannelPicker from '$lib/components/ChannelPicker.svelte';
 	import NumberField from '$lib/components/ui/NumberField.svelte';
 	import Select from '$lib/components/Select.svelte';
 	import {
@@ -383,13 +382,13 @@
 				{/if}
 			</ModSection>
 		{:else if tab === 'settings'}
-			<ModSection label="Staff & channels" desc="Who handles tickets and where activity is logged.">
+			<ModSection label="Staff & channels" desc="Who handles tickets and where activity is logged. Where each ticket's channel goes and how it is named is set per ticket type.">
 				<div class="grid gap-4 sm:grid-cols-2">
 					<Field label="Support staff roles" hint="Added to every ticket and allowed to run ticket commands">
 						<RolePicker multiple value={cfg.staff_role_ids} onChange={(v) => (cfg.staff_role_ids = v as string[])} />
 					</Field>
-					<Field label="Default ticket category" hint="Discord category new ticket channels are created under">
-						<ChannelPicker kind="all" value={cfg.default_parent_id} placeholder="None" onChange={(v) => (cfg.default_parent_id = v as string)} />
+					<Field label="Max open tickets per member" hint="0 = unlimited; a ticket type can tighten this">
+						<NumberField bind:value={cfg.max_open_per_user} min={0} />
 					</Field>
 					<Field label="Log channel" hint="Open / claim / close / delete events">
 						<ChannelSelect bind:value={cfg.log_channel} placeholder="No log channel" />
@@ -397,13 +396,6 @@
 					<Field label="Transcript channel" hint="Where closing transcripts are posted (defaults to the log channel)">
 						<ChannelSelect bind:value={cfg.transcript_channel} placeholder="Use log channel" />
 					</Field>
-				</div>
-			</ModSection>
-
-			<ModSection label="Limits" desc="Guard against ticket spam.">
-				<div class="grid gap-4 sm:grid-cols-2">
-					<Field label="Max open tickets per member" hint="0 = unlimited; a ticket type can tighten this"><NumberField bind:value={cfg.max_open_per_user} min={0} /></Field>
-					<Field label="Channel name prefix" hint="Used when a ticket type has no name template"><input class={inputCls} bind:value={cfg.name_prefix} placeholder="ticket" /></Field>
 				</div>
 			</ModSection>
 

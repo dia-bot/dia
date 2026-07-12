@@ -317,26 +317,23 @@ func (p *Plugin) handleReopen(c *interactions.Context, d plugin.Deps, ticketID s
 	actor := interactionUser(c)
 	actorID, _ := event.ParseID(actor.ID)
 	chID := event.FormatID(t.ChannelID)
-	if t.ChannelID != 0 && !t.IsThread {
-		_ = d.Discord.SetMemberPermission(chID, event.FormatID(t.OpenerID), permMember, 0, "ticket: reopened")
-		prefix := cfg.NamePrefix
-		if prefix == "" {
-			prefix = "ticket"
-		}
-		_, _ = d.Discord.EditChannel(chID, &discordgo.ChannelEdit{Name: slugChannel(prefix + "-" + strconv.Itoa(t.Number))}, "ticket: reopened")
-	}
 	t.Status = "open"
 	t.ClosedBy = 0
+	gName := guildName(c.Ctx, d, gid)
+	tv := viewOf(t)
+	sc := ticketScope(c.GuildID, gName, openerUser(t), cat, &tv).withActor(actor)
+	if t.ChannelID != 0 && !t.IsThread {
+		_ = d.Discord.SetMemberPermission(chID, event.FormatID(t.OpenerID), permMember, 0, "ticket: reopened")
+		// Restore the type's templated channel name (close renamed it closed-N).
+		_, _ = d.Discord.EditChannel(chID, &discordgo.ChannelEdit{Name: channelName(cat.NameScheme, sc, t.Number)}, "ticket: reopened")
+	}
 	recordEvent(c.Ctx, d, t.ID, gid, actorID, "reopened", nil)
 	payload := ticketPayload(event.TypeTicketReopened, t, cat, openerUser(t), nil)
 	payload.ActorID = actor.ID
 	publishTicket(c.Ctx, d, event.TypeTicketReopened, payload)
 	postLog(d, cfg, logEmbed("Ticket reopened", colorReopened, t, actorID))
-	gName := guildName(c.Ctx, d, gid)
 	p.runTicketAutomation(c.Ctx, d, gid, gName, cat.OnReopenAutomation, "ticket_reopened", openerUser(t), nil, t, cat, actor.ID)
 
-	tv := viewOf(t)
-	sc := ticketScope(c.GuildID, gName, openerUser(t), cat, &tv).withActor(actor)
 	return c.UpdateMessage(&discordgo.InteractionResponseData{
 		Embeds: []*discordgo.MessageEmbed{{
 			Title:       "Ticket reopened",

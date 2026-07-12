@@ -48,8 +48,6 @@ export interface TicketsConfig {
 	blacklist_role_ids: string[];
 	blacklist_user_ids: string[];
 	max_open_per_user: number;
-	default_parent_id: string;
-	name_prefix: string;
 	messages: SystemMessages;
 }
 
@@ -170,8 +168,6 @@ export function defaultTicketsConfig(): TicketsConfig {
 		blacklist_role_ids: [],
 		blacklist_user_ids: [],
 		max_open_per_user: 3,
-		default_parent_id: '',
-		name_prefix: 'ticket',
 		messages: defaultSystemMessages()
 	};
 }

@@ -328,13 +328,11 @@ func systemButton(sb SystemButton, defLabel, defEmoji string, defStyle discordgo
 }
 
 // channelName renders a category's name scheme and slugifies the result to
-// Discord's channel-name rules (lowercase, hyphenated, <=100 chars).
-func channelName(scheme string, sc scope, prefix string, number int) string {
+// Discord's channel-name rules (lowercase, hyphenated, <=100 chars). A type
+// with no scheme falls back to ticket-<number>.
+func channelName(scheme string, sc scope, number int) string {
 	if strings.TrimSpace(scheme) == "" {
-		if prefix == "" {
-			prefix = "ticket"
-		}
-		return slugChannel(prefix + "-" + strconv.Itoa(number))
+		return slugChannel("ticket-" + strconv.Itoa(number))
 	}
 	return slugChannel(render(scheme, sc))
 }

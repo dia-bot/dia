@@ -125,7 +125,7 @@
 			<ChannelPicker
 				kind="all"
 				value={category.parent_id ?? ''}
-				placeholder="Server default"
+				placeholder="None (top level)"
 				onChange={(v) => (category.parent_id = v as string)}
 			/>
 		</Field>
