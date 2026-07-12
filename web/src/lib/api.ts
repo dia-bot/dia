@@ -212,6 +212,24 @@ export const api = {
 			{ channel_id }
 		),
 
+	// ── Tickets ──
+	ticketPanels: (id: string) => req<{ panels: any[] }>('GET', `/api/guilds/${id}/ticket-panels`),
+	upsertTicketPanel: (id: string, panel: unknown) =>
+		req<{ id: string }>('PUT', `/api/guilds/${id}/ticket-panels`, panel),
+	deleteTicketPanel: (id: string, pid: string) =>
+		req('DELETE', `/api/guilds/${id}/ticket-panels/${pid}`),
+	publishTicketPanel: (id: string, pid: string, channel_id: string) =>
+		req<{ ok: boolean; message_id: string }>('POST', `/api/guilds/${id}/ticket-panels/${pid}/publish`, {
+			channel_id
+		}),
+	tickets: (id: string, status?: string) =>
+		req<{ tickets: any[] }>('GET', `/api/guilds/${id}/tickets` + (status ? `?status=${status}` : '')),
+	ticket: (id: string, tid: string) =>
+		req<{ ticket: any; events: any[]; notes: any[] }>('GET', `/api/guilds/${id}/tickets/${tid}`),
+	closeTicket: (id: string, tid: string) =>
+		req<{ ok: boolean }>('POST', `/api/guilds/${id}/tickets/${tid}/close`),
+	ticketStats: (id: string) => req<{ stats: any }>('GET', `/api/guilds/${id}/ticket-stats`),
+
 	cases: (id: string) => req<{ cases: any[] }>('GET', `/api/guilds/${id}/cases`),
 	// Automod infractions (the escalation heat ledger); optional user filter.
 	infractions: (id: string, userId?: string) =>

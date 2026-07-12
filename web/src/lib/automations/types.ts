@@ -51,6 +51,7 @@ export const TRIGGER_CATEGORIES: { id: string; label: string }[] = [
 	{ id: 'reactions', label: 'Reactions' },
 	{ id: 'voice', label: 'Voice' },
 	{ id: 'moderation', label: 'Moderation' },
+	{ id: 'tickets', label: 'Tickets' },
 	{ id: 'channels', label: 'Channels & threads' },
 	{ id: 'giveaways', label: 'Giveaways' }
 ];
@@ -125,6 +126,21 @@ const AUTOMOD_EVENT_VARS: TmplVar[] = [
 	v('.Event.message_id', 'snowflake', 'The offending message id ("" if none)'),
 	v('.Event.channel_id', 'snowflake', 'The channel it happened in ("" if none)'),
 	v('.Event.actions', 'list', 'Action types the rule applied, in order')
+];
+
+const TICKET_EVENT_VARS: TmplVar[] = [
+	v('.Event.ticket_id', 'string', 'The ticket id'),
+	v('.Event.number', 'int', 'The per-server ticket number'),
+	v('.Event.category_label', 'string', 'The ticket category (type)'),
+	v('.Event.category_id', 'string', 'The ticket category key'),
+	v('.Event.subject', 'string', 'The ticket subject (first form answer)'),
+	v('.Event.channel_id', 'snowflake', 'The ticket channel id'),
+	v('.Event.panel_id', 'string', 'The panel the ticket was opened from'),
+	v('.Event.actor_id', 'snowflake', 'Who performed the action (claimer/closer/requester/reopener/rater)'),
+	v('.Event.claimed_by', 'snowflake', 'Who claimed the ticket ("" if none)'),
+	v('.Event.closed_by', 'snowflake', 'Who closed the ticket ("" if none)'),
+	v('.Event.reason', 'string', 'The close reason ("" if none)'),
+	v('.Event.rating', 'int', 'The rating 1-5 (0 if unrated)')
 ];
 
 const CHANNEL_EVENT_VARS: TmplVar[] = [
@@ -431,6 +447,72 @@ export const TRIGGERS: TriggerKindMeta[] = [
 		hasChannel: false,
 		filters: ['cooldown'],
 		eventVars: RAID_EVENT_VARS
+	},
+	{
+		key: 'ticket_opened',
+		label: 'Ticket opened',
+		description: 'A member opens a support ticket.',
+		category: 'tickets',
+		event: 'TICKET_OPENED',
+		actor: 'the member who opened the ticket',
+		hasChannel: true,
+		filters: ['cooldown'],
+		eventVars: TICKET_EVENT_VARS
+	},
+	{
+		key: 'ticket_claimed',
+		label: 'Ticket claimed',
+		description: 'A staff member claims a ticket.',
+		category: 'tickets',
+		event: 'TICKET_CLAIMED',
+		actor: 'the ticket opener',
+		hasChannel: true,
+		filters: ['cooldown'],
+		eventVars: TICKET_EVENT_VARS
+	},
+	{
+		key: 'ticket_closed',
+		label: 'Ticket closed',
+		description: 'A ticket is closed (by staff, the opener, or auto-close).',
+		category: 'tickets',
+		event: 'TICKET_CLOSED',
+		actor: 'the ticket opener',
+		hasChannel: true,
+		filters: ['cooldown'],
+		eventVars: TICKET_EVENT_VARS
+	},
+	{
+		key: 'ticket_close_requested',
+		label: 'Ticket close requested',
+		description: 'Staff ask the opener to confirm closing a ticket (.Event.actor_id is the requester).',
+		category: 'tickets',
+		event: 'TICKET_CLOSE_REQUESTED',
+		actor: 'the ticket opener',
+		hasChannel: true,
+		filters: ['cooldown'],
+		eventVars: TICKET_EVENT_VARS
+	},
+	{
+		key: 'ticket_reopened',
+		label: 'Ticket reopened',
+		description: 'Staff reopen a closed ticket (.Event.actor_id is the reopener).',
+		category: 'tickets',
+		event: 'TICKET_REOPENED',
+		actor: 'the ticket opener',
+		hasChannel: true,
+		filters: ['cooldown'],
+		eventVars: TICKET_EVENT_VARS
+	},
+	{
+		key: 'ticket_rated',
+		label: 'Ticket rated',
+		description: 'A member rates their closed ticket (branch on .Event.rating).',
+		category: 'tickets',
+		event: 'TICKET_RATED',
+		actor: 'the ticket opener',
+		hasChannel: false,
+		filters: ['cooldown'],
+		eventVars: TICKET_EVENT_VARS
 	},
 	{
 		key: 'channel_create',

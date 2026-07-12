@@ -572,6 +572,30 @@ func (p *Plugin) prepare(ctx context.Context, et event.Type, env *event.Envelope
 			"duration_seconds": a.DurationSeconds,
 		}
 
+	case event.TypeTicketOpened, event.TypeTicketClaimed, event.TypeTicketClosed,
+		event.TypeTicketCloseRequested, event.TypeTicketReopened, event.TypeTicketRated:
+		tk, err := plugin.DecodeData[event.TicketEvent](env)
+		if err != nil {
+			return nil, false
+		}
+		ec.user = tk.User
+		ec.member = tk.Member
+		ec.channelID = tk.ChannelID
+		ec.eventMap = map[string]any{
+			"ticket_id":      tk.TicketID,
+			"number":         tk.Number,
+			"panel_id":       tk.PanelID,
+			"category_id":    tk.CategoryID,
+			"category_label": tk.CategoryLabel,
+			"subject":        tk.Subject,
+			"channel_id":     tk.ChannelID,
+			"actor_id":       tk.ActorID,
+			"claimed_by":     tk.ClaimedBy,
+			"closed_by":      tk.ClosedBy,
+			"reason":         tk.Reason,
+			"rating":         tk.Rating,
+		}
+
 	case event.TypeChannelCreate, event.TypeChannelDelete, event.TypeThreadCreate:
 		ce, err := plugin.DecodeData[event.ChannelEvent](env)
 		if err != nil {

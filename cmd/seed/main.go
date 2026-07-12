@@ -44,6 +44,7 @@ import (
 	"github.com/dia-bot/dia/internal/features/leveling"
 	"github.com/dia-bot/dia/internal/features/moderation"
 	"github.com/dia-bot/dia/internal/features/roles"
+	"github.com/dia-bot/dia/internal/features/tickets"
 	"github.com/dia-bot/dia/internal/features/welcome"
 )
 
@@ -158,6 +159,9 @@ func seedPrimary(ctx context.Context, st *store.Store, guildID int64) error {
 	if err := seedReactionMenu(ctx, st, guildID); err != nil {
 		return err
 	}
+	if err := seedTicketPanel(ctx, st, guildID); err != nil {
+		return err
+	}
 	if err := seedCustomCommands(ctx, st, guildID); err != nil {
 		return err
 	}
@@ -211,6 +215,11 @@ func seedFeatures(ctx context.Context, st *store.Store, guildID int64) error {
 
 	auto := automations.Default()
 
+	tk := tickets.Default()
+	tk.StaffRoleIDs = []string{sid(roleMember)}
+	tk.LogChannel = sid(logChannel)
+	tk.TranscriptChannel = sid(logChannel)
+
 	giv := giveaway.Default()
 	// Pre-fill the built-in preset's default channel so seeded giveaways post
 	// somewhere sensible out of the box.
@@ -229,6 +238,7 @@ func seedFeatures(ctx context.Context, st *store.Store, guildID int64) error {
 		{moderation.AutomodKey, automod},
 		{customcommands.FeatureKey, cc},
 		{automations.FeatureKey, auto},
+		{tickets.FeatureKey, tk},
 		{giveaway.FeatureKey, giv},
 	}
 	for _, c := range configs {
@@ -435,6 +445,32 @@ func seedReactionMenu(ctx context.Context, st *store.Store, guildID int64) error
 	})
 	if err != nil {
 		return fmt.Errorf("create reaction menu: %w", err)
+	}
+	return nil
+}
+
+// seedTicketPanel creates one starter "Support" ticket panel (idempotent).
+func seedTicketPanel(ctx context.Context, st *store.Store, guildID int64) error {
+	var existing int
+	if err := st.Pool.QueryRow(ctx,
+		`SELECT count(*) FROM ticket_panels WHERE guild_id = $1`, guildID).Scan(&existing); err != nil {
+		return fmt.Errorf("count ticket panels: %w", err)
+	}
+	if existing > 0 {
+		return nil // already seeded
+	}
+	raw, err := json.Marshal(tickets.DefaultPanelConfig())
+	if err != nil {
+		return fmt.Errorf("marshal ticket panel: %w", err)
+	}
+	if _, err := st.Tickets.UpsertPanel(ctx, store.TicketPanel{
+		GuildID: guildID,
+		Name:    "Support",
+		Style:   "buttons",
+		Enabled: true,
+		Config:  raw,
+	}); err != nil {
+		return fmt.Errorf("create ticket panel: %w", err)
 	}
 	return nil
 }

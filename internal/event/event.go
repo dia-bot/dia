@@ -67,6 +67,16 @@ const (
 	// TypeAutomodAction it has no gateway/Elixir mapper.
 	TypeReactionRolePick Type = "REACTION_ROLE_PICK"
 
+	// These are worker-published like TypeAutomodAction (no gateway/Elixir
+	// mapper): the ticketing feature emits them across a ticket's lifecycle so
+	// the automations runtime can trigger flows off ticket activity.
+	TypeTicketOpened         Type = "TICKET_OPENED"
+	TypeTicketClaimed        Type = "TICKET_CLAIMED"
+	TypeTicketClosed         Type = "TICKET_CLOSED"
+	TypeTicketCloseRequested Type = "TICKET_CLOSE_REQUESTED"
+	TypeTicketReopened       Type = "TICKET_REOPENED"
+	TypeTicketRated          Type = "TICKET_RATED"
+
 	// TypeGiveawayEnded is NOT a gateway event: the giveaway feature publishes it
 	// on the same stream when a giveaway is drawn (natural end, manual end, or
 	// reroll), so the automations runtime can trigger flows off giveaway results
@@ -356,6 +366,30 @@ type ModerationAction struct {
 	Moderator       User   `json:"moderator"` // the moderator who ran the command
 	CaseNumber      int    `json:"case_number"`
 	DurationSeconds int    `json:"duration_seconds,omitempty"`
+}
+
+// TicketEvent is published by the worker (not the gateway) across a support
+// ticket's lifecycle, on subject discord.events.TICKET_*.<guild>. The
+// automations runtime consumes it as the "ticket_opened" / "ticket_claimed" /
+// "ticket_closed" / "ticket_rated" triggers, exposing these fields to flows as
+// .Event.* with the ticket OPENER as .User / .Member and the ticket channel as
+// .Channel. Like TypeAutomodAction it has no gateway/Elixir mapper.
+type TicketEvent struct {
+	GuildID       string  `json:"guild_id"`
+	TicketID      string  `json:"ticket_id"`
+	Number        int     `json:"number"`
+	PanelID       string  `json:"panel_id,omitempty"`
+	CategoryID    string  `json:"category_id,omitempty"`
+	CategoryLabel string  `json:"category_label,omitempty"`
+	ChannelID     string  `json:"channel_id,omitempty"`
+	Subject       string  `json:"subject,omitempty"`
+	User          User    `json:"user"` // the ticket opener
+	Member        *Member `json:"member,omitempty"`
+	ActorID       string  `json:"actor_id,omitempty"`   // who claimed/closed/requested (may differ from opener)
+	ClaimedBy     string  `json:"claimed_by,omitempty"` // set on TICKET_CLAIMED
+	ClosedBy      string  `json:"closed_by,omitempty"`  // set on TICKET_CLOSED
+	Reason        string  `json:"reason,omitempty"`     // close / close-request reason
+	Rating        int     `json:"rating,omitempty"`     // set on TICKET_RATED (1..5)
 }
 
 // GiveawayEnded is published by the giveaway feature (not the gateway) when a

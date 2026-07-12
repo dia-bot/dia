@@ -21,6 +21,7 @@
 		ShieldCheck,
 		ShieldAlert,
 		UserCheck,
+		Ticket,
 		ScrollText,
 		Wand2,
 		Zap,
@@ -73,6 +74,7 @@
 				{ label: 'Moderation', path: 'moderation', icon: ShieldCheck },
 				{ label: 'Automod', path: 'automod', icon: ShieldAlert },
 				{ label: 'Verification', path: 'verification', icon: UserCheck },
+				{ label: 'Tickets', path: 'tickets', icon: Ticket },
 				{ label: 'Server Logs', path: 'logging', icon: ScrollText }
 			]
 		},
@@ -194,6 +196,7 @@
 		'moderation',
 		'automod',
 		'verification',
+		'tickets',
 		'logging'
 	];
 	const fullWidth = $derived(fullWidthPages.includes(currentSeg));
@@ -210,6 +213,7 @@
 		'moderation',
 		'automod',
 		'verification',
+		'tickets',
 		'logging'
 	];
 	const flush = $derived(flushPages.includes(currentSeg));

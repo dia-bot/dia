@@ -189,6 +189,15 @@ func (s *Server) Handler() http.Handler {
 	g.POST("/reaction-roles/:mid/post", s.handlePostMenu)
 	g.POST("/reaction-roles/:mid/actions", s.handleMenuActions)
 
+	g.GET("/ticket-panels", s.handleListPanels)
+	g.PUT("/ticket-panels", s.handleUpsertPanel)
+	g.DELETE("/ticket-panels/:pid", s.handleDeletePanel)
+	g.POST("/ticket-panels/:pid/publish", s.handlePostPanel)
+	g.GET("/tickets", s.handleListTickets)
+	g.GET("/tickets/:tid", s.handleGetTicket)
+	g.POST("/tickets/:tid/close", s.handleCloseTicket)
+	g.GET("/ticket-stats", s.handleTicketStats)
+
 	g.GET("/cases", s.handleListCases)
 	g.GET("/infractions", s.handleListInfractions)
 	g.GET("/automod-stats", s.handleAutomodStats)

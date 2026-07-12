@@ -192,6 +192,59 @@ func (c *Client) ClearRolePermission(channelID, roleID, reason string) error {
 	return c.s.ChannelPermissionDelete(channelID, roleID, discordgo.WithAuditLogReason(reason))
 }
 
+// CreateChannel creates a guild channel (text, category, ...) in one call,
+// including any parent category and permission overwrites (used by ticketing to
+// open a private ticket channel visible only to the opener + support roles).
+func (c *Client) CreateChannel(guildID string, data discordgo.GuildChannelCreateData, reason string) (*discordgo.Channel, error) {
+	return c.s.GuildChannelCreateComplex(guildID, data, discordgo.WithAuditLogReason(reason))
+}
+
+// EditChannel edits a channel (rename, move to a new parent, lock, ...).
+func (c *Client) EditChannel(channelID string, edit *discordgo.ChannelEdit, reason string) (*discordgo.Channel, error) {
+	return c.s.ChannelEdit(channelID, edit, discordgo.WithAuditLogReason(reason))
+}
+
+// DeleteChannel deletes a channel (or thread).
+func (c *Client) DeleteChannel(channelID, reason string) error {
+	_, err := c.s.ChannelDelete(channelID, discordgo.WithAuditLogReason(reason))
+	return err
+}
+
+// SetMemberPermission writes a member-targeted permission overwrite on a channel
+// (grant/revoke a single user's access to a ticket channel).
+func (c *Client) SetMemberPermission(channelID, userID string, allow, deny int64, reason string) error {
+	return c.s.ChannelPermissionSet(channelID, userID, discordgo.PermissionOverwriteTypeMember, allow, deny,
+		discordgo.WithAuditLogReason(reason))
+}
+
+// ClearMemberPermission removes a member's permission overwrite from a channel.
+func (c *Client) ClearMemberPermission(channelID, userID, reason string) error {
+	return c.s.ChannelPermissionDelete(channelID, userID, discordgo.WithAuditLogReason(reason))
+}
+
+// ChannelMessages fetches up to limit (max 100) messages before beforeID
+// (newest-first). Paginate a full history by passing the oldest returned id.
+func (c *Client) ChannelMessages(channelID string, limit int, beforeID string) ([]*discordgo.Message, error) {
+	return c.s.ChannelMessages(channelID, limit, beforeID, "", "")
+}
+
+// StartThread starts a thread in a channel (ticketing thread mode).
+func (c *Client) StartThread(channelID string, data *discordgo.ThreadStart, reason string) (*discordgo.Channel, error) {
+	return c.s.ThreadStartComplex(channelID, data, discordgo.WithAuditLogReason(reason))
+}
+
+// ThreadAddMember adds a member to a (private) thread.
+func (c *Client) ThreadAddMember(threadID, userID string) error {
+	return c.s.ThreadMemberAdd(threadID, userID)
+}
+
+// Guild fetches a guild (name / owner) for template scopes.
+func (c *Client) Guild(guildID string) (*discordgo.Guild, error) {
+	return c.s.Guild(guildID)
+}
+
+// (SendDMComplex is defined in the Messaging section above.)
+
 // ── Native Discord AutoMod (REST) ────────────────────────────
 //
 // These wrap Discord's built-in AutoMod so the dashboard can manage native
