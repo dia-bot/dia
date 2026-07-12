@@ -49,6 +49,32 @@ type Config struct {
 	DefaultParentID string `json:"default_parent_id,omitempty"`
 	// NamePrefix is the default ticket channel name prefix (e.g. "ticket").
 	NamePrefix string `json:"name_prefix,omitempty"`
+	// Messages customizes every short system reply the bot sends around the
+	// composed surfaces (denials, confirmations, the little status cards).
+	Messages SystemMessages `json:"messages"`
+}
+
+// SystemMessages overrides the bot's short system replies. Every value is a Go
+// template rendered against the ticket scope ({{ .User.* }}, {{ .Guild.* }},
+// and {{ .Ticket.* }} / {{ .Actor.* }} where a ticket / actor exists); an empty
+// value keeps the built-in text. Kept in lockstep with
+// web/src/lib/tickets/types.ts (SYSTEM_MESSAGE_META drives the settings UI).
+type SystemMessages struct {
+	// Open-flow denials (ephemeral, seen by the member trying to open).
+	Blacklisted   string `json:"blacklisted,omitempty"`
+	MissingRole   string `json:"missing_role,omitempty"`
+	ServerLimit   string `json:"server_limit,omitempty"`
+	CategoryLimit string `json:"category_limit,omitempty"`
+	Cooldown      string `json:"cooldown,omitempty"`
+	// Open-flow outcomes (ephemeral; Opened sees the full ticket scope).
+	Opened     string `json:"opened,omitempty"`
+	OpenFailed string `json:"open_failed,omitempty"`
+	// Close confirmation (ephemeral, after the close modal).
+	Closed string `json:"closed,omitempty"`
+	// In-channel status cards ({{ .Actor.* }} is whoever clicked).
+	Reopened      string `json:"reopened,omitempty"`
+	CloseAccepted string `json:"close_accepted,omitempty"`
+	CloseDenied   string `json:"close_denied,omitempty"`
 }
 
 // Default returns sensible starting settings, reused by the seed and the
@@ -160,10 +186,16 @@ type CategoryConfig struct {
 
 	ClaimEnabled bool `json:"claim_enabled,omitempty"`
 
-	// OnOpenAutomation / OnCloseAutomation optionally launch a saved automation
-	// (by id) as a durable run when a ticket in this category opens/closes.
-	OnOpenAutomation  string `json:"on_open_automation,omitempty"`
-	OnCloseAutomation string `json:"on_close_automation,omitempty"`
+	// The On*Automation hooks optionally launch a saved automation (by id) as a
+	// durable run at each lifecycle moment of a ticket in this category. The
+	// flow sees the same .Event.* scope as the matching ticket_* trigger, so an
+	// automation behaves identically whether the hook or the trigger fired it.
+	OnOpenAutomation         string `json:"on_open_automation,omitempty"`
+	OnClaimAutomation        string `json:"on_claim_automation,omitempty"`
+	OnCloseRequestAutomation string `json:"on_close_request_automation,omitempty"`
+	OnReopenAutomation       string `json:"on_reopen_automation,omitempty"`
+	OnCloseAutomation        string `json:"on_close_automation,omitempty"`
+	OnRateAutomation         string `json:"on_rate_automation,omitempty"`
 }
 
 // MessageSpec is one fully-composed ticket message: content + embeds + extra

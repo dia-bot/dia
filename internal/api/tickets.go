@@ -93,7 +93,7 @@ type postPanelReq struct {
 }
 
 // handlePostPanel publishes a saved panel to a channel, reusing the same build +
-// send + record path as the /tickets post command.
+// send + record path the seed uses, so the dashboard is the single publisher.
 func (s *Server) handlePostPanel(c *gin.Context) {
 	var req postPanelReq
 	if err := c.ShouldBindJSON(&req); err != nil || req.ChannelID == "" {

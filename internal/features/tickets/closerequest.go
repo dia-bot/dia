@@ -102,6 +102,10 @@ func (p *Plugin) handleCloseRequest(c *interactions.Context, d plugin.Deps, cfg 
 	payload.Reason = reason
 	publishTicket(c.Ctx, d, event.TypeTicketCloseRequested, payload)
 	postLog(d, cfg, logEmbed("Close requested", colorClaimed, t, actorID))
+	// Local copy only: the hook's .Event.reason mirrors the trigger payload.
+	t.CloseRequestedBy = actorID
+	t.CloseReason = reason
+	p.runTicketAutomation(c.Ctx, d, t.GuildID, guildName(c.Ctx, d, t.GuildID), cat.OnCloseRequestAutomation, "ticket_close_requested", openerUser(t), nil, t, cat, actor.ID)
 	_, _ = c.FollowupContent("Close request sent to the opener.")
 	return nil
 }
@@ -124,10 +128,12 @@ func (p *Plugin) handleCloseReqAccept(c *interactions.Context, d plugin.Deps, ti
 		return c.RespondEphemeral("Only the ticket opener or staff can respond to this.")
 	}
 	// Strip the buttons in place, then run the shared close flow.
+	tv := viewOf(t)
+	sc := ticketScope(c.GuildID, guildName(c.Ctx, d, gid), openerUser(t), cat, &tv).withActor(actor)
 	_ = c.UpdateMessage(&discordgo.InteractionResponseData{
 		Embeds: []*discordgo.MessageEmbed{{
 			Title:       "Close request accepted",
-			Description: "Accepted by <@" + actor.ID + ">.",
+			Description: sysMsg(cfg.Messages.CloseAccepted, "Accepted by {{ .Actor.Mention }}.", sc),
 			Color:       colorClosed,
 		}},
 		Components: []discordgo.MessageComponent{},
@@ -155,10 +161,12 @@ func (p *Plugin) handleCloseReqDeny(c *interactions.Context, d plugin.Deps, tick
 		return c.RespondEphemeral("This close request is no longer active.")
 	}
 	recordEvent(c.Ctx, d, t.ID, gid, actorID, "close_request_denied", nil)
+	tv := viewOf(t)
+	sc := ticketScope(c.GuildID, guildName(c.Ctx, d, gid), openerUser(t), cat, &tv).withActor(actor)
 	return c.UpdateMessage(&discordgo.InteractionResponseData{
 		Embeds: []*discordgo.MessageEmbed{{
 			Title:       "Ticket stays open",
-			Description: "<@" + actor.ID + "> kept the ticket open.",
+			Description: sysMsg(cfg.Messages.CloseDenied, "{{ .Actor.Mention }} kept the ticket open.", sc),
 			Color:       colorReopened,
 		}},
 		Components: []discordgo.MessageComponent{},

@@ -2,16 +2,12 @@ package tickets
 
 import (
 	"context"
-	"errors"
-	"strconv"
-	"strings"
 
 	"github.com/dia-bot/dia/internal/event"
 	"github.com/dia-bot/dia/internal/features/automations/runner"
 	"github.com/dia-bot/dia/internal/interactions"
 	"github.com/dia-bot/dia/internal/plugin"
 	"github.com/dia-bot/dia/internal/store"
-	"github.com/dia-bot/dia/pkg/discordgo"
 )
 
 // Plugin implements the ticketing feature.
@@ -47,16 +43,15 @@ func (p *Plugin) Init(ctx context.Context, d plugin.Deps, reg *plugin.Registrar)
 	})
 	reg.Worker("tickets-autoclose", func(ctx context.Context) { p.autoCloseLoop(ctx, d) })
 
+	// Everything with a fixed action lives on buttons (close/claim/reopen/…) or
+	// the dashboard (panels); /ticket only keeps the actions that need arguments
+	// a button can't carry (a member, free text, a delay).
 	reg.Command(&interactions.Command{
 		Def: interactions.Slash("ticket", "Manage the current ticket",
-			interactions.SubCommand("close", "Close this ticket",
-				interactions.StringOpt("reason", "Why the ticket is being closed", false)),
 			interactions.SubCommand("closerequest", "Ask the opener to confirm closing this ticket",
 				interactions.StringOpt("reason", "Why the ticket should be closed", false),
 				interactions.WithChoices(interactions.IntOpt("delay", "Close automatically after this long unless the opener objects", false),
 					closeRequestDelayChoices()...)),
-			interactions.SubCommand("claim", "Claim this ticket so members know who's helping"),
-			interactions.SubCommand("unclaim", "Release your claim on this ticket"),
 			interactions.SubCommand("add", "Add a member to this ticket",
 				interactions.UserOpt("user", "The member to add", true)),
 			interactions.SubCommand("remove", "Remove a member from this ticket",
@@ -65,20 +60,8 @@ func (p *Plugin) Init(ctx context.Context, d plugin.Deps, reg *plugin.Registrar)
 				interactions.StringOpt("name", "The new name", true)),
 			interactions.SubCommand("note", "Add a private staff note (not shown to the opener)",
 				interactions.StringOpt("text", "The note", true)),
-			interactions.SubCommand("transcript", "Generate a transcript of this ticket now"),
 		),
 		Handler: func(c *interactions.Context) error { return p.handleTicketCommand(c, d) },
-	})
-
-	reg.Command(&interactions.Command{
-		Def: interactions.AdminOnly(interactions.Slash("tickets", "Manage ticket panels",
-			interactions.SubCommand("list", "List this server's ticket panels"),
-			interactions.SubCommand("post", "Post a ticket panel to a channel",
-				interactions.WithAutocomplete(interactions.StringOpt("panel", "Which panel to post", true)),
-				interactions.ChannelOpt("channel", "Channel to post the panel in", true)),
-		)),
-		Handler:      func(c *interactions.Context) error { return p.handleTicketsCommand(c, d) },
-		Autocomplete: func(c *interactions.Context) error { return p.autocompletePanel(c, d) },
 	})
 	return nil
 }
@@ -189,101 +172,6 @@ func (p *Plugin) handleMessage(ctx context.Context, d plugin.Deps, env *event.En
 		}
 	}
 	return nil
-}
-
-// ── /tickets admin command ───────────────────────────────────
-
-func (p *Plugin) handleTicketsCommand(c *interactions.Context, d plugin.Deps) error {
-	sub := c.Subcommand()
-	if len(sub) == 0 {
-		return c.RespondEphemeral("Unknown subcommand.")
-	}
-	switch sub[0] {
-	case "list":
-		return p.handlePanelList(c, d)
-	case "post":
-		return p.handlePanelPost(c, d)
-	default:
-		return c.RespondEphemeral("Unknown subcommand.")
-	}
-}
-
-func (p *Plugin) handlePanelList(c *interactions.Context, d plugin.Deps) error {
-	gid, _ := event.ParseID(c.GuildID)
-	panels, err := d.Store.Tickets.ListPanels(c.Ctx, gid)
-	if err != nil {
-		return err
-	}
-	if len(panels) == 0 {
-		return c.RespondEphemeral("No ticket panels yet. Create one on the dashboard, then post it with `/tickets post`.")
-	}
-	embed := &discordgo.MessageEmbed{Title: "Ticket panels", Color: brandColor}
-	for _, panel := range panels {
-		pc := DecodePanel(panel.Config)
-		name := panel.Name
-		if name == "" {
-			name = "(untitled)"
-		}
-		var b strings.Builder
-		b.WriteString(strconv.Itoa(len(pc.Categories)) + " categor")
-		if len(pc.Categories) == 1 {
-			b.WriteString("y")
-		} else {
-			b.WriteString("ies")
-		}
-		b.WriteString(" · style `" + panel.Style + "`")
-		if panel.MessageID != 0 && panel.ChannelID != 0 {
-			b.WriteString("\nPosted in <#" + event.FormatID(panel.ChannelID) + ">")
-		} else {
-			b.WriteString("\nNot posted yet")
-		}
-		embed.Fields = append(embed.Fields, &discordgo.MessageEmbedField{Name: name, Value: b.String()})
-	}
-	return c.RespondEmbed(true, embed)
-}
-
-func (p *Plugin) handlePanelPost(c *interactions.Context, d plugin.Deps) error {
-	opts := c.Options()
-	panelID := opts.String("panel")
-	channelID := opts.Snowflake("channel")
-	if channelID == "" {
-		return c.RespondEphemeral("Please choose a channel to post the panel in.")
-	}
-	_, err := PostPanel(c.Ctx, d.Discord, d.Store, c.GuildID, channelID, panelID)
-	switch {
-	case errors.Is(err, store.ErrNotFound):
-		return c.RespondEphemeral("That panel no longer exists.")
-	case errors.Is(err, ErrPanelNoCategories):
-		return c.RespondEphemeral("That panel has no categories yet — add some on the dashboard first.")
-	case err != nil:
-		return c.RespondEphemeral("Failed to post the panel: " + err.Error())
-	}
-	return c.RespondEphemeral("Posted the panel to <#" + channelID + ">.")
-}
-
-func (p *Plugin) autocompletePanel(c *interactions.Context, d plugin.Deps) error {
-	gid, _ := event.ParseID(c.GuildID)
-	panels, err := d.Store.Tickets.ListPanels(c.Ctx, gid)
-	if err != nil {
-		return c.Autocomplete(nil)
-	}
-	_, focused := c.Options().Focused()
-	focused = strings.ToLower(focused)
-	var choices []*discordgo.ApplicationCommandOptionChoice
-	for _, panel := range panels {
-		name := panel.Name
-		if name == "" {
-			name = "(untitled)"
-		}
-		if focused != "" && !strings.Contains(strings.ToLower(name), focused) {
-			continue
-		}
-		choices = append(choices, interactions.Choice(name, panel.ID))
-		if len(choices) >= 25 {
-			break
-		}
-	}
-	return c.Autocomplete(choices)
 }
 
 // ── shared helpers ───────────────────────────────────────────

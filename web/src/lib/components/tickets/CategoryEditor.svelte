@@ -66,7 +66,8 @@
 	];
 
 	// Warn when the opening message composes buttons but none closes the ticket
-	// (members can still /ticket close, but the button is the expected path).
+	// (there is no /ticket close; without a Close binding the ticket can only be
+	// closed via a close request or auto-close).
 	function actionableButtons(spec: MessageSpec): string[] {
 		return (spec.components ?? [])
 			.flatMap((r) => r.components ?? [])
@@ -188,7 +189,7 @@
 		{#if welcomeMissingClose}
 			<div class="rounded-md border border-accent/40 bg-accent/5 px-2.5 py-1.5 text-[12px] text-accent-ink">
 				No button closes the ticket. Set one button's action to <span class="font-medium">Close ticket</span>,
-				or members will have to use <code class="font-mono text-[11px]">/ticket close</code>.
+				or the ticket can only be closed with a close request or auto-close.
 			</div>
 		{/if}
 		<TicketMessageEditor spec={category.welcome} id={category.id + '-welcome'} bindings={welcomeBindings} />
@@ -351,12 +352,31 @@
 	</div>
 
 	<!-- Automations -->
-	<div class="grid gap-4 border-t border-line pt-4 sm:grid-cols-2">
-		<Field label="Run automation on open" hint="Launches a saved automation">
-			<AutomationPicker value={category.on_open_automation ?? ''} onChange={(v) => (category.on_open_automation = v)} />
-		</Field>
-		<Field label="Run automation on close">
-			<AutomationPicker value={category.on_close_automation ?? ''} onChange={(v) => (category.on_close_automation = v)} />
-		</Field>
+	<div class="space-y-3 border-t border-line pt-4">
+		<p class="eyebrow">Automations</p>
+		<p class="text-xs text-muted">
+			Launch a saved automation at any moment of this ticket type's lifecycle. The flow sees the
+			same variables as the matching ticket trigger, so one automation works from either.
+		</p>
+		<div class="grid gap-4 sm:grid-cols-2">
+			<Field label="On open">
+				<AutomationPicker value={category.on_open_automation ?? ''} onChange={(v) => (category.on_open_automation = v)} />
+			</Field>
+			<Field label="On claim">
+				<AutomationPicker value={category.on_claim_automation ?? ''} onChange={(v) => (category.on_claim_automation = v)} />
+			</Field>
+			<Field label="On close request">
+				<AutomationPicker value={category.on_close_request_automation ?? ''} onChange={(v) => (category.on_close_request_automation = v)} />
+			</Field>
+			<Field label="On reopen">
+				<AutomationPicker value={category.on_reopen_automation ?? ''} onChange={(v) => (category.on_reopen_automation = v)} />
+			</Field>
+			<Field label="On close">
+				<AutomationPicker value={category.on_close_automation ?? ''} onChange={(v) => (category.on_close_automation = v)} />
+			</Field>
+			<Field label="On rating">
+				<AutomationPicker value={category.on_rate_automation ?? ''} onChange={(v) => (category.on_rate_automation = v)} />
+			</Field>
+		</div>
 	</div>
 </div>

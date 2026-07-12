@@ -168,6 +168,19 @@ func render(raw string, sc scope) string {
 	return buf.String()
 }
 
+// sysMsg renders one customizable system reply: the admin's override template
+// when set, the built-in default otherwise. An override that renders to nothing
+// (a template of only-empty variables, say) falls back to the default so a
+// reply is never blank.
+func sysMsg(custom, def string, sc scope) string {
+	if s := strings.TrimSpace(custom); s != "" {
+		if out := strings.TrimSpace(render(s, sc)); out != "" {
+			return out
+		}
+	}
+	return render(def, sc)
+}
+
 // renderEmbed renders a cc.EmbedSpec into a Discord embed, templating every text
 // field against sc. Mirrors verification/prompt.go so the dashboard's embed
 // editor output renders identically. Returns nil when the embed is empty.

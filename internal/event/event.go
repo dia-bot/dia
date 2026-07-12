@@ -74,6 +74,7 @@ const (
 	TypeTicketClaimed        Type = "TICKET_CLAIMED"
 	TypeTicketClosed         Type = "TICKET_CLOSED"
 	TypeTicketCloseRequested Type = "TICKET_CLOSE_REQUESTED"
+	TypeTicketReopened       Type = "TICKET_REOPENED"
 	TypeTicketRated          Type = "TICKET_RATED"
 
 	// TypeGiveawayEnded is NOT a gateway event: the giveaway feature publishes it

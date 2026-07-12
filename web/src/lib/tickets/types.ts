@@ -50,7 +50,117 @@ export interface TicketsConfig {
 	max_open_per_user: number;
 	default_parent_id: string;
 	name_prefix: string;
+	messages: SystemMessages;
 }
+
+// SystemMessages overrides the bot's short system replies (mirrors Go
+// tickets.SystemMessages). Every value is a Go template rendered against the
+// ticket scope; empty keeps the built-in text.
+export interface SystemMessages {
+	blacklisted: string;
+	missing_role: string;
+	server_limit: string;
+	category_limit: string;
+	cooldown: string;
+	opened: string;
+	open_failed: string;
+	closed: string;
+	reopened: string;
+	close_accepted: string;
+	close_denied: string;
+}
+
+export function defaultSystemMessages(): SystemMessages {
+	return {
+		blacklisted: '',
+		missing_role: '',
+		server_limit: '',
+		category_limit: '',
+		cooldown: '',
+		opened: '',
+		open_failed: '',
+		closed: '',
+		reopened: '',
+		close_accepted: '',
+		close_denied: ''
+	};
+}
+
+// SYSTEM_MESSAGE_META drives the settings UI: one entry per overridable reply,
+// with the built-in text as the placeholder so admins see what they replace.
+export const SYSTEM_MESSAGE_META: {
+	key: keyof SystemMessages;
+	label: string;
+	hint: string;
+	placeholder: string;
+}[] = [
+	{
+		key: 'blacklisted',
+		label: 'Blacklisted member',
+		hint: 'Shown when a blacklisted member tries to open a ticket',
+		placeholder: "You're not allowed to open tickets on this server."
+	},
+	{
+		key: 'missing_role',
+		label: 'Missing required role',
+		hint: 'Shown when the ticket type requires a role the member lacks',
+		placeholder: "You don't have the role needed to open this type of ticket."
+	},
+	{
+		key: 'server_limit',
+		label: 'Server-wide open limit reached',
+		hint: 'Shown when the member hit the max open tickets across all types',
+		placeholder: "You've reached the maximum number of open tickets. Please close one before opening another."
+	},
+	{
+		key: 'category_limit',
+		label: 'Per-type open limit reached',
+		hint: 'Shown when the member already has an open ticket of this type',
+		placeholder: 'You already have an open ticket of this type.'
+	},
+	{
+		key: 'cooldown',
+		label: 'Opening too fast',
+		hint: 'Shown while the per-type cooldown is active',
+		placeholder: "You're opening tickets too quickly. Please wait a moment and try again."
+	},
+	{
+		key: 'opened',
+		label: 'Ticket opened',
+		hint: 'Confirmation after a successful open; {{ .Ticket.Channel }} is the new channel',
+		placeholder: 'Opened your ticket: {{ .Ticket.Channel }}'
+	},
+	{
+		key: 'open_failed',
+		label: 'Open failed',
+		hint: 'Shown when creating the ticket or its channel fails',
+		placeholder: 'Something went wrong opening your ticket. Please try again.'
+	},
+	{
+		key: 'closed',
+		label: 'Ticket closed',
+		hint: 'Confirmation after the close dialog; {{ .Actor.Mention }} is the closer',
+		placeholder: 'Ticket closed.'
+	},
+	{
+		key: 'reopened',
+		label: 'Reopened card',
+		hint: 'Body of the in-channel card after a reopen',
+		placeholder: 'Reopened by {{ .Actor.Mention }}.'
+	},
+	{
+		key: 'close_accepted',
+		label: 'Close request accepted card',
+		hint: 'Body of the in-channel card when a close request is accepted',
+		placeholder: 'Accepted by {{ .Actor.Mention }}.'
+	},
+	{
+		key: 'close_denied',
+		label: 'Close request declined card',
+		hint: 'Body of the in-channel card when the opener keeps the ticket open',
+		placeholder: '{{ .Actor.Mention }} kept the ticket open.'
+	}
+];
 
 export function defaultTicketsConfig(): TicketsConfig {
 	return {
@@ -61,7 +171,8 @@ export function defaultTicketsConfig(): TicketsConfig {
 		blacklist_user_ids: [],
 		max_open_per_user: 3,
 		default_parent_id: '',
-		name_prefix: 'ticket'
+		name_prefix: 'ticket',
+		messages: defaultSystemMessages()
 	};
 }
 
@@ -156,8 +267,14 @@ export interface CategoryConfig {
 	feedback: FeedbackConfig;
 	auto_close: AutoCloseConfig;
 	claim_enabled?: boolean;
+	// Automation hooks: a saved automation launched at each lifecycle moment
+	// (mirrors the Go On*Automation fields; empty = no hook).
 	on_open_automation?: string;
+	on_claim_automation?: string;
+	on_close_request_automation?: string;
+	on_reopen_automation?: string;
 	on_close_automation?: string;
+	on_rate_automation?: string;
 }
 
 export interface PanelConfig {
@@ -289,7 +406,11 @@ export function newCategory(label = 'Support'): CategoryConfig {
 		},
 		claim_enabled: true,
 		on_open_automation: '',
-		on_close_automation: ''
+		on_claim_automation: '',
+		on_close_request_automation: '',
+		on_reopen_automation: '',
+		on_close_automation: '',
+		on_rate_automation: ''
 	};
 }
 

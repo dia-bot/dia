@@ -89,6 +89,7 @@ var Triggers = []TriggerKind{
 	{Key: "ticket_claimed", Label: "Ticket claimed", Description: "A staff member claims a ticket.", Event: event.TypeTicketClaimed, Category: CatTickets, Actor: "the ticket opener", HasChannel: true, Filters: []Filter{FilterCooldown}},
 	{Key: "ticket_closed", Label: "Ticket closed", Description: "A ticket is closed (by staff, the opener, or auto-close).", Event: event.TypeTicketClosed, Category: CatTickets, Actor: "the ticket opener", HasChannel: true, Filters: []Filter{FilterCooldown}},
 	{Key: "ticket_close_requested", Label: "Ticket close requested", Description: "Staff ask the opener to confirm closing a ticket (.Event.actor_id is the requester).", Event: event.TypeTicketCloseRequested, Category: CatTickets, Actor: "the ticket opener", HasChannel: true, Filters: []Filter{FilterCooldown}},
+	{Key: "ticket_reopened", Label: "Ticket reopened", Description: "Staff reopen a closed ticket (.Event.actor_id is the reopener).", Event: event.TypeTicketReopened, Category: CatTickets, Actor: "the ticket opener", HasChannel: true, Filters: []Filter{FilterCooldown}},
 	{Key: "ticket_rated", Label: "Ticket rated", Description: "A member rates their closed ticket (branch on .Event.rating).", Event: event.TypeTicketRated, Category: CatTickets, Actor: "the ticket opener", Filters: []Filter{FilterCooldown}},
 
 	// Channels & threads

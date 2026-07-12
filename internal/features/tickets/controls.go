@@ -13,6 +13,9 @@ import (
 
 // ── /ticket command (runs inside a ticket channel) ───────────
 
+// handleTicketCommand covers the staff actions that need arguments a button
+// can't carry (a member, free text, a delay); everything else lives on the
+// ticket's buttons or the dashboard.
 func (p *Plugin) handleTicketCommand(c *interactions.Context, d plugin.Deps) error {
 	sub := c.Subcommand()
 	if len(sub) == 0 {
@@ -25,42 +28,15 @@ func (p *Plugin) handleTicketCommand(c *interactions.Context, d plugin.Deps) err
 		return c.RespondEphemeral("This command can only be used inside a ticket channel.")
 	}
 	cfg, cat := p.resolveTicketConfig(c.Ctx, d, gid, t)
-	actor := interactionUser(c)
-	actorID, _ := event.ParseID(actor.ID)
+	actorID, _ := event.ParseID(interactionUser(c).ID)
 	staff := isStaffMember(cfg, cat, c.I.Member)
-	opener := actorID == t.OpenerID
 
 	switch sub[0] {
-	case "close":
-		if !staff && !opener {
-			return c.RespondEphemeral("Only staff or the ticket opener can close this ticket.")
-		}
-		if err := c.Defer(true); err != nil {
-			return err
-		}
-		reason := c.Options().String("reason")
-		p.performClose(c.Ctx, d, cfg, cat, t, actor, actorID, reason, "command")
-		_, _ = c.FollowupContent("Ticket closed.")
-		return nil
-
 	case "closerequest":
 		if !staff {
 			return c.RespondEphemeral("Only staff can request a close.")
 		}
 		return p.handleCloseRequest(c, d, cfg, cat, t)
-
-	case "claim", "unclaim":
-		if !staff {
-			return c.RespondEphemeral("Only staff can claim tickets.")
-		}
-		claim := sub[0] == "claim"
-		if err := p.applyClaim(c.Ctx, d, cfg, cat, t, actor, actorID, claim); err != nil {
-			return c.RespondEphemeral("Couldn't update the claim.")
-		}
-		if claim {
-			return c.RespondEphemeral("You claimed this ticket.")
-		}
-		return c.RespondEphemeral("You released this ticket.")
 
 	case "add":
 		if !staff {
@@ -92,20 +68,6 @@ func (p *Plugin) handleTicketCommand(c *interactions.Context, d plugin.Deps) err
 		}
 		recordEvent(c.Ctx, d, t.ID, gid, actorID, "note_added", nil)
 		return c.RespondEphemeral("Note saved (only staff and the dashboard can see it).")
-
-	case "transcript":
-		if !staff {
-			return c.RespondEphemeral("Only staff can generate a transcript.")
-		}
-		if err := c.Defer(true); err != nil {
-			return err
-		}
-		if _, err := p.generateAndPostTranscript(c.Ctx, d, cfg, cat, t, openerUser(t)); err != nil {
-			_, _ = c.FollowupContent("Couldn't generate the transcript.")
-			return nil
-		}
-		_, _ = c.FollowupContent("Transcript generated.")
-		return nil
 	}
 	return c.RespondEphemeral("Unknown subcommand.")
 }
@@ -159,6 +121,8 @@ func (p *Plugin) applyClaim(ctx context.Context, d plugin.Deps, cfg Config, cat 
 		payload.ClaimedBy = actor.ID
 		publishTicket(ctx, d, event.TypeTicketClaimed, payload)
 		postLog(d, cfg, logEmbed("Ticket claimed", colorClaimed, t, actorID))
+		t.ClaimedBy = actorID
+		p.runTicketAutomation(ctx, d, t.GuildID, guildName(ctx, d, t.GuildID), cat.OnClaimAutomation, "ticket_claimed", openerUser(t), nil, t, cat, actor.ID)
 	} else {
 		recordEvent(ctx, d, t.ID, t.GuildID, actorID, "unclaimed", nil)
 	}

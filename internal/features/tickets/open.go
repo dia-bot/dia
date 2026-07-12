@@ -90,26 +90,32 @@ func (p *Plugin) handleFormSubmit(c *interactions.Context, d plugin.Deps, panelI
 }
 
 // precheckOpen enforces blacklist, required-role and open-ticket limits before
-// creating anything. It returns a denial message, or "" when the member may open.
+// creating anything. It returns a denial message (the admin's override from
+// cfg.Messages, or the built-in default), or "" when the member may open.
 func (p *Plugin) precheckOpen(c *interactions.Context, d plugin.Deps, cfg Config, cat CategoryConfig) string {
 	opener := interactionUser(c)
 	member := c.I.Member
+	gid, _ := event.ParseID(c.GuildID)
+	// The scope (with its guild-name lookup) is only built when actually denying.
+	deny := func(custom, def string) string {
+		sc := ticketScope(c.GuildID, guildName(c.Ctx, d, gid), opener, cat, &ticketView{})
+		return sysMsg(custom, def, sc)
+	}
 	if sliceContains(cfg.BlacklistUserIDs, opener.ID) || memberHasAnyRole(member, cfg.BlacklistRoleIDs) {
-		return "You're not allowed to open tickets on this server."
+		return deny(cfg.Messages.Blacklisted, "You're not allowed to open tickets on this server.")
 	}
 	if len(cat.RequiredRoleIDs) > 0 && !memberHasAnyRole(member, cat.RequiredRoleIDs) {
-		return "You don't have the role needed to open this type of ticket."
+		return deny(cfg.Messages.MissingRole, "You don't have the role needed to open this type of ticket.")
 	}
-	gid, _ := event.ParseID(c.GuildID)
 	openerID, _ := event.ParseID(opener.ID)
 	if cfg.MaxOpenPerUser > 0 {
 		if n, err := d.Store.Tickets.CountOpenByOpener(c.Ctx, gid, openerID, ""); err == nil && n >= cfg.MaxOpenPerUser {
-			return fmt.Sprintf("You already have %d open tickets. Please close one before opening another.", cfg.MaxOpenPerUser)
+			return deny(cfg.Messages.ServerLimit, fmt.Sprintf("You already have %d open tickets. Please close one before opening another.", cfg.MaxOpenPerUser))
 		}
 	}
 	if cat.MaxOpenPerUser > 0 {
 		if n, err := d.Store.Tickets.CountOpenByOpener(c.Ctx, gid, openerID, cat.ID); err == nil && n >= cat.MaxOpenPerUser {
-			return "You already have an open ticket of this type."
+			return deny(cfg.Messages.CategoryLimit, "You already have an open ticket of this type.")
 		}
 	}
 	return ""
@@ -122,12 +128,14 @@ func (p *Plugin) createAndOpen(c *interactions.Context, d plugin.Deps, cfg Confi
 	opener := interactionUser(c)
 	openerID, _ := event.ParseID(opener.ID)
 	gName := guildName(c.Ctx, d, gid)
+	// Pre-ticket scope for the customizable open-flow replies (no ticket yet).
+	scPre := ticketScope(c.GuildID, gName, opener, cat, &ticketView{})
 
 	// Cooldown (consumed only on an actual open attempt).
 	if cat.CooldownSeconds > 0 && d.Cache != nil {
 		key := "tkt:cd:" + panel.ID + ":" + cat.ID + ":" + opener.ID
 		if ok, err := d.Cache.Reserve(c.Ctx, key, time.Duration(cat.CooldownSeconds)*time.Second); err == nil && !ok {
-			_, _ = c.FollowupContent("You're opening tickets too quickly. Please wait a moment and try again.")
+			_, _ = c.FollowupContent(sysMsg(cfg.Messages.Cooldown, "You're opening tickets too quickly. Please wait a moment and try again.", scPre))
 			return nil
 		}
 	}
@@ -160,16 +168,16 @@ func (p *Plugin) createAndOpen(c *interactions.Context, d plugin.Deps, cfg Confi
 		AutoWarnMinutes:  warnMin,
 	}, cfg.MaxOpenPerUser, cat.MaxOpenPerUser)
 	if errors.Is(err, store.ErrOpenLimit) {
-		_, _ = c.FollowupContent("You've reached the maximum number of open tickets. Please close one before opening another.")
+		_, _ = c.FollowupContent(sysMsg(cfg.Messages.ServerLimit, "You've reached the maximum number of open tickets. Please close one before opening another.", scPre))
 		return nil
 	}
 	if errors.Is(err, store.ErrCategoryLimit) {
-		_, _ = c.FollowupContent("You already have an open ticket of this type.")
+		_, _ = c.FollowupContent(sysMsg(cfg.Messages.CategoryLimit, "You already have an open ticket of this type.", scPre))
 		return nil
 	}
 	if err != nil {
 		d.Log.Warn("tickets: create ticket row", "err", err)
-		_, _ = c.FollowupContent("Something went wrong opening your ticket. Please try again.")
+		_, _ = c.FollowupContent(sysMsg(cfg.Messages.OpenFailed, "Something went wrong opening your ticket. Please try again.", scPre))
 		return nil
 	}
 
@@ -181,7 +189,7 @@ func (p *Plugin) createAndOpen(c *interactions.Context, d plugin.Deps, cfg Confi
 	if err != nil {
 		d.Log.Warn("tickets: create channel", "err", err)
 		_ = d.Store.Tickets.MarkDeleted(c.Ctx, gid, t.ID)
-		_, _ = c.FollowupContent("I couldn't create the ticket channel. The bot may be missing the Manage Channels permission.")
+		_, _ = c.FollowupContent(sysMsg(cfg.Messages.OpenFailed, "I couldn't create the ticket channel. The bot may be missing the Manage Channels permission.", scPre))
 		return nil
 	}
 	chID, _ := event.ParseID(ch.ID)
@@ -206,7 +214,8 @@ func (p *Plugin) createAndOpen(c *interactions.Context, d plugin.Deps, cfg Confi
 	postLog(d, cfg, logEmbed("Ticket opened", colorOpened, t, openerID))
 	p.runTicketAutomation(c.Ctx, d, gid, gName, cat.OnOpenAutomation, "ticket_opened", opener, c.I.Member, t, cat, opener.ID)
 
-	_, _ = c.FollowupContent("Opened your ticket: <#" + ch.ID + ">")
+	scOpened := ticketScope(c.GuildID, gName, opener, cat, &tv)
+	_, _ = c.FollowupContent(sysMsg(cfg.Messages.Opened, "Opened your ticket: {{ .Ticket.Channel }}", scOpened))
 	return nil
 }
 

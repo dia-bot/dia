@@ -57,12 +57,16 @@ func (p *Plugin) handleCloseSubmit(c *interactions.Context, d plugin.Deps, ticke
 		return err
 	}
 	p.performClose(c.Ctx, d, cfg, cat, t, actor, actorID, reason, "button")
-	_, _ = c.FollowupContent("Ticket closed.")
+	tv := viewOf(t)
+	tv.reason = reason
+	tv.closerID = actor.ID
+	sc := ticketScope(c.GuildID, guildName(c.Ctx, d, gid), openerUser(t), cat, &tv).withActor(actor)
+	_, _ = c.FollowupContent(sysMsg(cfg.Messages.Closed, "Ticket closed.", sc))
 	return nil
 }
 
 // performClose runs the full close flow: it is interaction-independent so the
-// close button, the /ticket close command and the auto-close sweep all share it.
+// close button, close-request accepts and the auto-close sweep all share it.
 // actorID 0 means an automatic (system) close.
 func (p *Plugin) performClose(ctx context.Context, d plugin.Deps, cfg Config, cat CategoryConfig, t store.Ticket, actor event.User, actorID int64, reason, source string) {
 	ok, err := d.Store.Tickets.CloseTicket(ctx, t.GuildID, t.ID, actorID, reason)
@@ -269,6 +273,8 @@ func (p *Plugin) handleRate(c *interactions.Context, d plugin.Deps, guildID, tic
 	payload.Rating = rating
 	publishTicket(c.Ctx, d, event.TypeTicketRated, payload)
 	postLog(d, cfg, logEmbed("Ticket rated", colorRated, t, actorID, field("Rating", ratingStars(rating), true)))
+	t.Rating = rating
+	p.runTicketAutomation(c.Ctx, d, gid, guildName(c.Ctx, d, gid), cat.OnRateAutomation, "ticket_rated", openerUser(t), nil, t, cat, event.FormatID(actorID))
 
 	thanks := ratingStars(rating)
 	if strings.TrimSpace(cat.Feedback.ThanksMessage) != "" {
@@ -308,7 +314,8 @@ func (p *Plugin) handleReopen(c *interactions.Context, d plugin.Deps, ticketID s
 	if !ok {
 		return c.RespondEphemeral("This ticket isn't closed.")
 	}
-	actorID, _ := event.ParseID(interactionUser(c).ID)
+	actor := interactionUser(c)
+	actorID, _ := event.ParseID(actor.ID)
 	chID := event.FormatID(t.ChannelID)
 	if t.ChannelID != 0 && !t.IsThread {
 		_ = d.Discord.SetMemberPermission(chID, event.FormatID(t.OpenerID), permMember, 0, "ticket: reopened")
@@ -318,12 +325,22 @@ func (p *Plugin) handleReopen(c *interactions.Context, d plugin.Deps, ticketID s
 		}
 		_, _ = d.Discord.EditChannel(chID, &discordgo.ChannelEdit{Name: slugChannel(prefix + "-" + strconv.Itoa(t.Number))}, "ticket: reopened")
 	}
+	t.Status = "open"
+	t.ClosedBy = 0
 	recordEvent(c.Ctx, d, t.ID, gid, actorID, "reopened", nil)
+	payload := ticketPayload(event.TypeTicketReopened, t, cat, openerUser(t), nil)
+	payload.ActorID = actor.ID
+	publishTicket(c.Ctx, d, event.TypeTicketReopened, payload)
 	postLog(d, cfg, logEmbed("Ticket reopened", colorReopened, t, actorID))
+	gName := guildName(c.Ctx, d, gid)
+	p.runTicketAutomation(c.Ctx, d, gid, gName, cat.OnReopenAutomation, "ticket_reopened", openerUser(t), nil, t, cat, actor.ID)
+
+	tv := viewOf(t)
+	sc := ticketScope(c.GuildID, gName, openerUser(t), cat, &tv).withActor(actor)
 	return c.UpdateMessage(&discordgo.InteractionResponseData{
 		Embeds: []*discordgo.MessageEmbed{{
 			Title:       "Ticket reopened",
-			Description: "Reopened by <@" + event.FormatID(actorID) + ">.",
+			Description: sysMsg(cfg.Messages.Reopened, "Reopened by {{ .Actor.Mention }}.", sc),
 			Color:       colorReopened,
 		}},
 		Components: []discordgo.MessageComponent{},
