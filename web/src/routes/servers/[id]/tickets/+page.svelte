@@ -26,7 +26,6 @@
 		LayoutList,
 		ListChecks,
 		BarChart3,
-		BookOpen,
 		Settings,
 		Plus,
 		Trash2,
@@ -60,8 +59,7 @@
 		{ key: 'setups', label: 'Setups', icon: LayoutList, badge: panels.length || '' },
 		{ key: 'queue', label: 'Queue', icon: ListChecks },
 		{ key: 'analytics', label: 'Analytics', icon: BarChart3 },
-		{ key: 'settings', label: 'Settings', icon: Settings },
-		{ key: 'guide', label: 'How it works', icon: BookOpen }
+		{ key: 'settings', label: 'Settings', icon: Settings }
 	]);
 
 	async function load() {
@@ -427,19 +425,6 @@
 							<input class={inputCls} bind:value={cfg.messages[meta.key]} placeholder={meta.placeholder} />
 						</Field>
 					{/each}
-				</div>
-			</ModSection>
-		{:else if tab === 'guide'}
-			<ModSection label="How ticketing works" desc="From panel to transcript.">
-				<div class="max-w-2xl space-y-4 text-sm text-muted">
-					<p><span class="text-ink">1. Create a setup.</span> A setup is a panel message with buttons (or a dropdown). Each button is a ticket type — its own permissions, opening message, pre-open form and rules. You can run as many setups as you like in different channels.</p>
-					<p><span class="text-ink">2. Publish it.</span> Post the panel to a channel. Members click to open a ticket. If the type has a form, they fill it first.</p>
-					<p><span class="text-ink">3. A private channel opens.</span> Only the opener and your support roles can see it. Staff can claim it, add or remove members, rename it, and leave private notes.</p>
-					<p><span class="text-ink">4. Close politely.</span> Staff can close with the ticket's Close button, or send a close request with <code class="text-ink">/ticket closerequest</code>: the opener confirms with a button, and an optional delay closes the ticket automatically if they never answer.</p>
-					<p><span class="text-ink">5. Follow up.</span> Closing generates an HTML transcript (posted to your transcript channel and optionally DMed to the opener) and can ask the opener to rate the help. Inactive tickets can auto-close after a warning.</p>
-					<p><span class="text-ink">6. Make it yours.</span> Every message is yours to compose: panel, opening, closed card, close request, inactivity warning and feedback DM take content, embeds and buttons, and even the bot's short system replies (denials, confirmations, status cards) are editable under Settings.</p>
-					<p><span class="text-ink">7. Automate it.</span> Every ticket event (opened, claimed, closed, close requested, reopened, rated) is a trigger in Automations; each ticket type can launch a saved automation at any of those moments; and any button you add to a ticket message can run an automation when clicked.</p>
-					<p>Buttons drive everything in Discord: open, claim, close, reopen, delete, transcript. Staff additionally get <code class="text-ink">/ticket</code> for the things a button can't ask for (closerequest, add, remove, rename, note) inside any ticket channel.</p>
 				</div>
 			</ModSection>
 		{/if}
