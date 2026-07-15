@@ -30,6 +30,7 @@ import (
 	serverlogs "github.com/dia-bot/dia/internal/features/logging"
 	"github.com/dia-bot/dia/internal/features/moderation"
 	"github.com/dia-bot/dia/internal/features/roles"
+	"github.com/dia-bot/dia/internal/features/socialnotifications"
 	"github.com/dia-bot/dia/internal/features/tickets"
 	"github.com/dia-bot/dia/internal/features/verification"
 	"github.com/dia-bot/dia/internal/features/welcome"
@@ -100,6 +101,7 @@ func main() {
 		verification.New(),
 		serverlogs.New(),
 		tickets.New(),
+		socialnotifications.New(),
 		customcommands.New(),
 		automationsPlugin,
 		giveawayPlugin,
