@@ -26,6 +26,7 @@
 		Wand2,
 		Zap,
 		Frame,
+		Megaphone,
 		CreditCard,
 		ChevronRight,
 		Search,
@@ -67,6 +68,10 @@
 				{ label: 'Auto Roles', path: 'auto-roles', icon: UserPlus },
 				{ label: 'Giveaways', path: 'giveaways', icon: Gift }
 			]
+		},
+		{
+			section: 'Social',
+			items: [{ label: 'Social Alerts', path: 'social', icon: Megaphone }]
 		},
 		{
 			section: 'Moderation',
@@ -117,7 +122,8 @@
 		automod: 'automod',
 		verification: 'verification',
 		logging: 'logging',
-		commands: 'customcommands'
+		commands: 'customcommands',
+		social: 'social'
 	};
 	function canAccessPath(path: string): boolean {
 		if (store.admin) return true;
@@ -197,7 +203,8 @@
 		'automod',
 		'verification',
 		'tickets',
-		'logging'
+		'logging',
+		'social'
 	];
 	const fullWidth = $derived(fullWidthPages.includes(currentSeg));
 	// And a few want to paint edge-to-edge — no outer px/py wrapper at all.
@@ -214,7 +221,8 @@
 		'automod',
 		'verification',
 		'tickets',
-		'logging'
+		'logging',
+		'social'
 	];
 	const flush = $derived(flushPages.includes(currentSeg));
 
