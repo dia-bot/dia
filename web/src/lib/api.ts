@@ -6,6 +6,7 @@ import type {
 	GuildListItem,
 	FeatureState
 } from './types';
+import type { SocialList, SocialSubInput, SocialSubscription } from './social';
 
 export const API_URL = env.PUBLIC_API_URL ?? 'http://localhost:8080';
 export const WS_URL = env.PUBLIC_WS_URL ?? 'ws://localhost:8080';
@@ -229,6 +230,17 @@ export const api = {
 	closeTicket: (id: string, tid: string) =>
 		req<{ ok: boolean }>('POST', `/api/guilds/${id}/tickets/${tid}/close`),
 	ticketStats: (id: string) => req<{ stats: any }>('GET', `/api/guilds/${id}/ticket-stats`),
+
+	// ── Social alerts ──
+	social: (id: string) => req<SocialList>('GET', `/api/guilds/${id}/social`),
+	createSocial: (id: string, body: SocialSubInput) =>
+		req<{ subscription: SocialSubscription }>('POST', `/api/guilds/${id}/social`, body),
+	updateSocial: (id: string, sid: string, body: SocialSubInput) =>
+		req<{ subscription: SocialSubscription }>('PATCH', `/api/guilds/${id}/social/${sid}`, body),
+	deleteSocial: (id: string, sid: string) =>
+		req<{ ok: boolean }>('DELETE', `/api/guilds/${id}/social/${sid}`),
+	testSocial: (id: string, sid: string) =>
+		req<{ ok: boolean }>('POST', `/api/guilds/${id}/social/${sid}/test`),
 
 	cases: (id: string) => req<{ cases: any[] }>('GET', `/api/guilds/${id}/cases`),
 	// Automod infractions (the escalation heat ledger); optional user filter.
