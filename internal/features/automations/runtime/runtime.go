@@ -443,6 +443,26 @@ func (p *Plugin) prepare(ctx context.Context, et event.Type, env *event.Envelope
 			"channel_id":  g.ChannelID,
 		}
 
+	case event.TypeSocialUpdate:
+		s, err := plugin.DecodeData[event.SocialUpdate](env)
+		if err != nil {
+			return nil, false
+		}
+		ec.eventMap = map[string]any{
+			"provider":     s.Provider,
+			"kind":         s.Kind,
+			"account":      s.AccountName,
+			"account_id":   s.AccountID,
+			"account_url":  s.AccountURL,
+			"item_id":      s.ItemID,
+			"title":        s.Title,
+			"url":          s.URL,
+			"description":  s.Description,
+			"category":     s.Category,
+			"started_at":   s.StartedAt,
+			"subscription": s.SubscriptionID,
+		}
+
 	case event.TypeMessageCreate, event.TypeMessageUpdate:
 		m, err := decodeMessage(et, env)
 		if err != nil {
