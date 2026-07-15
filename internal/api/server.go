@@ -18,6 +18,7 @@ import (
 	"github.com/dia-bot/dia/internal/guildstate"
 	"github.com/dia-bot/dia/internal/imaging"
 	"github.com/dia-bot/dia/internal/realtime"
+	"github.com/dia-bot/dia/internal/social"
 	"github.com/dia-bot/dia/internal/storage"
 	"github.com/dia-bot/dia/internal/store"
 	"github.com/gin-contrib/cors"
@@ -52,6 +53,7 @@ type Server struct {
 	bus      eventbus.Bus
 	storage  *storage.Store
 	billing  *billing.Client
+	social   *social.Clients
 	gstate   *guildstate.Store
 	hub      *realtime.Hub
 	sessions *sessionStore
@@ -72,6 +74,7 @@ func New(d Deps) *Server {
 		bus:      d.Bus,
 		storage:  d.Storage,
 		billing:  d.Billing,
+		social:   social.NewClients(d.Config),
 		gstate:   guildstate.New(d.Cache),
 		hub:      realtime.NewHub(d.Log),
 		sessions: newSessionStore(d.Cache, sessionTTL),
@@ -114,6 +117,14 @@ func (s *Server) Handler() http.Handler {
 
 	// Stripe webhook (no session/CSRF — verified by Stripe-Signature instead).
 	r.POST("/billing/webhook", s.handleStripeWebhook)
+
+	// Social provider webhooks (no session/CSRF — each delivery is verified by
+	// the provider's own signature scheme; YouTube's GET is the WebSub
+	// subscribe handshake).
+	r.POST("/webhooks/twitch", s.handleTwitchWebhook)
+	r.POST("/webhooks/kick", s.handleKickWebhook)
+	r.GET("/webhooks/youtube", s.handleYouTubeVerify)
+	r.POST("/webhooks/youtube", s.handleYouTubeNotify)
 
 	api := r.Group("/api")
 	api.GET("/me", s.handleMe) // self-handles the unauthenticated case
@@ -197,6 +208,12 @@ func (s *Server) Handler() http.Handler {
 	g.GET("/tickets/:tid", s.handleGetTicket)
 	g.POST("/tickets/:tid/close", s.handleCloseTicket)
 	g.GET("/ticket-stats", s.handleTicketStats)
+
+	g.GET("/social", s.handleListSocial)
+	g.POST("/social", s.handleCreateSocial)
+	g.PATCH("/social/:sid", s.handleUpdateSocial)
+	g.DELETE("/social/:sid", s.handleDeleteSocial)
+	g.POST("/social/:sid/test", s.handleTestSocial)
 
 	g.GET("/cases", s.handleListCases)
 	g.GET("/infractions", s.handleListInfractions)
