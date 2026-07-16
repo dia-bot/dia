@@ -30,7 +30,7 @@
 	<Select.Portal>
 		<Select.Content
 			sideOffset={6}
-			class="menu-pop z-50 max-h-72 w-[var(--bits-select-anchor-width)] min-w-[8rem] overflow-y-auto rounded-xl border border-line-strong bg-surface p-1.5 shadow-2xl outline-none"
+			class="menu-pop z-[80] max-h-72 w-[var(--bits-select-anchor-width)] min-w-[8rem] overflow-y-auto rounded-xl border border-line-strong bg-surface p-1.5 shadow-2xl outline-none"
 		>
 			<Select.Viewport>
 				{#each options as o (o.value)}

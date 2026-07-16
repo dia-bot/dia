@@ -119,7 +119,7 @@
 						<DropdownMenu.Content
 							align="end"
 							sideOffset={6}
-							class="menu-pop z-50 max-h-80 w-64 overflow-y-auto rounded-xl border border-line-strong bg-surface p-1.5 shadow-2xl outline-none"
+							class="menu-pop z-[80] max-h-80 w-64 overflow-y-auto rounded-xl border border-line-strong bg-surface p-1.5 shadow-2xl outline-none"
 						>
 							{#each available as a (a.key)}
 								{@const AIcon = iconFor(a.icon)}

@@ -124,7 +124,7 @@
 		<Popover.Content
 			align="start"
 			sideOffset={6}
-			class="z-50 w-[min(22rem,90vw)] overflow-hidden rounded-xl border border-line-strong bg-surface p-0 shadow-2xl"
+			class="z-[80] w-[min(22rem,90vw)] overflow-hidden rounded-xl border border-line-strong bg-surface p-0 shadow-2xl"
 		>
 			<div class="flex items-center gap-1.5 border-b border-line/60 px-2.5 py-2">
 				<Search size={13} class="shrink-0 text-faint" />
