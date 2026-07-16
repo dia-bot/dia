@@ -101,6 +101,17 @@ const (
 	// the automations runtime exposes it as the "social_update" trigger. Like
 	// TypeAutomodAction it has no gateway/Elixir mapper.
 	TypeSocialUpdate Type = "SOCIAL_UPDATE"
+
+	// TypeMemberMilestone is NOT a gateway event: the stats feature publishes
+	// it when the member count crosses a configured milestone step, so
+	// automations can celebrate via the "member_milestone" trigger. Like
+	// TypeSocialUpdate it has no gateway/Elixir mapper.
+	TypeMemberMilestone Type = "MEMBER_MILESTONE"
+
+	// TypeScheduledMessageSent is NOT a gateway event: the scheduler feature
+	// publishes it after posting a scheduled message, exposed as the
+	// "scheduled_message" trigger. No gateway/Elixir mapper.
+	TypeScheduledMessageSent Type = "SCHEDULED_MESSAGE_SENT"
 )
 
 // SubjectPrefix is the JetStream subject root for forwarded gateway events.
@@ -468,6 +479,25 @@ type SocialUpdate struct {
 	Thumbnail      string `json:"thumbnail,omitempty"`
 	Category       string `json:"category,omitempty"` // e.g. the Twitch game name
 	StartedAt      string `json:"started_at,omitempty"`
+}
+
+// MemberMilestone is published on MEMBER_MILESTONE (synthetic, worker-emitted)
+// when the guild's member count crosses a configured milestone step.
+type MemberMilestone struct {
+	GuildID string `json:"guild_id"`
+	Count   int    `json:"count"`     // the member count that crossed the step
+	Step    int    `json:"step"`      // the configured milestone interval
+	Reached int    `json:"milestone"` // the milestone value crossed (count rounded down to step)
+}
+
+// ScheduledMessageSent is published on SCHEDULED_MESSAGE_SENT (synthetic,
+// worker-emitted) after a scheduled message posts.
+type ScheduledMessageSent struct {
+	GuildID    string `json:"guild_id"`
+	ScheduleID int64  `json:"schedule_id"`
+	Name       string `json:"name"`
+	ChannelID  string `json:"channel_id"`
+	MessageID  string `json:"message_id,omitempty"`
 }
 
 // VoiceState is delivered on VOICE_STATE_UPDATE. ChannelID == "" means the

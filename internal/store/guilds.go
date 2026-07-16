@@ -129,6 +129,26 @@ func (r *FeatureConfigRepo) Upsert(ctx context.Context, guildID int64, feature s
 	return nil
 }
 
+// ListGuildsEnabled returns every guild id with a feature switched on — the
+// sweep set for background workers (stats counters, schedule sweeps).
+func (r *FeatureConfigRepo) ListGuildsEnabled(ctx context.Context, feature string) ([]int64, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT guild_id FROM guild_feature_configs WHERE feature_key = $1 AND enabled`, feature)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
 // GetAll returns every feature config for a guild keyed by feature_key.
 func (r *FeatureConfigRepo) GetAll(ctx context.Context, guildID int64) (map[string]FeatureConfig, error) {
 	rows, err := r.pool.Query(ctx,
