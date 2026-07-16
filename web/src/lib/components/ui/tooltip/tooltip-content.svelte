@@ -15,7 +15,7 @@
 	<TooltipPrimitive.Content
 		{sideOffset}
 		class={cn(
-			'menu-pop z-50 overflow-hidden rounded-md border border-border bg-popover px-2.5 py-1 text-[11.5px] text-popover-foreground shadow-md',
+			'menu-pop z-[80] overflow-hidden rounded-md border border-border bg-popover px-2.5 py-1 text-[11.5px] text-popover-foreground shadow-md',
 			cls
 		)}
 		{...rest}

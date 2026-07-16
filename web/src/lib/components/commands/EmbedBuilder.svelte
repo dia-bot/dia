@@ -59,6 +59,7 @@
 	const validColor = $derived(/^#[0-9a-fA-F]{6}$/.test(color));
 
 	let urlOpen = $state(false);
+	let authorUrlOpen = $state(false);
 
 	// Grow textareas with their content so the embed reads like the real thing.
 </script>
@@ -90,13 +91,33 @@
 						onChange={(v) => set('author_icon', v)}
 					/>
 					<input
-						class="dc-input h-5 min-w-0 flex-1 text-[12.5px] font-semibold text-[#f2f3f5]"
+						class="dc-input h-5 min-w-0 flex-1 text-[12.5px] font-semibold {embed?.author_url
+							? 'text-[#00a8fc]'
+							: 'text-[#f2f3f5]'}"
 						placeholder="Author"
 						maxlength="256"
 						value={embed?.author_name ?? ''}
 						oninput={(e) => set('author_name', (e.currentTarget as HTMLInputElement).value)}
 					/>
+					<button
+						type="button"
+						class="grid size-5 shrink-0 place-items-center rounded transition-colors {embed?.author_url || authorUrlOpen
+							? 'text-[#00a8fc]'
+							: 'text-[#6d6f78] opacity-0 hover:text-[#b5bac1] group-hover/embed:opacity-100'}"
+						title="Link the author"
+						onclick={() => (authorUrlOpen = !authorUrlOpen)}
+					>
+						<Link2 size={12} />
+					</button>
 				</div>
+				{#if authorUrlOpen || embed?.author_url}
+					<input
+						class="dc-input mb-1 w-full font-mono text-[10.5px] text-[#00a8fc]"
+						placeholder="https://… author link"
+						value={embed?.author_url ?? ''}
+						oninput={(e) => set('author_url', (e.currentTarget as HTMLInputElement).value)}
+					/>
+				{/if}
 
 				<!-- Title + link -->
 				<div class="flex items-center gap-1.5">
