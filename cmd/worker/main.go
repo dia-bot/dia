@@ -93,6 +93,7 @@ func main() {
 	b := bot.New(deps)
 	automationsPlugin := automations.New()
 	giveawayPlugin := giveaway.New()
+	socialPlugin := socialnotifications.New()
 	if err := b.Register(ctx,
 		welcome.New(),
 		leveling.New(),
@@ -101,17 +102,19 @@ func main() {
 		verification.New(),
 		serverlogs.New(),
 		tickets.New(),
-		socialnotifications.New(),
+		socialPlugin,
 		customcommands.New(),
 		automationsPlugin,
 		giveawayPlugin,
 	); err != nil {
 		fatal(log, "register plugins", err)
 	}
-	// Composed giveaway action buttons fire a saved automation on click. The
-	// giveaway plugin can't import the automations runner (it would cycle), so the
-	// automations runtime is injected as the bridge once both have initialised.
+	// Composed giveaway and social action buttons (and social per-kind
+	// attachments) fire a saved automation. Those plugins can't import the
+	// automations runner (it would cycle), so the automations runtime is
+	// injected as the bridge once all have initialised.
 	giveawayPlugin.SetAutomationRunner(automationsPlugin)
+	socialPlugin.SetAutomationRunner(automationsPlugin)
 
 	// DEV_GUILD_ID registers commands to one guild (instant) for development;
 	// empty registers globally (~1h propagation).

@@ -8,10 +8,12 @@ package socialnotifications
 
 import (
 	"context"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/dia-bot/dia/internal/event"
+	"github.com/dia-bot/dia/internal/interactions"
 	"github.com/dia-bot/dia/internal/plugin"
 	"github.com/dia-bot/dia/internal/social"
 	"github.com/dia-bot/dia/internal/store"
@@ -19,10 +21,18 @@ import (
 	"github.com/dia-bot/dia/pkg/discordgo"
 )
 
+// componentPrefix namespaces this feature's component clicks: composed action
+// buttons on posted announcements (social:act:<subID>:<kind>:<suffix>).
+const componentPrefix = "social:"
+
 // Plugin implements the social notifications feature.
 type Plugin struct {
 	tmpl    *templating.Engine
 	clients *social.Clients
+	deps    plugin.Deps
+	// autoRunner fires a saved automation for per-kind attachments and
+	// composed action-button clicks; injected by the worker (cycle-safe).
+	autoRunner AutomationRunner
 }
 
 // New returns the social notifications plugin.
@@ -44,10 +54,12 @@ func (*Plugin) Info() plugin.Info {
 func (p *Plugin) Init(ctx context.Context, d plugin.Deps, reg *plugin.Registrar) error {
 	p.tmpl = templating.New()
 	p.clients = social.NewClients(d.Config)
+	p.deps = d
 
 	reg.OnEvent(event.TypeSocialUpdate, func(ctx context.Context, env *event.Envelope) error {
 		return p.handleUpdate(ctx, d, env)
 	})
+	reg.Component(componentPrefix, func(c *interactions.Context) error { return p.handleComponent(c) })
 	reg.Worker("social-poller", func(ctx context.Context) { p.pollLoop(ctx, d) })
 	reg.Worker("social-sync", func(ctx context.Context) { p.syncLoop(ctx, d) })
 	return nil
@@ -77,6 +89,8 @@ func defaultTemplate(kind string) string {
 	switch kind {
 	case social.KindLiveStart:
 		return "🔴 **{{ .Account }}** is now live{{ if .Game }} playing **{{ .Game }}**{{ end }}{{ if .Title }}: {{ .Title }}{{ end }}"
+	case social.KindLiveEnd:
+		return "⬛ **{{ .Account }}** just went offline. Thanks for watching!"
 	case social.KindNewVideo:
 		return "▶️ **{{ .Account }}** uploaded a new video: **{{ .Title }}**"
 	default: // new_post
@@ -84,16 +98,15 @@ func defaultTemplate(kind string) string {
 	}
 }
 
-// handleUpdate announces one social update. live_end never announces (it only
-// exists as an automations trigger); everything else respects the feature
-// toggle and the subscription's own switches.
+// handleUpdate reacts to one social update, gated per event kind by the
+// subscription's spec: the announcement posts when the kind announces
+// (live_end is opt-in, everything else opt-out), and the kind's attached
+// automation runs either way. Both respect the feature toggle and the
+// subscription's own switches.
 func (p *Plugin) handleUpdate(ctx context.Context, d plugin.Deps, env *event.Envelope) error {
 	upd, err := plugin.DecodeData[event.SocialUpdate](env)
 	if err != nil {
 		return err
-	}
-	if upd.Kind == social.KindLiveEnd {
-		return nil
 	}
 	sub, ok, err := d.Store.Social.GetByID(ctx, upd.SubscriptionID)
 	if err != nil || !ok || !sub.Enabled {
@@ -103,30 +116,97 @@ func (p *Plugin) handleUpdate(ctx context.Context, d plugin.Deps, env *event.Env
 	if err != nil || !enabled {
 		return err
 	}
-	send := BuildAnnouncement(ctx, p.tmpl, sub, upd)
-	if send == nil {
-		return nil
+	spec := DecodeSubSpec(sub.Spec)
+
+	if spec.Announces(upd.Kind) {
+		if send := BuildAnnouncement(ctx, p.tmpl, sub, upd); send != nil {
+			if _, err := d.Discord.SendMessage(event.FormatID(sub.ChannelID), send); err != nil {
+				d.Log.Warn("social: announce failed", "guild", upd.GuildID, "provider", upd.Provider, "err", err)
+			}
+		}
 	}
-	_, err = d.Discord.SendMessage(event.FormatID(sub.ChannelID), send)
-	if err != nil {
-		d.Log.Warn("social: announce failed", "guild", upd.GuildID, "provider", upd.Provider, "err", err)
-	}
-	return err
+
+	// Automations connected to this event run via the automations dispatcher
+	// (the social_update trigger scoped by subscription/kind filters), not
+	// here, so one event never fans out duplicate runs.
+	return nil
 }
 
-// BuildAnnouncement composes the announcement: an optional role ping, the
-// templated line, and either a rich embed or a bare link (Discord then unfurls
-// it). Exported so the dashboard's Test endpoint sends exactly what the bot
-// would at runtime.
+// handleComponent handles clicks on a posted announcement's composed action
+// buttons (social:act:<subID>:<kind>:<suffix>): the click fires the saved
+// automation the button points at. Missing wiring reports an ephemeral notice
+// rather than silently doing nothing.
+func (p *Plugin) handleComponent(c *interactions.Context) error {
+	rest := strings.TrimPrefix(c.CustomID(), componentPrefix)
+	action, rest, ok := strings.Cut(rest, ":")
+	if !ok || action != "act" {
+		return c.DeferUpdate()
+	}
+	idStr, rest, ok := strings.Cut(rest, ":")
+	if !ok {
+		return c.DeferUpdate()
+	}
+	kind, suffix, ok := strings.Cut(rest, ":")
+	if !ok || suffix == "" {
+		return c.DeferUpdate()
+	}
+	subID, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		return c.DeferUpdate()
+	}
+	sub, found, err := p.deps.Store.Social.GetByID(c.Ctx, subID)
+	if err != nil || !found {
+		return c.RespondEphemeral("This subscription is no longer available.")
+	}
+	autoID := DecodeSubSpec(sub.Spec).Kind(kind).Message.ButtonActions[suffix]
+	if autoID == "" || p.autoRunner == nil {
+		return c.RespondEphemeral("This button isn't set up yet.")
+	}
+	_ = c.DeferUpdate()
+	ev := map[string]any{
+		"provider":     sub.Provider,
+		"kind":         kind,
+		"account":      sub.AccountName,
+		"account_id":   sub.AccountID,
+		"account_url":  sub.AccountURL,
+		"subscription": sub.ID,
+		"button":       suffix,
+		"channel_id":   c.I.ChannelID,
+	}
+	if err := p.autoRunner.RunAutomation(context.WithoutCancel(c.Ctx), event.FormatID(sub.GuildID), autoID, c.User, c.I.Member, c.I.ChannelID, ev); err != nil {
+		p.deps.Log.Warn("social: action button automation", "subscription", sub.ID, "automation", autoID, "err", err)
+	}
+	return nil
+}
+
+// actionCustomID routes a composed (non-link) announcement button back to this
+// feature: social:act:<subID>:<kind>:<suffix>.
+func actionCustomID(subID int64, kind, suffix string) string {
+	return componentPrefix + "act:" + strconv.FormatInt(subID, 10) + ":" + kind + ":" + suffix
+}
+
+// BuildAnnouncement composes the announcement. A kind with a composed message
+// renders that (content, embeds, buttons, all templated); otherwise the legacy
+// path posts an optional role ping, the templated line, and either a rich
+// embed or a bare link (Discord then unfurls it). Exported so the dashboard's
+// Test endpoint sends exactly what the bot would at runtime.
 func BuildAnnouncement(ctx context.Context, tmpl *templating.Engine, sub store.SocialSubscription, upd event.SocialUpdate) *discordgo.MessageSend {
 	data := map[string]any{
-		"Account":  upd.AccountName,
-		"Platform": platformNames[upd.Provider],
-		"Kind":     upd.Kind,
-		"Title":    upd.Title,
-		"URL":      upd.URL,
-		"Game":     upd.Category,
+		"Account":     upd.AccountName,
+		"AccountURL":  upd.AccountURL,
+		"Platform":    platformNames[upd.Provider],
+		"Kind":        upd.Kind,
+		"Title":       upd.Title,
+		"URL":         upd.URL,
+		"Game":        upd.Category,
+		"Description": upd.Description,
+		"Image":       upd.Thumbnail,
 	}
+
+	if msg := DecodeSubSpec(sub.Spec).Kind(upd.Kind).Message; !msg.Empty() {
+		return buildComposed(ctx, tmpl, sub, upd, msg, data)
+	}
+
 	src := sub.Template
 	if strings.TrimSpace(src) == "" {
 		src = defaultTemplate(upd.Kind)
@@ -183,6 +263,34 @@ func BuildAnnouncement(ctx context.Context, tmpl *templating.Engine, sub store.S
 		em.Image = &discordgo.MessageEmbedImage{URL: upd.Thumbnail}
 	}
 	send.Embeds = []*discordgo.MessageEmbed{em}
+	return send
+}
+
+// buildComposed renders a kind's composed message into the announcement send.
+// The subscription's ping role prepends to the content exactly like the legacy
+// path, so switching a kind to a composed message never loses the ping.
+func buildComposed(ctx context.Context, tmpl *templating.Engine, sub store.SocialSubscription, upd event.SocialUpdate, msg MessageSpec, data map[string]any) *discordgo.MessageSend {
+	content, embeds, rows := renderComposed(ctx, tmpl, msg, data, sub.ID, upd.Kind, embedColors[upd.Provider])
+
+	send := &discordgo.MessageSend{
+		AllowedMentions: &discordgo.MessageAllowedMentions{Parse: []discordgo.AllowedMentionType{}},
+	}
+	if sub.PingRoleID != 0 {
+		if sub.PingRoleID == sub.GuildID { // the @everyone role
+			content = strings.TrimSpace("@everyone " + content)
+			send.AllowedMentions.Parse = append(send.AllowedMentions.Parse, discordgo.AllowedMentionTypeEveryone)
+		} else {
+			rid := event.FormatID(sub.PingRoleID)
+			content = strings.TrimSpace("<@&" + rid + "> " + content)
+			send.AllowedMentions.Roles = []string{rid}
+		}
+	}
+	send.Content = content
+	send.Embeds = embeds
+	send.Components = rows
+	if send.Content == "" && len(send.Embeds) == 0 && len(send.Components) == 0 {
+		return nil
+	}
 	return send
 }
 
