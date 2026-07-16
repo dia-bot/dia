@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -22,6 +23,7 @@ import (
 	cc "github.com/dia-bot/dia/internal/features/customcommands"
 	"github.com/dia-bot/dia/internal/features/customcommands/exec"
 	"github.com/dia-bot/dia/internal/features/giveaway"
+	"github.com/dia-bot/dia/internal/features/socialnotifications"
 	"github.com/dia-bot/dia/internal/interactions"
 	"github.com/dia-bot/dia/internal/plugin"
 	"github.com/dia-bot/dia/internal/store"
@@ -111,8 +113,11 @@ func (p *Plugin) handleEvent(ctx context.Context, et event.Type, env *event.Enve
 	// giveaway entry" on giveaway_entered. Load whichever matches (only touches the
 	// store on those two events) so an otherwise-empty dispatch still runs it.
 	drawTail, entryTail := p.giveawayTails(ctx, et, gid)
+	// The social feature's built-in carries the same kind of editable tail,
+	// run on every SOCIAL_UPDATE.
+	socialTail := p.socialTail(ctx, et, gid)
 
-	if len(autos) == 0 && len(waiting) == 0 && len(drawTail) == 0 && len(entryTail) == 0 {
+	if len(autos) == 0 && len(waiting) == 0 && len(drawTail) == 0 && len(entryTail) == 0 && len(socialTail) == 0 {
 		return nil
 	}
 
@@ -139,6 +144,9 @@ func (p *Plugin) handleEvent(ctx context.Context, et event.Type, env *event.Enve
 	}
 	if len(entryTail) > 0 {
 		p.runBuiltinTail(ctx, "giveaway.entry", "giveaway_entry", entryTail, ec)
+	}
+	if len(socialTail) > 0 {
+		p.runBuiltinTail(ctx, "social.update", "social_update", socialTail, ec)
 	}
 
 	if len(waiting) > 0 {
@@ -695,7 +703,31 @@ func (p *Plugin) matches(ctx context.Context, a store.Automation, cfg automation
 	if len(cfg.Keywords) > 0 && !keywordMatches(cfg, contentOf(ec.eventMap)) {
 		return false
 	}
+	// Social scoping: restrict to specific followed accounts and update kinds.
+	if len(cfg.Subscriptions) > 0 && !contains(cfg.Subscriptions, socialSubOf(ec.eventMap)) {
+		return false
+	}
+	if len(cfg.Kinds) > 0 {
+		kind, _ := ec.eventMap["kind"].(string)
+		if !contains(cfg.Kinds, kind) {
+			return false
+		}
+	}
 	return true
+}
+
+// socialSubOf reads the social subscription id out of a social_update event
+// scope as the decimal string the trigger config stores.
+func socialSubOf(m map[string]any) string {
+	switch v := m["subscription"].(type) {
+	case int64:
+		return strconv.FormatInt(v, 10)
+	case float64:
+		return strconv.FormatInt(int64(v), 10)
+	case string:
+		return v
+	}
+	return ""
 }
 
 // passCooldown enforces an optional per-scope rate limit via the cache (SET NX).
@@ -774,6 +806,25 @@ func (p *Plugin) giveawayTails(ctx context.Context, et event.Type, gid int64) (d
 		return nil, cfg.EntryTail
 	}
 	return cfg.Tail, nil
+}
+
+// socialTail returns the social feature's built-in follow-up flow on
+// SOCIAL_UPDATE (nil when the event is something else, the feature is off, or
+// no tail is wired). Mirrors giveawayTails: it only reads the store on that
+// one event, so every other event stays a cheap no-op.
+func (p *Plugin) socialTail(ctx context.Context, et event.Type, gid int64) []cc.Step {
+	if et != event.TypeSocialUpdate {
+		return nil
+	}
+	fc, err := p.deps.Store.Features.Get(ctx, gid, socialnotifications.FeatureKey)
+	if err != nil || !fc.Enabled || len(fc.Config) == 0 {
+		return nil
+	}
+	var cfg socialnotifications.Config
+	if json.Unmarshal(fc.Config, &cfg) != nil {
+		return nil
+	}
+	return cfg.Tail
 }
 
 // runBuiltinTail runs a managed feature's built-in follow-up flow as a durable

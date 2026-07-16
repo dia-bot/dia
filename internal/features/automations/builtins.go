@@ -10,6 +10,7 @@ import (
 	"github.com/dia-bot/dia/internal/features/leveling"
 	"github.com/dia-bot/dia/internal/features/moderation"
 	"github.com/dia-bot/dia/internal/features/roles"
+	"github.com/dia-bot/dia/internal/features/socialnotifications"
 	"github.com/dia-bot/dia/internal/features/welcome"
 	"github.com/dia-bot/dia/internal/store"
 )
@@ -188,7 +189,37 @@ func BuildBuiltins(configs map[string]json.RawMessage, featureEnabled map[string
 		},
 	)
 
+	// ── Social alerts ────────────────────────────────────────────────────────
+	scfg := socialnotifications.Default()
+	if raw := configs[socialnotifications.FeatureKey]; len(raw) > 0 {
+		_ = json.Unmarshal(raw, &scfg)
+	}
+	out = append(out, Builtin{
+		Key:         "social.update",
+		Name:        "Announce social updates",
+		Description: "Runs every time a followed account goes live, uploads or posts, after Dia sends the announcement. Branch on .Event.kind (live_start / live_end / new_video / new_post) and .Event.provider to log, reward or cross-post. Managed on the Social tab.",
+		TriggerType: "social_update",
+		FeatureKey:  socialnotifications.FeatureKey,
+		FeatureName: "Social Alerts",
+		FeatureTab:  "social",
+		Enabled:     featureEnabled[socialnotifications.FeatureKey],
+		Definition:  socialFlow(scfg),
+	})
+
 	return out
+}
+
+// socialFlow renders the social announce as a read-only spine node (the social
+// feature composes + posts the announcement natively — no step program)
+// followed by the editable follow-up tail the admin wires off its out handle.
+// Mirrors giveawayEntryFlow.
+func socialFlow(cfg socialnotifications.Config) cc.Definition {
+	steps := []cc.Step{{
+		ID:   "builtin-announce",
+		Kind: cc.KindNoop,
+	}}
+	steps = append(steps, cfg.Tail...)
+	return cc.Definition{Steps: steps}
 }
 
 // giveawayFlow renders the giveaway end as a read-only spine node (the giveaway

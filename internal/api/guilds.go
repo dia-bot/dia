@@ -14,6 +14,7 @@ import (
 	"github.com/dia-bot/dia/internal/features/leveling"
 	"github.com/dia-bot/dia/internal/features/moderation"
 	"github.com/dia-bot/dia/internal/features/roles"
+	sn "github.com/dia-bot/dia/internal/features/socialnotifications"
 	"github.com/dia-bot/dia/internal/features/welcome"
 	"github.com/dia-bot/dia/internal/imaging"
 	"github.com/dia-bot/dia/pkg/discordgo"
@@ -367,13 +368,14 @@ func (s *Server) handlePutFeature(c *gin.Context) {
 	}
 	gid := guildID(c)
 	gidInt, _ := event.ParseID(gid)
-	// Welcome's, leveling's, auto-roles', automod's and giveaways' canvas-owned
-	// programs (button click actions and/or the follow-up flows) are owned by the
-	// automation flow (saved via /welcome/actions, /leveling/actions,
-	// /autorole/actions, /automod/rules/:rid/actions or /giveaway/actions), not
-	// the settings page. Keep the stored copy authoritative so a settings save
-	// can't clobber a flow wired meanwhile on the canvas.
-	if len(req.Config) > 0 && (key == welcome.FeatureKey || key == leveling.FeatureKey || key == roles.FeatureKey || key == moderation.AutomodKey || key == giveaway.FeatureKey) {
+	// Welcome's, leveling's, auto-roles', automod's, giveaways' and social's
+	// canvas-owned programs (button click actions and/or the follow-up flows)
+	// are owned by the automation flow (saved via /welcome/actions,
+	// /leveling/actions, /autorole/actions, /automod/rules/:rid/actions,
+	// /giveaway/actions or /social-actions), not the settings page. Keep the
+	// stored copy authoritative so a settings save can't clobber a flow wired
+	// meanwhile on the canvas.
+	if len(req.Config) > 0 && (key == welcome.FeatureKey || key == leveling.FeatureKey || key == roles.FeatureKey || key == moderation.AutomodKey || key == giveaway.FeatureKey || key == sn.FeatureKey) {
 		if existing, err := s.store.Features.Get(c.Request.Context(), gidInt, key); err == nil && len(existing.Config) > 0 {
 			switch key {
 			case welcome.FeatureKey:
@@ -386,6 +388,8 @@ func (s *Server) handlePutFeature(c *gin.Context) {
 				req.Config = moderation.MergeStoredRuleTails(req.Config, existing.Config)
 			case giveaway.FeatureKey:
 				req.Config = giveaway.MergeStoredTail(req.Config, existing.Config)
+			case sn.FeatureKey:
+				req.Config = sn.MergeStoredTail(req.Config, existing.Config)
 			}
 		}
 	}
