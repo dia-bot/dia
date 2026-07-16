@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
@@ -35,6 +36,7 @@ func socialSubJSON(s store.SocialSubscription) gin.H {
 		"ping_role_id": ping,
 		"template":     s.Template,
 		"embed":        s.Embed,
+		"spec":         sn.DecodeSubSpec(s.Spec),
 		"enabled":      s.Enabled,
 		"live":         s.Live,
 		"hook_status":  s.HookStatus,
@@ -73,13 +75,28 @@ func (s *Server) handleListSocial(c *gin.Context) {
 }
 
 type socialSubReq struct {
-	Provider   string `json:"provider"`
-	Account    string `json:"account"`
-	ChannelID  string `json:"channel_id"`
-	PingRoleID string `json:"ping_role_id"`
-	Template   string `json:"template"`
-	Embed      *bool  `json:"embed"`
-	Enabled    *bool  `json:"enabled"`
+	Provider   string      `json:"provider"`
+	Account    string      `json:"account"`
+	ChannelID  string      `json:"channel_id"`
+	PingRoleID string      `json:"ping_role_id"`
+	Template   string      `json:"template"`
+	Embed      *bool       `json:"embed"`
+	Spec       *sn.SubSpec `json:"spec"` // nil = leave stored spec untouched
+	Enabled    *bool       `json:"enabled"`
+}
+
+// encodeSubSpec marshals a request's per-kind spec for storage. Decoding into
+// sn.SubSpec at bind time already validated the shape, so the editor can never
+// persist JSONB the announcer won't decode.
+func encodeSubSpec(spec *sn.SubSpec) json.RawMessage {
+	if spec == nil {
+		return nil
+	}
+	raw, err := json.Marshal(spec)
+	if err != nil {
+		return nil
+	}
+	return raw
 }
 
 // handleCreateSocial validates and resolves the account with the provider's
@@ -124,6 +141,7 @@ func (s *Server) handleCreateSocial(c *gin.Context) {
 		ChannelID: chID,
 		Template:  strings.TrimSpace(req.Template),
 		Embed:     req.Embed == nil || *req.Embed,
+		Spec:      encodeSubSpec(req.Spec),
 		Enabled:   req.Enabled == nil || *req.Enabled,
 	}
 	if req.PingRoleID != "" {
@@ -301,6 +319,9 @@ func (s *Server) handleUpdateSocial(c *gin.Context) {
 	sub.Template = strings.TrimSpace(req.Template)
 	if req.Embed != nil {
 		sub.Embed = *req.Embed
+	}
+	if raw := encodeSubSpec(req.Spec); raw != nil {
+		sub.Spec = raw
 	}
 	if req.Enabled != nil {
 		sub.Enabled = *req.Enabled

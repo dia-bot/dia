@@ -320,6 +320,12 @@ export const api = {
 	// like reaction-roles only the post-fire tail saves.
 	saveAutomodRuleTail: (id: string, ruleId: string, tail: unknown[]) =>
 		req<{ ok: boolean }>('POST', `/api/guilds/${id}/automod/rules/${ruleId}/actions`, { tail }),
+	// saveSocialTail persists the canvas-authored follow-up flow for the social
+	// feature's built-in "Announce social updates" automation. The spine (the
+	// native announce) is read-only, so like the giveaway flows only the
+	// post-announce tail saves; it runs on the social_update event.
+	saveSocialTail: (id: string, tail: unknown[]) =>
+		req<{ ok: boolean }>('POST', `/api/guilds/${id}/social-actions`, { tail }),
 	levelingVariables: (id: string) =>
 		req<{ variables: { token: string; desc: string }[] }>('GET', `/api/guilds/${id}/leveling/variables`),
 	// templatingPreview renders one template string and returns the text + any
