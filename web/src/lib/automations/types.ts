@@ -15,6 +15,8 @@ export type TriggerFilter =
 	| 'keywords'
 	| 'emojis'
 	| 'role'
+	| 'social_accounts'
+	| 'social_kinds'
 	| 'cooldown';
 
 export interface TriggerConfig {
@@ -27,6 +29,9 @@ export interface TriggerConfig {
 	match_mode?: 'contains' | 'equals' | 'word';
 	emojis?: string[];
 	role?: string;
+	// social_update scoping: followed-account subscription ids and update kinds.
+	subscriptions?: string[];
+	kinds?: string[];
 	cooldown?: { scope: 'user' | 'channel' | 'guild'; seconds: number };
 }
 
@@ -53,7 +58,8 @@ export const TRIGGER_CATEGORIES: { id: string; label: string }[] = [
 	{ id: 'moderation', label: 'Moderation' },
 	{ id: 'tickets', label: 'Tickets' },
 	{ id: 'channels', label: 'Channels & threads' },
-	{ id: 'giveaways', label: 'Giveaways' }
+	{ id: 'giveaways', label: 'Giveaways' },
+	{ id: 'social', label: 'Social' }
 ];
 
 const v = (path: string, type: string, short: string): TmplVar => ({
@@ -200,6 +206,24 @@ const GIVEAWAY_ENTRY_EVENT_VARS: TmplVar[] = [
 	v('.Event.entry_count', 'int', 'Distinct entrants after this click'),
 	v('.Event.message_id', 'snowflake', 'The giveaway message id'),
 	v('.Event.channel_id', 'snowflake', 'The channel the giveaway lives in')
+];
+
+// Mirrors the eventMap set in runtime.go's TypeSocialUpdate case. Keep the key
+// names exact: the runtime emits `account` (not account_name) and `subscription`
+// (not subscription_id), and does not surface a thumbnail.
+const SOCIAL_EVENT_VARS: TmplVar[] = [
+	v('.Event.provider', 'string', 'The platform (twitch, youtube, kick, bluesky, rss)'),
+	v('.Event.kind', 'string', 'What happened (live_start, live_end, new_video, new_post)'),
+	v('.Event.account', 'string', 'The followed account name'),
+	v('.Event.account_url', 'string', "Link to the account's page"),
+	v('.Event.title', 'string', 'The stream, video or post title'),
+	v('.Event.url', 'string', 'Link to the stream, video or post'),
+	v('.Event.description', 'string', 'A short excerpt or description ("" if none)'),
+	v('.Event.category', 'string', 'The stream game or category ("" if none)'),
+	v('.Event.account_id', 'string', 'The upstream account id (or feed URL for RSS)'),
+	v('.Event.item_id', 'string', 'The upstream item id (dedupe key)'),
+	v('.Event.started_at', 'string', 'When a stream started (RFC 3339, "" if not a stream)'),
+	v('.Event.subscription', 'int', 'The Dia subscription id that matched')
 ];
 
 export const TRIGGERS: TriggerKindMeta[] = [
@@ -570,6 +594,18 @@ export const TRIGGERS: TriggerKindMeta[] = [
 		hasChannel: true,
 		filters: ['channels', 'ignore_bots', 'cooldown'],
 		eventVars: GIVEAWAY_ENTRY_EVENT_VARS
+	},
+	{
+		key: 'social_update',
+		label: 'Social account update',
+		description:
+			'A followed social account goes live or posts. Branch on .Event.kind (live_start, live_end, new_video, new_post) and .Event.provider. No .User or .Channel, send to an explicit channel.',
+		category: 'social',
+		event: 'SOCIAL_UPDATE',
+		actor: '(no actor)',
+		hasChannel: false,
+		filters: ['social_accounts', 'social_kinds', 'cooldown'],
+		eventVars: SOCIAL_EVENT_VARS
 	}
 ];
 
