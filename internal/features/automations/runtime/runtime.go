@@ -1164,6 +1164,43 @@ func (p *Plugin) runScheduler(ctx context.Context) {
 			return
 		case <-ticker.C:
 			p.drainDueWaits(ctx)
+			p.drainDueSchedules(ctx)
+		}
+	}
+}
+
+// drainDueSchedules runs "schedule"-triggered automations whose durable timer
+// arrived. The timer advances before the run (a finished one-off disables), so
+// a crashing flow can't wedge the sweep into a rerun loop.
+func (p *Plugin) drainDueSchedules(ctx context.Context) {
+	due, err := p.deps.Store.Automations.ListDueScheduled(ctx, time.Now(), 25)
+	if err != nil {
+		p.deps.Log.Warn("schedule sweep failed", "err", err)
+		return
+	}
+	for _, a := range due {
+		cfg := automations.DecodeTriggerConfig(a.TriggerConfig)
+		var next *time.Time
+		if cfg.Schedule != nil {
+			if n, ok := cfg.Schedule.NextRun(time.Now()); ok {
+				next = &n
+			}
+		}
+		if err := p.deps.Store.Automations.SetNextRun(ctx, a.ID, next); err != nil {
+			p.deps.Log.Warn("schedule advance failed", "automation", a.ID, "err", err)
+			continue
+		}
+		ec := &eventContext{
+			guildID: event.FormatID(a.GuildID),
+			eventMap: map[string]any{
+				"scheduled_at": time.Now().UTC().Format(time.RFC3339),
+			},
+		}
+		if cfg.Schedule != nil {
+			ec.eventMap["kind"] = cfg.Schedule.Kind
+		}
+		if err := p.run(ctx, a, ec); err != nil {
+			p.deps.Log.Warn("scheduled automation run error", "automation", a.ID, "err", err)
 		}
 	}
 }

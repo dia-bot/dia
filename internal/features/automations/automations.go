@@ -15,7 +15,11 @@
 // automations/runtime, mirroring the customcommands/{exec,runtime} split.
 package automations
 
-import "encoding/json"
+import (
+	"encoding/json"
+
+	"github.com/dia-bot/dia/internal/features/schedmessages"
+)
 
 // FeatureKey is the stable identifier used in guild_feature_configs and as the
 // dashboard route segment.
@@ -72,6 +76,9 @@ type TriggerConfig struct {
 	// Schedules, when non-empty, restricts a scheduled_message trigger to
 	// these schedule ids (decimal strings).
 	Schedules []string `json:"schedules,omitempty"`
+	// Schedule is the cadence of a "schedule"-triggered automation (the flow
+	// runs on this timer instead of a gateway event).
+	Schedule *schedmessages.ScheduleDef `json:"schedule,omitempty"`
 	// Cooldown, when set, rate-limits the automation per scope so a burst of
 	// events doesn't fan out a burst of runs.
 	Cooldown *Cooldown `json:"cooldown,omitempty"`

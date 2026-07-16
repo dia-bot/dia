@@ -112,6 +112,7 @@ var Triggers = []TriggerKind{
 
 	// Scheduling
 	{Key: "scheduled_message", Label: "Scheduled message sent", Description: "A scheduled message posts (chain follow-up steps, pin it, open a thread, and more).", Event: event.TypeScheduledMessageSent, Category: CatScheduling, Actor: "(no actor)", HasChannel: true, Filters: []Filter{FilterSchedules, FilterChannels, FilterCooldown}},
+	{Key: "schedule", Label: "At a scheduled time", Description: "Runs the flow itself on a cadence: once, every N minutes, daily or weekly. No gateway event, no actor; the schedule lives on this automation.", Event: "", Category: CatScheduling, Actor: "(no actor)", Filters: nil},
 }
 
 // triggerByKey indexes the catalogue.
@@ -145,11 +146,15 @@ func EventForTrigger(key string) (event.Type, bool) {
 }
 
 // SubscribedEvents returns the distinct set of gateway events the catalogue
-// needs — the runtime subscribes to exactly these.
+// needs — the runtime subscribes to exactly these. Time-driven triggers (the
+// "schedule" kind) have no event and are swept by the scheduler instead.
 func SubscribedEvents() []event.Type {
 	seen := map[event.Type]bool{}
 	var out []event.Type
 	for _, t := range Triggers {
+		if t.Event == "" {
+			continue
+		}
 		if !seen[t.Event] {
 			seen[t.Event] = true
 			out = append(out, t.Event)

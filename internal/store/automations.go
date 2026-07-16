@@ -24,6 +24,41 @@ func scanAutomation(row pgx.Row, a *Automation) error {
 		&a.TriggerType, &a.EventType, &a.TriggerConfig, &a.Definition, &a.CreatedBy, &a.CreatedAt, &a.UpdatedAt)
 }
 
+// ListDueScheduled returns enabled "schedule"-triggered automations whose next
+// run has arrived (the runtime scheduler's sweep set, across all guilds).
+func (r *AutomationRepo) ListDueScheduled(ctx context.Context, now time.Time, limit int) ([]Automation, error) {
+	rows, err := r.pool.Query(ctx, `SELECT `+automationCols+` FROM automations
+		WHERE trigger_type = 'schedule' AND enabled
+		  AND next_run_at IS NOT NULL AND next_run_at <= $1
+		ORDER BY next_run_at LIMIT $2`, now, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Automation
+	for rows.Next() {
+		var a Automation
+		if err := scanAutomation(rows, &a); err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
+// SetNextRun stamps a schedule automation's durable timer (nil = finished; a
+// finished one-off is also disabled so it reads as done in the dashboard).
+func (r *AutomationRepo) SetNextRun(ctx context.Context, id string, next *time.Time) error {
+	if next == nil {
+		_, err := r.pool.Exec(ctx,
+			`UPDATE automations SET next_run_at = NULL, enabled = FALSE, updated_at = now() WHERE id = $1`, id)
+		return err
+	}
+	_, err := r.pool.Exec(ctx,
+		`UPDATE automations SET next_run_at = $2, updated_at = now() WHERE id = $1`, id, *next)
+	return err
+}
+
 // Upsert inserts (when a.ID=="") or updates an automation. The assigned id is
 // returned on insert.
 func (r *AutomationRepo) Upsert(ctx context.Context, a Automation) (Automation, error) {
