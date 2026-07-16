@@ -25,7 +25,6 @@
 		ScrollText,
 		Wand2,
 		Zap,
-		Frame,
 		Megaphone,
 		CalendarClock,
 		BarChart3,
@@ -96,8 +95,7 @@
 			section: 'Advanced',
 			items: [
 				{ label: 'Custom Commands', path: 'commands', icon: Wand2 },
-				{ label: 'Automations', path: 'automations', icon: Zap },
-				{ label: 'Card Studio', path: 'editor', icon: Frame }
+				{ label: 'Automations', path: 'automations', icon: Zap }
 			]
 		},
 		{
@@ -105,7 +103,10 @@
 			items: [{ label: 'Billing & Storage', path: 'billing', icon: CreditCard }]
 		}
 	];
-	const flatPages = nav.flatMap((s) => s.items).map((i) => ({ label: i.label, path: i.path }));
+	// Pages reachable only by deep link (no sidebar entry): the Card Studio
+	// opens from the image editors (welcome / rank cards), not the nav.
+	const hiddenPages = [{ label: 'Card Studio', path: 'editor' }];
+	const flatPages = [...nav.flatMap((s) => s.items).map((i) => ({ label: i.label, path: i.path })), ...hiddenPages];
 
 	const base = $derived(`/servers/${$page.params.id}`);
 	function isActive(p: string) {
