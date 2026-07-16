@@ -326,6 +326,28 @@ export const api = {
 	// post-announce tail saves; it runs on the social_update event.
 	saveSocialTail: (id: string, tail: unknown[]) =>
 		req<{ ok: boolean }>('POST', `/api/guilds/${id}/social-actions`, { tail }),
+	// saveStatsTail / saveSchedulerTail persist the canvas-authored follow-up
+	// flows for the stats and scheduler built-ins (same shape as the above).
+	saveStatsTail: (id: string, tail: unknown[]) =>
+		req<{ ok: boolean }>('POST', `/api/guilds/${id}/stats/actions`, { tail }),
+	saveSchedulerTail: (id: string, tail: unknown[]) =>
+		req<{ ok: boolean }>('POST', `/api/guilds/${id}/scheduler/actions`, { tail }),
+
+	// ── Server stats ──
+	createStatsChannel: (id: string, name: string) =>
+		req<{ channel_id: string }>('POST', `/api/guilds/${id}/stats/channels`, { name }),
+
+	// ── Scheduled messages ──
+	schedules: (id: string) =>
+		req<{ schedules: import('$lib/schedules').ScheduledMessage[] }>('GET', `/api/guilds/${id}/schedules`),
+	createSchedule: (id: string, body: import('$lib/schedules').SchedInput) =>
+		req<{ schedule: import('$lib/schedules').ScheduledMessage }>('POST', `/api/guilds/${id}/schedules`, body),
+	updateSchedule: (id: string, sid: string, body: import('$lib/schedules').SchedInput) =>
+		req<{ schedule: import('$lib/schedules').ScheduledMessage }>('PATCH', `/api/guilds/${id}/schedules/${sid}`, body),
+	deleteSchedule: (id: string, sid: string) =>
+		req<{ ok: boolean }>('DELETE', `/api/guilds/${id}/schedules/${sid}`),
+	sendSchedule: (id: string, sid: string) =>
+		req<{ ok: boolean }>('POST', `/api/guilds/${id}/schedules/${sid}/send`),
 	levelingVariables: (id: string) =>
 		req<{ variables: { token: string; desc: string }[] }>('GET', `/api/guilds/${id}/leveling/variables`),
 	// templatingPreview renders one template string and returns the text + any
