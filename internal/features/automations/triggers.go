@@ -16,6 +16,7 @@ const (
 	FilterSocialAccounts Filter = "social_accounts" // restrict to followed accounts (social_update)
 	FilterSocialKinds    Filter = "social_kinds"    // restrict to update kinds (social_update)
 	FilterSchedules      Filter = "schedules"       // restrict to specific schedules (scheduled_message)
+	FilterMilestones     Filter = "milestones"      // restrict to specific milestones (member_milestone)
 	FilterCooldown       Filter = "cooldown"        // per-scope rate limit
 )
 
@@ -62,7 +63,7 @@ var Triggers = []TriggerKind{
 	{Key: "verification_passed", Label: "Member verified", Description: "A member passes verification (button or captcha).", Event: event.TypeVerificationPassed, Category: CatMembers, Actor: "the verified member", Filters: []Filter{FilterCooldown}},
 	{Key: "verification_failed", Label: "Verification failed", Description: "A member fails the captcha, or is removed for not verifying in time.", Event: event.TypeVerificationFailed, Category: CatMembers, Actor: "the member who failed", Filters: []Filter{FilterCooldown}},
 	{Key: "level_up", Label: "Member levels up", Description: "A member reaches a new level.", Event: event.TypeLevelUp, Category: CatMembers, Actor: "the member who leveled up", HasChannel: true, Filters: []Filter{FilterChannels, FilterCooldown}},
-	{Key: "member_milestone", Label: "Member milestone reached", Description: "The member count crosses the milestone step configured on the Server Stats tab (e.g. every 100 members).", Event: event.TypeMemberMilestone, Category: CatMembers, Actor: "(no actor)", Filters: []Filter{FilterCooldown}},
+	{Key: "member_milestone", Label: "Member milestone reached", Description: "The member count crosses a milestone configured on the Server Stats tab (every N members, or a one-time target).", Event: event.TypeMemberMilestone, Category: CatMembers, Actor: "(no actor)", Filters: []Filter{FilterMilestones, FilterCooldown}},
 
 	// Roles (derived from member updates)
 	{Key: "role_added", Label: "Role added", Description: "A specific role is granted to a member (use for boost detection: watch the Server Booster role).", Event: event.TypeMemberUpdate, Category: CatRoles, Actor: "the member who got the role", Filters: []Filter{FilterRole, FilterCooldown}},

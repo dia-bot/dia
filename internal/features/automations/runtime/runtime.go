@@ -480,9 +480,10 @@ func (p *Plugin) prepare(ctx context.Context, et event.Type, env *event.Envelope
 			return nil, false
 		}
 		ec.eventMap = map[string]any{
-			"count":     m.Count,
-			"step":      m.Step,
-			"milestone": m.Reached,
+			"count":        m.Count,
+			"step":         m.Step,
+			"milestone":    m.Reached,
+			"milestone_id": m.MilestoneID,
 		}
 
 	case event.TypeSocialUpdate:
@@ -749,6 +750,10 @@ func (p *Plugin) matches(ctx context.Context, a store.Automation, cfg automation
 	}
 	// Scheduling scoping: restrict to specific schedules.
 	if len(cfg.Schedules) > 0 && !contains(cfg.Schedules, int64Of(ec.eventMap, "schedule")) {
+		return false
+	}
+	// Milestone scoping: restrict to specific Server Stats milestones.
+	if len(cfg.Milestones) > 0 && !contains(cfg.Milestones, int64Of(ec.eventMap, "milestone_id")) {
 		return false
 	}
 	return true

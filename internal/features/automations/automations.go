@@ -76,6 +76,9 @@ type TriggerConfig struct {
 	// Schedules, when non-empty, restricts a scheduled_message trigger to
 	// these schedule ids (decimal strings).
 	Schedules []string `json:"schedules,omitempty"`
+	// Milestones, when non-empty, restricts a member_milestone trigger to
+	// these milestone ids (from the Server Stats config).
+	Milestones []string `json:"milestones,omitempty"`
 	// Schedule is the cadence of a "schedule"-triggered automation (the flow
 	// runs on this timer instead of a gateway event).
 	Schedule *schedmessages.ScheduleDef `json:"schedule,omitempty"`
