@@ -45,6 +45,7 @@ import (
 	"github.com/dia-bot/dia/internal/features/moderation"
 	"github.com/dia-bot/dia/internal/features/roles"
 	"github.com/dia-bot/dia/internal/features/socialnotifications"
+	"github.com/dia-bot/dia/internal/features/statschannels"
 	"github.com/dia-bot/dia/internal/features/tickets"
 	"github.com/dia-bot/dia/internal/features/welcome"
 )
@@ -242,6 +243,7 @@ func seedFeatures(ctx context.Context, st *store.Store, guildID int64) error {
 		{tickets.FeatureKey, tk},
 		{giveaway.FeatureKey, giv},
 		{socialnotifications.FeatureKey, socialnotifications.Default()},
+		{statschannels.FeatureKey, statschannels.Default()},
 	}
 	for _, c := range configs {
 		raw, err := json.Marshal(c.val)

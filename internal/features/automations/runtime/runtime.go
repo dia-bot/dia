@@ -24,6 +24,7 @@ import (
 	"github.com/dia-bot/dia/internal/features/customcommands/exec"
 	"github.com/dia-bot/dia/internal/features/giveaway"
 	"github.com/dia-bot/dia/internal/features/socialnotifications"
+	"github.com/dia-bot/dia/internal/features/statschannels"
 	"github.com/dia-bot/dia/internal/interactions"
 	"github.com/dia-bot/dia/internal/plugin"
 	"github.com/dia-bot/dia/internal/store"
@@ -113,11 +114,12 @@ func (p *Plugin) handleEvent(ctx context.Context, et event.Type, env *event.Enve
 	// giveaway entry" on giveaway_entered. Load whichever matches (only touches the
 	// store on those two events) so an otherwise-empty dispatch still runs it.
 	drawTail, entryTail := p.giveawayTails(ctx, et, gid)
-	// The social feature's built-in carries the same kind of editable tail,
-	// run on every SOCIAL_UPDATE.
+	// The social and stats features' built-ins carry the same kind of editable
+	// tail, run on SOCIAL_UPDATE / MEMBER_MILESTONE respectively.
 	socialTail := p.socialTail(ctx, et, gid)
+	milestoneTail := p.statsTail(ctx, et, gid)
 
-	if len(autos) == 0 && len(waiting) == 0 && len(drawTail) == 0 && len(entryTail) == 0 && len(socialTail) == 0 {
+	if len(autos) == 0 && len(waiting) == 0 && len(drawTail) == 0 && len(entryTail) == 0 && len(socialTail) == 0 && len(milestoneTail) == 0 {
 		return nil
 	}
 
@@ -147,6 +149,9 @@ func (p *Plugin) handleEvent(ctx context.Context, et event.Type, env *event.Enve
 	}
 	if len(socialTail) > 0 {
 		p.runBuiltinTail(ctx, "social.update", "social_update", socialTail, ec)
+	}
+	if len(milestoneTail) > 0 {
+		p.runBuiltinTail(ctx, "stats.milestone", "member_milestone", milestoneTail, ec)
 	}
 
 	if len(waiting) > 0 {
@@ -449,6 +454,17 @@ func (p *Plugin) prepare(ctx context.Context, et event.Type, env *event.Envelope
 			"entry_count": g.EntryCount,
 			"message_id":  g.MessageID,
 			"channel_id":  g.ChannelID,
+		}
+
+	case event.TypeMemberMilestone:
+		m, err := plugin.DecodeData[event.MemberMilestone](env)
+		if err != nil {
+			return nil, false
+		}
+		ec.eventMap = map[string]any{
+			"count":     m.Count,
+			"step":      m.Step,
+			"milestone": m.Reached,
 		}
 
 	case event.TypeSocialUpdate:
@@ -821,6 +837,24 @@ func (p *Plugin) socialTail(ctx context.Context, et event.Type, gid int64) []cc.
 		return nil
 	}
 	var cfg socialnotifications.Config
+	if json.Unmarshal(fc.Config, &cfg) != nil {
+		return nil
+	}
+	return cfg.Tail
+}
+
+// statsTail returns the stats feature's built-in follow-up flow on
+// MEMBER_MILESTONE (nil when the event is something else, the feature is off,
+// or no tail is wired). Mirrors socialTail.
+func (p *Plugin) statsTail(ctx context.Context, et event.Type, gid int64) []cc.Step {
+	if et != event.TypeMemberMilestone {
+		return nil
+	}
+	fc, err := p.deps.Store.Features.Get(ctx, gid, statschannels.FeatureKey)
+	if err != nil || !fc.Enabled || len(fc.Config) == 0 {
+		return nil
+	}
+	var cfg statschannels.Config
 	if json.Unmarshal(fc.Config, &cfg) != nil {
 		return nil
 	}

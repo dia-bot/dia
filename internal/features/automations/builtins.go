@@ -11,6 +11,7 @@ import (
 	"github.com/dia-bot/dia/internal/features/moderation"
 	"github.com/dia-bot/dia/internal/features/roles"
 	"github.com/dia-bot/dia/internal/features/socialnotifications"
+	"github.com/dia-bot/dia/internal/features/statschannels"
 	"github.com/dia-bot/dia/internal/features/welcome"
 	"github.com/dia-bot/dia/internal/store"
 )
@@ -189,6 +190,23 @@ func BuildBuiltins(configs map[string]json.RawMessage, featureEnabled map[string
 		},
 	)
 
+	// ── Server stats ─────────────────────────────────────────────────────────
+	stcfg := statschannels.Default()
+	if raw := configs[statschannels.FeatureKey]; len(raw) > 0 {
+		_ = json.Unmarshal(raw, &stcfg)
+	}
+	out = append(out, Builtin{
+		Key:         "stats.milestone",
+		Name:        "Member milestone",
+		Description: "Runs every time the member count crosses the configured milestone step, after Dia refreshes the stats channels. Celebrate with an announcement, a giveaway, anything. Managed on the Server Stats tab.",
+		TriggerType: "member_milestone",
+		FeatureKey:  statschannels.FeatureKey,
+		FeatureName: "Server Stats",
+		FeatureTab:  "stats",
+		Enabled:     featureEnabled[statschannels.FeatureKey] && stcfg.MilestoneStep > 0,
+		Definition:  statsFlow(stcfg),
+	})
+
 	// ── Social alerts ────────────────────────────────────────────────────────
 	scfg := socialnotifications.Default()
 	if raw := configs[socialnotifications.FeatureKey]; len(raw) > 0 {
@@ -207,6 +225,18 @@ func BuildBuiltins(configs map[string]json.RawMessage, featureEnabled map[string
 	})
 
 	return out
+}
+
+// statsFlow renders the milestone as a read-only spine node (the stats feature
+// refreshes the counters natively) followed by the editable follow-up tail.
+// Mirrors giveawayEntryFlow.
+func statsFlow(cfg statschannels.Config) cc.Definition {
+	steps := []cc.Step{{
+		ID:   "builtin-milestone",
+		Kind: cc.KindNoop,
+	}}
+	steps = append(steps, cfg.Tail...)
+	return cc.Definition{Steps: steps}
 }
 
 // socialFlow renders the social announce as a read-only spine node (the social

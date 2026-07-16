@@ -15,6 +15,7 @@ import (
 	"github.com/dia-bot/dia/internal/features/moderation"
 	"github.com/dia-bot/dia/internal/features/roles"
 	sn "github.com/dia-bot/dia/internal/features/socialnotifications"
+	"github.com/dia-bot/dia/internal/features/statschannels"
 	"github.com/dia-bot/dia/internal/features/welcome"
 	"github.com/dia-bot/dia/internal/imaging"
 	"github.com/dia-bot/dia/pkg/discordgo"
@@ -26,7 +27,7 @@ var knownFeatures = map[string]bool{
 	"welcome": true, "leveling": true, "autorole": true,
 	"moderation": true, "automod": true, "verification": true, "logging": true,
 	"customcommands": true, "reactionroles": true, "tickets": true, "giveaway": true,
-	"social": true,
+	"social": true, "stats": true, "scheduler": true,
 }
 
 // botInvitePerms is the permission requested in the bot invite URL: Administrator,
@@ -375,7 +376,7 @@ func (s *Server) handlePutFeature(c *gin.Context) {
 	// /giveaway/actions or /social-actions), not the settings page. Keep the
 	// stored copy authoritative so a settings save can't clobber a flow wired
 	// meanwhile on the canvas.
-	if len(req.Config) > 0 && (key == welcome.FeatureKey || key == leveling.FeatureKey || key == roles.FeatureKey || key == moderation.AutomodKey || key == giveaway.FeatureKey || key == sn.FeatureKey) {
+	if len(req.Config) > 0 && (key == welcome.FeatureKey || key == leveling.FeatureKey || key == roles.FeatureKey || key == moderation.AutomodKey || key == giveaway.FeatureKey || key == sn.FeatureKey || key == statschannels.FeatureKey) {
 		if existing, err := s.store.Features.Get(c.Request.Context(), gidInt, key); err == nil && len(existing.Config) > 0 {
 			switch key {
 			case welcome.FeatureKey:
@@ -390,6 +391,8 @@ func (s *Server) handlePutFeature(c *gin.Context) {
 				req.Config = giveaway.MergeStoredTail(req.Config, existing.Config)
 			case sn.FeatureKey:
 				req.Config = sn.MergeStoredTail(req.Config, existing.Config)
+			case statschannels.FeatureKey:
+				req.Config = statschannels.MergeStoredTail(req.Config, existing.Config)
 			}
 		}
 	}

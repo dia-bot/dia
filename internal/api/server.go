@@ -214,6 +214,9 @@ func (s *Server) Handler() http.Handler {
 	// Static "actions" can't share the /social/:sid position (router wildcard
 	// conflict), so the tail-save endpoint lives beside the collection.
 	g.POST("/social-actions", s.handleSocialActions)
+
+	g.POST("/stats/channels", s.handleCreateStatsChannel)
+	g.POST("/stats/actions", s.handleStatsActions)
 	g.PATCH("/social/:sid", s.handleUpdateSocial)
 	g.DELETE("/social/:sid", s.handleDeleteSocial)
 	g.POST("/social/:sid/test", s.handleTestSocial)
