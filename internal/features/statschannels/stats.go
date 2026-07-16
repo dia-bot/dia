@@ -79,17 +79,26 @@ func (p *Plugin) onMemberChange(ctx context.Context, d plugin.Deps, env *event.E
 	if err != nil || !enabled {
 		return err
 	}
+	cfg = cfg.Normalize()
 
-	if joined && cfg.MilestoneStep > 0 {
+	if joined && len(cfg.Milestones) > 0 {
 		var m event.MemberAdd
 		if json.Unmarshal(env.Data, &m) == nil && m.MemberCount > 0 {
-			step := cfg.MilestoneStep
-			if (m.MemberCount / step) > ((m.MemberCount - 1) / step) {
+			for _, ms := range cfg.Milestones {
+				reached, ok := ms.Fires(m.MemberCount)
+				if !ok {
+					continue
+				}
+				step := 0
+				if ms.Kind != MilestoneAt {
+					step = ms.Value
+				}
 				PublishMilestone(ctx, d.Bus, d.Log, event.MemberMilestone{
-					GuildID: env.GuildID,
-					Count:   m.MemberCount,
-					Step:    step,
-					Reached: (m.MemberCount / step) * step,
+					GuildID:     env.GuildID,
+					MilestoneID: ms.ID,
+					Count:       m.MemberCount,
+					Step:        step,
+					Reached:     reached,
 				})
 			}
 		}
@@ -127,7 +136,7 @@ func (p *Plugin) sweep(ctx context.Context, d plugin.Deps) {
 		if err != nil || !enabled {
 			continue
 		}
-		p.updateGuild(ctx, d, event.FormatID(gid), cfg)
+		p.updateGuild(ctx, d, event.FormatID(gid), cfg.Normalize())
 	}
 }
 
@@ -141,16 +150,14 @@ func (p *Plugin) updateGuild(ctx context.Context, d plugin.Deps, guildID string,
 	if err != nil {
 		return
 	}
+	last, next := milestoneWindow(cfg.Milestones, snap.Meta.MemberCount)
 	data := map[string]any{
-		"Members":  snap.Meta.MemberCount,
-		"Channels": len(snap.Channels),
-		"Roles":    len(snap.Roles),
-		"Guild":    map[string]any{"Name": snap.Meta.Name},
-	}
-	if cfg.MilestoneStep > 0 {
-		data["Milestone"] = (snap.Meta.MemberCount / cfg.MilestoneStep) * cfg.MilestoneStep
-	} else {
-		data["Milestone"] = 0
+		"Members":       snap.Meta.MemberCount,
+		"Channels":      len(snap.Channels),
+		"Roles":         len(snap.Roles),
+		"Milestone":     last,
+		"NextMilestone": next,
+		"Guild":         map[string]any{"Name": snap.Meta.Name},
 	}
 
 	for _, c := range cfg.Counters {
@@ -176,6 +183,33 @@ func (p *Plugin) updateGuild(ctx context.Context, d plugin.Deps, guildID string,
 			p.releaseRename(c.ChannelID)
 		}
 	}
+}
+
+// milestoneWindow computes the last milestone value reached and the next one
+// coming up across every enabled milestone, for the counter template scope
+// ({{ .Milestone }} / {{ .NextMilestone }}).
+func milestoneWindow(milestones []Milestone, members int) (last, next int) {
+	for _, m := range milestones {
+		if !m.Enabled || m.Value <= 0 {
+			continue
+		}
+		switch m.Kind {
+		case MilestoneAt:
+			if members >= m.Value {
+				last = max(last, m.Value)
+			} else if next == 0 || m.Value < next {
+				next = m.Value
+			}
+		default: // every
+			if r := (members / m.Value) * m.Value; r > last {
+				last = r
+			}
+			if up := (members/m.Value + 1) * m.Value; next == 0 || up < next {
+				next = up
+			}
+		}
+	}
+	return last, next
 }
 
 // claimRename reports whether a rename to name should be issued now: the name
@@ -222,7 +256,7 @@ func PublishMilestone(ctx context.Context, bus eventbus.Bus, log *slog.Logger, m
 		return
 	}
 	subject := event.Subject(event.TypeMemberMilestone, m.GuildID)
-	dedup := fmt.Sprintf("milestone:%s:%d", m.GuildID, m.Reached)
+	dedup := fmt.Sprintf("milestone:%s:%s:%d", m.GuildID, m.MilestoneID, m.Reached)
 	if err := bus.Publish(ctx, subject, envBytes, dedup); err != nil {
 		log.Warn("stats: publish milestone failed", "subject", subject, "err", err)
 	}

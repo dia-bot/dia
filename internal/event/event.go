@@ -482,12 +482,13 @@ type SocialUpdate struct {
 }
 
 // MemberMilestone is published on MEMBER_MILESTONE (synthetic, worker-emitted)
-// when the guild's member count crosses a configured milestone step.
+// when the guild's member count crosses a configured milestone.
 type MemberMilestone struct {
-	GuildID string `json:"guild_id"`
-	Count   int    `json:"count"`     // the member count that crossed the step
-	Step    int    `json:"step"`      // the configured milestone interval
-	Reached int    `json:"milestone"` // the milestone value crossed (count rounded down to step)
+	GuildID     string `json:"guild_id"`
+	MilestoneID string `json:"milestone_id"` // the milestone definition that fired (stats config)
+	Count       int    `json:"count"`        // the member count that crossed the milestone
+	Step        int    `json:"step"`         // the recurring interval (0 for a one-shot target)
+	Reached     int    `json:"milestone"`    // the milestone value crossed
 }
 
 // ScheduledMessageSent is published on SCHEDULED_MESSAGE_SENT (synthetic,

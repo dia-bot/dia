@@ -196,15 +196,23 @@ func BuildBuiltins(configs map[string]json.RawMessage, featureEnabled map[string
 	if raw := configs[statschannels.FeatureKey]; len(raw) > 0 {
 		_ = json.Unmarshal(raw, &stcfg)
 	}
+	stcfg = stcfg.Normalize()
+	statsOn := false
+	for _, m := range stcfg.Milestones {
+		if m.Enabled && m.Value > 0 {
+			statsOn = true
+			break
+		}
+	}
 	out = append(out, Builtin{
 		Key:         "stats.milestone",
 		Name:        "Member milestone",
-		Description: "Runs every time the member count crosses the configured milestone step, after Dia refreshes the stats channels. Celebrate with an announcement, a giveaway, anything. Managed on the Server Stats tab.",
+		Description: "Runs every time the member count crosses a configured milestone, after Dia refreshes the stats channels. Celebrate with an announcement, a giveaway, anything. Managed on the Server Stats tab.",
 		TriggerType: "member_milestone",
 		FeatureKey:  statschannels.FeatureKey,
 		FeatureName: "Server Stats",
 		FeatureTab:  "stats",
-		Enabled:     featureEnabled[statschannels.FeatureKey] && stcfg.MilestoneStep > 0,
+		Enabled:     featureEnabled[statschannels.FeatureKey] && statsOn,
 		Definition:  statsFlow(stcfg),
 	})
 
