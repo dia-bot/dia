@@ -12,7 +12,7 @@ const FeatureKey = "stats"
 // Counter is one stats channel: a (usually locked voice) channel whose name is
 // re-rendered from a Go template as the server changes. Values in scope:
 // {{ .Members }}, {{ .Channels }}, {{ .Roles }}, {{ .Milestone }} and
-// {{ .Guild.Name }} — mirrored by the dashboard's variable chips
+// {{ .Guild.Name }}, mirrored by the dashboard's variable chips
 // (web/src/lib/stats.ts).
 type Counter struct {
 	ID        string `json:"id"`

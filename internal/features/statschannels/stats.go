@@ -1,5 +1,5 @@
-// Package statschannels keeps templated "server stats" channels current —
-// locked voice channels whose names render live values like the member count —
+// Package statschannels keeps templated "server stats" channels current
+// (locked voice channels whose names render live values like the member count)
 // and publishes MEMBER_MILESTONE events when the member count crosses a
 // configured step, so automations can celebrate via the member_milestone
 // trigger.

@@ -17,6 +17,7 @@ export type TriggerFilter =
 	| 'role'
 	| 'social_accounts'
 	| 'social_kinds'
+	| 'schedules'
 	| 'cooldown';
 
 export interface TriggerConfig {
@@ -32,6 +33,8 @@ export interface TriggerConfig {
 	// social_update scoping: followed-account subscription ids and update kinds.
 	subscriptions?: string[];
 	kinds?: string[];
+	// scheduled_message scoping: schedule ids.
+	schedules?: string[];
 	cooldown?: { scope: 'user' | 'channel' | 'guild'; seconds: number };
 }
 
@@ -59,7 +62,8 @@ export const TRIGGER_CATEGORIES: { id: string; label: string }[] = [
 	{ id: 'tickets', label: 'Tickets' },
 	{ id: 'channels', label: 'Channels & threads' },
 	{ id: 'giveaways', label: 'Giveaways' },
-	{ id: 'social', label: 'Social' }
+	{ id: 'social', label: 'Social' },
+	{ id: 'scheduling', label: 'Scheduling' }
 ];
 
 const v = (path: string, type: string, short: string): TmplVar => ({
@@ -594,6 +598,38 @@ export const TRIGGERS: TriggerKindMeta[] = [
 		hasChannel: true,
 		filters: ['channels', 'ignore_bots', 'cooldown'],
 		eventVars: GIVEAWAY_ENTRY_EVENT_VARS
+	},
+	{
+		key: 'member_milestone',
+		label: 'Member milestone reached',
+		description:
+			'The member count crosses the milestone step configured on the Server Stats tab (e.g. every 100 members). No .User or .Channel.',
+		category: 'members',
+		event: 'MEMBER_MILESTONE',
+		actor: '(no actor)',
+		hasChannel: false,
+		filters: ['cooldown'],
+		eventVars: [
+			v('.Event.count', 'int', 'The member count that crossed the step'),
+			v('.Event.step', 'int', 'The configured milestone interval'),
+			v('.Event.milestone', 'int', 'The milestone value crossed')
+		]
+	},
+	{
+		key: 'scheduled_message',
+		label: 'Scheduled message sent',
+		description: 'A scheduled message posts. Chain follow-up steps: pin it, open a thread, notify staff.',
+		category: 'scheduling',
+		event: 'SCHEDULED_MESSAGE_SENT',
+		actor: '(no actor)',
+		hasChannel: true,
+		filters: ['schedules', 'channels', 'cooldown'],
+		eventVars: [
+			v('.Event.schedule', 'int', 'The schedule id that posted'),
+			v('.Event.name', 'string', "The schedule's name"),
+			v('.Event.channel_id', 'snowflake', 'The channel it posted in'),
+			v('.Event.message_id', 'snowflake', 'The posted message id')
+		]
 	},
 	{
 		key: 'social_update',
