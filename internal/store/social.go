@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -21,6 +22,7 @@ type SocialSubscription struct {
 	PingRoleID   int64 // 0 = no ping
 	Template     string
 	Embed        bool
+	Spec         json.RawMessage // per-kind composed messages + automations (socialnotifications.SubSpec)
 	Enabled      bool
 	Live         bool
 	HookStatus   string
@@ -35,14 +37,17 @@ type SocialSubscription struct {
 type SocialRepo struct{ pool *pgxpool.Pool }
 
 const socialCols = `id, guild_id, provider, account_id, account_name, account_url,
-	channel_id, ping_role_id, template, embed, enabled, live, hook_status,
+	channel_id, ping_role_id, template, embed, spec, enabled, live, hook_status,
 	last_error, etag, last_modified, created_at, updated_at`
 
 func scanSocial(row pgx.Row) (SocialSubscription, error) {
 	var s SocialSubscription
 	err := row.Scan(&s.ID, &s.GuildID, &s.Provider, &s.AccountID, &s.AccountName, &s.AccountURL,
-		&s.ChannelID, &s.PingRoleID, &s.Template, &s.Embed, &s.Enabled, &s.Live, &s.HookStatus,
+		&s.ChannelID, &s.PingRoleID, &s.Template, &s.Embed, &s.Spec, &s.Enabled, &s.Live, &s.HookStatus,
 		&s.LastError, &s.ETag, &s.LastModified, &s.CreatedAt, &s.UpdatedAt)
+	if len(s.Spec) == 0 {
+		s.Spec = json.RawMessage("{}")
+	}
 	return s, err
 }
 
@@ -123,14 +128,17 @@ func (r *SocialRepo) CountByAccount(ctx context.Context, provider, accountID str
 
 // Create inserts a subscription and returns it with its id.
 func (r *SocialRepo) Create(ctx context.Context, s SocialSubscription) (SocialSubscription, error) {
+	if len(s.Spec) == 0 {
+		s.Spec = json.RawMessage("{}")
+	}
 	row := r.pool.QueryRow(ctx, `
 		INSERT INTO social_subscriptions
 			(guild_id, provider, account_id, account_name, account_url,
-			 channel_id, ping_role_id, template, embed, enabled, hook_status)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+			 channel_id, ping_role_id, template, embed, spec, enabled, hook_status)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
 		RETURNING `+socialCols,
 		s.GuildID, s.Provider, s.AccountID, s.AccountName, s.AccountURL,
-		s.ChannelID, s.PingRoleID, s.Template, s.Embed, s.Enabled, s.HookStatus)
+		s.ChannelID, s.PingRoleID, s.Template, s.Embed, []byte(s.Spec), s.Enabled, s.HookStatus)
 	out, err := scanSocial(row)
 	if err != nil {
 		return SocialSubscription{}, fmt.Errorf("create social subscription: %w", err)
@@ -140,12 +148,15 @@ func (r *SocialRepo) Create(ctx context.Context, s SocialSubscription) (SocialSu
 
 // Update saves the user-editable fields of a guild's subscription.
 func (r *SocialRepo) Update(ctx context.Context, s SocialSubscription) error {
+	if len(s.Spec) == 0 {
+		s.Spec = json.RawMessage("{}")
+	}
 	_, err := r.pool.Exec(ctx, `
 		UPDATE social_subscriptions
 		SET channel_id = $3, ping_role_id = $4, template = $5, embed = $6,
-		    enabled = $7, updated_at = now()
+		    spec = $7, enabled = $8, updated_at = now()
 		WHERE guild_id = $1 AND id = $2`,
-		s.GuildID, s.ID, s.ChannelID, s.PingRoleID, s.Template, s.Embed, s.Enabled)
+		s.GuildID, s.ID, s.ChannelID, s.PingRoleID, s.Template, s.Embed, []byte(s.Spec), s.Enabled)
 	return err
 }
 
