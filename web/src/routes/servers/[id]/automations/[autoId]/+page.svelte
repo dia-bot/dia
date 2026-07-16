@@ -19,6 +19,7 @@
 	import { TRIGGERS, TRIGGER_BY_KEY, triggerEventVars, type TriggerConfig } from '$lib/automations/types';
 	import { SOCIAL_KINDS, type SocialSubscription } from '$lib/social';
 	import { WEEKDAYS, type ScheduleDef } from '$lib/schedules';
+	import { milestoneLabel, normalizeStats, type StatsConfig, type StatsMilestone } from '$lib/stats';
 
 	import { Dialog, Popover } from '$lib/components/ui';
 	import { fade, fly } from 'svelte/transition';
@@ -1187,6 +1188,17 @@
 			.then((r) => (schedList = r.schedules ?? []))
 			.catch(() => {});
 	});
+	// Server Stats milestones backing the member_milestone scoping filter.
+	let milestoneList = $state<StatsMilestone[]>([]);
+	let milestoneListLoaded = $state(false);
+	$effect(() => {
+		if (!supports('milestones') || milestoneListLoaded) return;
+		milestoneListLoaded = true;
+		api
+			.feature(store.id, 'stats')
+			.then((f) => (milestoneList = normalizeStats((f.config ?? {}) as StatsConfig).milestones))
+			.catch(() => {});
+	});
 	// Cadence editing for the "schedule" trigger (the flow's own timer).
 	function schedDef(): ScheduleDef {
 		return tcfg().schedule ?? { kind: 'weekly', time: '18:00', weekdays: [5] };
@@ -1194,7 +1206,7 @@
 	function setSched(patch: Partial<ScheduleDef>) {
 		setCfg('schedule', { ...schedDef(), ...patch });
 	}
-	function toggleListValue(key: 'subscriptions' | 'kinds' | 'schedules', value: string) {
+	function toggleListValue(key: 'subscriptions' | 'kinds' | 'schedules' | 'milestones', value: string) {
 		const cur = tcfg()[key] ?? [];
 		const next = cur.includes(value) ? cur.filter((x) => x !== value) : [...cur, value];
 		setCfg(key, next.length ? next : undefined);
@@ -1850,6 +1862,41 @@
 									{/each}
 								</div>
 								<p class="mt-1 font-mono text-[10px] text-faint">None selected = any schedule.</p>
+							{/if}
+						</section>
+					{/if}
+
+					{#if supports('milestones')}
+						<section>
+							<div class="mb-1 font-mono text-[10px] font-medium uppercase tracking-[0.14em] text-faint">Milestones</div>
+							{#if milestoneList.length === 0}
+								<p class="font-mono text-[10px] text-faint">
+									No milestones yet — create some on the Server Stats tab. Blank = any milestone.
+								</p>
+							{:else}
+								<div class="flex flex-col gap-1">
+									{#each milestoneList as ms (ms.id)}
+										{@const on = (tcfg().milestones ?? []).includes(ms.id)}
+										<button
+											type="button"
+											role="checkbox"
+											aria-checked={on}
+											onclick={() => toggleListValue('milestones', ms.id)}
+											class="flex items-center gap-2 rounded-md border px-2 py-1.5 text-left transition-colors {on
+												? 'border-line-strong bg-surface'
+												: 'border-line bg-bg hover:border-line-strong'}"
+										>
+											<span class="grid size-3.5 shrink-0 place-items-center rounded-sm border {on ? 'border-ink bg-ink text-bg' : 'border-line'}">
+												{#if on}<span class="text-[9px] leading-none">✓</span>{/if}
+											</span>
+											<span class="min-w-0 truncate text-[11.5px] text-ink">{milestoneLabel(ms)}</span>
+											{#if !ms.enabled}
+												<span class="shrink-0 font-mono text-[9px] uppercase tracking-[0.12em] text-faint">off</span>
+											{/if}
+										</button>
+									{/each}
+								</div>
+								<p class="mt-1 font-mono text-[10px] text-faint">None selected = any milestone.</p>
 							{/if}
 						</section>
 					{/if}
