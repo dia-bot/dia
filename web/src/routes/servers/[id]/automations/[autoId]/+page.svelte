@@ -17,6 +17,7 @@
 	import { newStep, newStepID, STEP_KINDS, STEP_KIND_BY_KIND } from '$lib/commands/types';
 	import { EXPR_SCOPE_CTX, AUTOMATION_CTX, type ExprScope } from '$lib/commands/expr-meta';
 	import { TRIGGERS, TRIGGER_BY_KEY, triggerEventVars, type TriggerConfig } from '$lib/automations/types';
+	import { SOCIAL_KINDS, type SocialSubscription } from '$lib/social';
 
 	import { Dialog, Popover } from '$lib/components/ui';
 	import { fade, fly } from 'svelte/transition';
@@ -105,7 +106,8 @@
 				auto?.feature_tab === 'auto-roles' ||
 				auto?.feature_tab === 'reaction-roles' ||
 				auto?.feature_tab === 'automod' ||
-				auto?.feature_tab === 'giveaways')
+				auto?.feature_tab === 'giveaways' ||
+				auto?.feature_tab === 'social')
 	);
 	// Welcome distinguishes its two built-in ids (join vs leave) as config tabs;
 	// leveling has a single surface so this is only meaningful for welcome.
@@ -542,7 +544,8 @@
 			auto.feature_tab === 'auto-roles' ||
 			auto.feature_tab === 'reaction-roles' ||
 			auto.feature_tab === 'automod' ||
-			auto.feature_tab === 'giveaways'
+			auto.feature_tab === 'giveaways' ||
+			auto.feature_tab === 'social'
 		) {
 			let last = '';
 			for (const s of steps) {
@@ -669,6 +672,8 @@
 				await api.saveGiveawayTail(store.id, extractSpineTail(auto.definition));
 			} else if (auto.id === 'giveaway.entry') {
 				await api.saveGiveawayEntryTail(store.id, extractSpineTail(auto.definition));
+			} else if (auto.id === 'social.update') {
+				await api.saveSocialTail(store.id, extractSpineTail(auto.definition));
 			} else if (auto.feature_tab === 'leveling') {
 				const acts = extractWelcomeActions(auto.definition);
 				await api.saveLevelingActions(store.id, acts.channel, extractWelcomeTail(auto.definition));
@@ -1148,6 +1153,24 @@
 	}
 	function supports(filter: string): boolean {
 		return (triggerMeta?.filters ?? []).some((f) => f === filter);
+	}
+
+	// Followed accounts backing the social_update scoping filter; fetched once
+	// the trigger needs it.
+	let socialSubs = $state<SocialSubscription[]>([]);
+	let socialSubsLoaded = $state(false);
+	$effect(() => {
+		if (!supports('social_accounts') || socialSubsLoaded) return;
+		socialSubsLoaded = true;
+		api
+			.social(store.id)
+			.then((r) => (socialSubs = r.subscriptions ?? []))
+			.catch(() => {});
+	});
+	function toggleListValue(key: 'subscriptions' | 'kinds', value: string) {
+		const cur = tcfg()[key] ?? [];
+		const next = cur.includes(value) ? cur.filter((x) => x !== value) : [...cur, value];
+		setCfg(key, next.length ? next : undefined);
 	}
 
 	function isInTextField(target: EventTarget | null): boolean {
@@ -1661,6 +1684,61 @@
 								placeholder="Any role change"
 							/>
 							<p class="mt-1 font-mono text-[10px] text-faint">Tip: use the Server Booster role to catch boosts.</p>
+						</section>
+					{/if}
+
+					{#if supports('social_accounts')}
+						<section>
+							<div class="mb-1 font-mono text-[10px] font-medium uppercase tracking-[0.14em] text-faint">Followed accounts</div>
+							{#if socialSubs.length === 0}
+								<p class="font-mono text-[10px] text-faint">
+									No accounts followed yet — add some on the Social tab. Blank = any account.
+								</p>
+							{:else}
+								<div class="flex flex-col gap-1">
+									{#each socialSubs as s (s.id)}
+										{@const on = (tcfg().subscriptions ?? []).includes(s.id)}
+										<button
+											type="button"
+											role="checkbox"
+											aria-checked={on}
+											onclick={() => toggleListValue('subscriptions', s.id)}
+											class="flex items-center gap-2 rounded-md border px-2 py-1.5 text-left transition-colors {on
+												? 'border-line-strong bg-surface'
+												: 'border-line bg-bg hover:border-line-strong'}"
+										>
+											<span class="grid size-3.5 shrink-0 place-items-center rounded-sm border {on ? 'border-ink bg-ink text-bg' : 'border-line'}">
+												{#if on}<span class="text-[9px] leading-none">✓</span>{/if}
+											</span>
+											<span class="min-w-0 truncate text-[11.5px] text-ink">{s.account_name}</span>
+											<span class="ml-auto shrink-0 font-mono text-[9px] uppercase tracking-[0.1em] text-faint">{s.provider}</span>
+										</button>
+									{/each}
+								</div>
+								<p class="mt-1 font-mono text-[10px] text-faint">None selected = any followed account.</p>
+							{/if}
+						</section>
+					{/if}
+
+					{#if supports('social_kinds')}
+						<section>
+							<div class="mb-1 font-mono text-[10px] font-medium uppercase tracking-[0.14em] text-faint">Update kinds</div>
+							<div class="flex flex-wrap gap-1">
+								{#each Object.entries(SOCIAL_KINDS) as [k, meta] (k)}
+									{@const on = (tcfg().kinds ?? []).includes(k)}
+									<button
+										type="button"
+										aria-pressed={on}
+										onclick={() => toggleListValue('kinds', k)}
+										class="inline-flex h-6 items-center rounded-md border px-2 text-[11px] font-medium transition-colors {on
+											? 'border-line-strong bg-surface text-ink'
+											: 'border-line bg-bg text-muted hover:border-line-strong hover:text-ink'}"
+									>
+										{meta.label}
+									</button>
+								{/each}
+							</div>
+							<p class="mt-1 font-mono text-[10px] text-faint">None selected = every kind fires.</p>
 						</section>
 					{/if}
 

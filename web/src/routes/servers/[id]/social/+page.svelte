@@ -1,29 +1,18 @@
 <script lang="ts">
 	import { onMount, getContext } from 'svelte';
-	import { slide } from 'svelte/transition';
-	import { cubicOut } from 'svelte/easing';
-	import { dur } from '$lib/motion';
 	import { GuildStore, GUILD_CTX } from '$lib/guild.svelte';
 	import { api } from '$lib/api';
 	import type { SocialCapability, SocialSubscription } from '$lib/social';
 	import Toggle from '$lib/components/Toggle.svelte';
-	import Field from '$lib/components/Field.svelte';
-	import ChannelPicker from '$lib/components/ChannelPicker.svelte';
-	import RolePicker from '$lib/components/RolePicker.svelte';
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 	import PageTopbar from '$lib/components/page/PageTopbar.svelte';
 	import SectionBar from '$lib/components/page/SectionBar.svelte';
 	import EmptyBlock from '$lib/components/page/EmptyBlock.svelte';
+	import SocialOnboarding from '$lib/components/social/SocialOnboarding.svelte';
+	import SubscriptionEditor from '$lib/components/social/SubscriptionEditor.svelte';
+	import { PROVIDER_ICONS, PROVIDER_COLORS } from '$lib/components/social/providers';
 	import {
 		Megaphone,
-		Twitch,
-		Youtube,
-		Radio,
-		Cloud,
-		Rss,
-		Twitter,
-		Instagram,
-		Music2,
 		Lock,
 		Plus,
 		Pencil,
@@ -31,32 +20,12 @@
 		Send,
 		ExternalLink,
 		TriangleAlert,
-		Loader2
+		Loader2,
+		Zap
 	} from 'lucide-svelte';
 
 	const store = getContext<GuildStore>(GUILD_CTX);
 	const FEATURE = 'social';
-
-	// Provider presentation: lucide icon + brand accent. The catalogue itself
-	// (which providers exist, which are unlocked) comes from the API — it is
-	// detected from the server's environment credentials.
-	const PROVIDER_ICONS: Record<string, typeof Megaphone> = {
-		twitch: Twitch,
-		youtube: Youtube,
-		kick: Radio,
-		bluesky: Cloud,
-		rss: Rss,
-		x: Twitter,
-		instagram: Instagram,
-		tiktok: Music2
-	};
-	const PROVIDER_COLORS: Record<string, string> = {
-		twitch: '#9146FF',
-		youtube: '#FF0000',
-		kick: '#53FC18',
-		bluesky: '#0085FF',
-		rss: '#ff6363'
-	};
 
 	let caps = $state<SocialCapability[]>([]);
 	let subs = $state<SocialSubscription[]>([]);
@@ -76,10 +45,36 @@
 			subs = list.subscriptions;
 			limit = list.limit;
 			loaded = true;
+			maybeOnboard();
 		} catch (e) {
 			loadErr = e instanceof Error ? e.message : 'Failed to load social alerts';
 		}
 	});
+
+	// ── First-run onboarding ────────────────────────────────────────────────────
+	let onboardOpen = $state(false);
+
+	// Show the setup wizard once per browser on a fresh server that actually has a
+	// platform to connect. Dismissal persists in localStorage (the same client
+	// persistence the layout editor uses); the empty-state CTA reopens it on demand.
+	function maybeOnboard() {
+		if (subs.length > 0) return;
+		if (!caps.some((c) => c.status === 'available')) return;
+		try {
+			const key = `dia:social-onboarded:${store.id}`;
+			if (localStorage.getItem(key)) return;
+			localStorage.setItem(key, '1');
+		} catch {
+			// No localStorage (private mode); still show it this session.
+		}
+		onboardOpen = true;
+	}
+
+	function onOnboardCreated(sub: SocialSubscription) {
+		subs = [...subs, sub];
+		// The first subscription auto-enables the feature server-side.
+		if (!enabled) enabled = true;
+	}
 
 	async function toggleFeature(v: boolean) {
 		try {
@@ -90,83 +85,31 @@
 		}
 	}
 
-	// ── Add / edit editor ──────────────────────────────────────────────────────
+	// ── Add / edit editor (the popup owns the whole form) ──────────────────────
 	let editorOpen = $state(false);
-	let editing = $state<SocialSubscription | null>(null); // null = creating
-	let fProvider = $state('');
-	let fAccount = $state('');
-	let fChannel = $state('');
-	let fPingRole = $state('');
-	let fTemplate = $state('');
-	let fEmbed = $state(true);
-	let saving = $state(false);
-	let saveErr = $state('');
+	let editorCap = $state<SocialCapability | undefined>(undefined);
+	let editorSub = $state<SocialSubscription | null>(null); // null = creating
 
 	function openAdd(provider: string) {
-		editing = null;
-		fProvider = provider;
-		fAccount = '';
-		fChannel = '';
-		fPingRole = '';
-		fTemplate = '';
-		fEmbed = true;
-		saveErr = '';
+		editorCap = capByProvider.get(provider);
+		editorSub = null;
 		editorOpen = true;
 	}
 
 	function openEdit(sub: SocialSubscription) {
-		editing = sub;
-		fProvider = sub.provider;
-		fAccount = sub.account_name;
-		fChannel = sub.channel_id;
-		fPingRole = sub.ping_role_id;
-		fTemplate = sub.template;
-		fEmbed = sub.embed;
-		saveErr = '';
+		editorCap = capByProvider.get(sub.provider);
+		editorSub = sub;
 		editorOpen = true;
 	}
 
-	async function save() {
-		if (saving) return;
-		saveErr = '';
-		if (!editing && !fAccount.trim()) {
-			saveErr = 'Enter the account to follow.';
-			return;
-		}
-		if (!fChannel) {
-			saveErr = 'Pick a channel to announce in.';
-			return;
-		}
-		saving = true;
-		try {
-			if (editing) {
-				const res = await api.updateSocial(store.id, editing.id, {
-					channel_id: fChannel,
-					ping_role_id: fPingRole,
-					template: fTemplate,
-					embed: fEmbed,
-					enabled: editing.enabled
-				});
-				subs = subs.map((s) => (s.id === res.subscription.id ? res.subscription : s));
-			} else {
-				const res = await api.createSocial(store.id, {
-					provider: fProvider,
-					account: fAccount,
-					channel_id: fChannel,
-					ping_role_id: fPingRole,
-					template: fTemplate,
-					embed: fEmbed
-				});
-				subs = [...subs, res.subscription];
-				// The first subscription auto-enables the feature server-side.
-				if (!enabled && subs.length === 1) enabled = true;
-			}
-			editorOpen = false;
-		} catch (e) {
-			saveErr = e instanceof Error ? e.message : 'Something went wrong';
-		} finally {
-			saving = false;
-		}
+	function onEditorCreated(sub: SocialSubscription) {
+		subs = [...subs, sub];
+		// The first subscription auto-enables the feature server-side.
+		if (!enabled && subs.length === 1) enabled = true;
+	}
+
+	function onEditorSaved(sub: SocialSubscription) {
+		subs = subs.map((s) => (s.id === sub.id ? sub : s));
 	}
 
 	async function toggleSub(sub: SocialSubscription, v: boolean) {
@@ -239,6 +182,13 @@
 			</div>
 		{/snippet}
 		{#snippet actions()}
+			<a
+				href={`/servers/${store.id}/automations/social.update`}
+				class="inline-flex h-8 items-center gap-1.5 rounded-md border border-line bg-bg px-2.5 text-[12px] font-medium text-muted transition-colors hover:border-line-strong hover:text-ink"
+				title="Open the built-in social flow on the automations canvas"
+			>
+				<Zap size={13} /> Advanced
+			</a>
 			<label class="ml-1 flex items-center gap-2 text-[12px]">
 				<span class="hidden text-muted sm:inline">{enabled ? 'On' : 'Off'}</span>
 				<Toggle bind:checked={enabled} label="Social alerts" onchange={toggleFeature} />
@@ -302,91 +252,6 @@
 				{/each}
 			</div>
 
-			<!-- ── Editor ────────────────────────────────────────────────────── -->
-			{#if editorOpen}
-				{@const cap = capByProvider.get(fProvider)}
-				<div transition:slide={{ duration: dur(220), easing: cubicOut }}>
-					<SectionBar
-						label={editing
-							? `Edit · ${providerName(fProvider)} · ${editing.account_name}`
-							: `Follow on ${providerName(fProvider)}`}
-					/>
-					<div class="border-b border-line/60 px-5 py-5">
-						<div class="grid gap-x-8 lg:grid-cols-2">
-							<div class="min-w-0">
-								{#if !editing}
-									<Field label={cap?.input ?? 'Account'} hint="Resolved and validated when you save.">
-										<input
-											type="text"
-											bind:value={fAccount}
-											placeholder={cap?.input ?? ''}
-											class="input w-full"
-										/>
-									</Field>
-								{/if}
-								<Field label="Announce in" hint="New activity posts to this channel.">
-									<ChannelPicker value={fChannel} onChange={(v) => (fChannel = v as string)} />
-								</Field>
-								<Field label="Ping role" hint="Optional role mentioned with each announcement.">
-									<RolePicker
-										includeManaged
-										value={fPingRole}
-										onChange={(v) => (fPingRole = v as string)}
-										placeholder="No ping"
-									/>
-								</Field>
-							</div>
-							<div class="min-w-0">
-								<Field
-									label="Message"
-									hint="Go template; leave empty for the default. Values: {'{{ .Account }}'}, {'{{ .Title }}'}, {'{{ .URL }}'}, {'{{ .Game }}'}, {'{{ .Platform }}'}."
-								>
-									<textarea
-										bind:value={fTemplate}
-										rows={3}
-										placeholder={'🔴 **{{ .Account }}** is now live: {{ .Title }}'}
-										class="input w-full resize-y font-mono text-[12px]"
-									></textarea>
-								</Field>
-								<div class="flex items-center justify-between gap-4 border-b border-line/60 pb-4">
-									<div class="min-w-0">
-										<div class="text-[12.5px] font-medium text-ink">Rich embed</div>
-										<div class="mt-0.5 text-[12px] text-muted">
-											Attach a card with the title, link and preview. Off posts the bare link instead.
-										</div>
-									</div>
-									<Toggle bind:checked={fEmbed} label="Rich embed" />
-								</div>
-							</div>
-						</div>
-						{#if saveErr}
-							<p class="mt-3 flex items-center gap-1.5 text-[12px] text-danger">
-								<TriangleAlert size={13} />
-								{saveErr}
-							</p>
-						{/if}
-						<div class="mt-4 flex items-center gap-2">
-							<button
-								type="button"
-								onclick={save}
-								disabled={saving}
-								class="inline-flex h-8 items-center gap-1.5 rounded-md bg-ink px-3 text-[12px] font-semibold text-bg hover:bg-ink/90 disabled:opacity-60"
-							>
-								{#if saving}<Loader2 size={13} class="animate-spin" />{/if}
-								{editing ? 'Save changes' : 'Follow account'}
-							</button>
-							<button
-								type="button"
-								onclick={() => (editorOpen = false)}
-								class="h-8 rounded-md border border-line bg-bg px-3 text-[12px] font-medium text-ink hover:border-line-strong"
-							>
-								Cancel
-							</button>
-						</div>
-					</div>
-				</div>
-			{/if}
-
 			<!-- ── Followed accounts ─────────────────────────────────────────── -->
 			<SectionBar label="Followed accounts" count={`${subs.length} / ${limit}`} />
 			{#if !enabled && subs.length}
@@ -399,7 +264,19 @@
 				<EmptyBlock
 					title="No accounts followed yet"
 					body="Pick a platform above to follow a creator. Dia announces when they go live, upload or post."
-				/>
+				>
+					{#snippet cta()}
+						{#if available.length}
+							<button
+								type="button"
+								onclick={() => (onboardOpen = true)}
+								class="inline-flex h-8 items-center gap-1.5 rounded-md bg-ink px-3 text-[12px] font-semibold text-bg hover:bg-ink/90"
+							>
+								<Plus size={13} /> Follow your first account
+							</button>
+						{/if}
+					{/snippet}
+				</EmptyBlock>
 			{:else}
 				{#each subs as sub (sub.id)}
 					{@const Icon = PROVIDER_ICONS[sub.provider] ?? Megaphone}
@@ -482,9 +359,40 @@
 					</div>
 				{/each}
 			{/if}
+
+			<!-- ── Bridge to automations ─────────────────────────────────────── -->
+			<div
+				class="flex flex-wrap items-center gap-x-2 gap-y-1 border-t border-line/60 px-5 py-3.5 text-[12px] text-muted"
+			>
+				<Zap size={13} class="shrink-0 text-faint" />
+				<span>Want more than an announcement? Build a flow on the social update trigger.</span>
+				<a
+					href={`/servers/${store.id}/automations`}
+					class="font-medium text-accent-ink hover:underline"
+				>
+					Open automations →
+				</a>
+			</div>
 		{/if}
 	</div>
 </div>
+
+<SocialOnboarding
+	bind:open={onboardOpen}
+	guildId={store.id}
+	{caps}
+	{atLimit}
+	oncreated={onOnboardCreated}
+/>
+
+<SubscriptionEditor
+	bind:open={editorOpen}
+	guildId={store.id}
+	cap={editorCap}
+	sub={editorSub}
+	oncreated={onEditorCreated}
+	onsaved={onEditorSaved}
+/>
 
 <ConfirmDialog
 	open={!!confirmDelete}
