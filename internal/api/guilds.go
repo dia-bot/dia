@@ -14,6 +14,7 @@ import (
 	"github.com/dia-bot/dia/internal/features/leveling"
 	"github.com/dia-bot/dia/internal/features/moderation"
 	"github.com/dia-bot/dia/internal/features/roles"
+	"github.com/dia-bot/dia/internal/features/schedmessages"
 	sn "github.com/dia-bot/dia/internal/features/socialnotifications"
 	"github.com/dia-bot/dia/internal/features/statschannels"
 	"github.com/dia-bot/dia/internal/features/welcome"
@@ -376,7 +377,7 @@ func (s *Server) handlePutFeature(c *gin.Context) {
 	// /giveaway/actions or /social-actions), not the settings page. Keep the
 	// stored copy authoritative so a settings save can't clobber a flow wired
 	// meanwhile on the canvas.
-	if len(req.Config) > 0 && (key == welcome.FeatureKey || key == leveling.FeatureKey || key == roles.FeatureKey || key == moderation.AutomodKey || key == giveaway.FeatureKey || key == sn.FeatureKey || key == statschannels.FeatureKey) {
+	if len(req.Config) > 0 && (key == welcome.FeatureKey || key == leveling.FeatureKey || key == roles.FeatureKey || key == moderation.AutomodKey || key == giveaway.FeatureKey || key == sn.FeatureKey || key == statschannels.FeatureKey || key == schedmessages.FeatureKey) {
 		if existing, err := s.store.Features.Get(c.Request.Context(), gidInt, key); err == nil && len(existing.Config) > 0 {
 			switch key {
 			case welcome.FeatureKey:
@@ -393,6 +394,8 @@ func (s *Server) handlePutFeature(c *gin.Context) {
 				req.Config = sn.MergeStoredTail(req.Config, existing.Config)
 			case statschannels.FeatureKey:
 				req.Config = statschannels.MergeStoredTail(req.Config, existing.Config)
+			case schedmessages.FeatureKey:
+				req.Config = schedmessages.MergeStoredTail(req.Config, existing.Config)
 			}
 		}
 	}

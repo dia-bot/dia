@@ -217,6 +217,13 @@ func (s *Server) Handler() http.Handler {
 
 	g.POST("/stats/channels", s.handleCreateStatsChannel)
 	g.POST("/stats/actions", s.handleStatsActions)
+
+	g.GET("/schedules", s.handleListSchedules)
+	g.POST("/schedules", s.handleCreateSchedule)
+	g.PATCH("/schedules/:sid", s.handleUpdateSchedule)
+	g.DELETE("/schedules/:sid", s.handleDeleteSchedule)
+	g.POST("/schedules/:sid/send", s.handleSendSchedule)
+	g.POST("/scheduler/actions", s.handleSchedulerActions)
 	g.PATCH("/social/:sid", s.handleUpdateSocial)
 	g.DELETE("/social/:sid", s.handleDeleteSocial)
 	g.POST("/social/:sid/test", s.handleTestSocial)

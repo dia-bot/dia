@@ -15,6 +15,7 @@ const (
 	FilterRole           Filter = "role"            // single watched role (role add/remove)
 	FilterSocialAccounts Filter = "social_accounts" // restrict to followed accounts (social_update)
 	FilterSocialKinds    Filter = "social_kinds"    // restrict to update kinds (social_update)
+	FilterSchedules      Filter = "schedules"       // restrict to specific schedules (scheduled_message)
 	FilterCooldown       Filter = "cooldown"        // per-scope rate limit
 )
 
@@ -47,6 +48,7 @@ const (
 	CatTickets    = "tickets"
 	CatGiveaways  = "giveaways"
 	CatSocial     = "social"
+	CatScheduling = "scheduling"
 )
 
 // Triggers is the closed catalogue of automation triggers. Adding one here is
@@ -107,6 +109,9 @@ var Triggers = []TriggerKind{
 
 	// Social
 	{Key: "social_update", Label: "Social account update", Description: "A followed social account goes live or posts (branch on .Event.kind: live_start, live_end, new_video, new_post — and .Event.provider).", Event: event.TypeSocialUpdate, Category: CatSocial, Actor: "(no actor)", Filters: []Filter{FilterSocialAccounts, FilterSocialKinds, FilterCooldown}},
+
+	// Scheduling
+	{Key: "scheduled_message", Label: "Scheduled message sent", Description: "A scheduled message posts (chain follow-up steps, pin it, open a thread, and more).", Event: event.TypeScheduledMessageSent, Category: CatScheduling, Actor: "(no actor)", HasChannel: true, Filters: []Filter{FilterSchedules, FilterChannels, FilterCooldown}},
 }
 
 // triggerByKey indexes the catalogue.

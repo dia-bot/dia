@@ -44,6 +44,7 @@ import (
 	"github.com/dia-bot/dia/internal/features/leveling"
 	"github.com/dia-bot/dia/internal/features/moderation"
 	"github.com/dia-bot/dia/internal/features/roles"
+	"github.com/dia-bot/dia/internal/features/schedmessages"
 	"github.com/dia-bot/dia/internal/features/socialnotifications"
 	"github.com/dia-bot/dia/internal/features/statschannels"
 	"github.com/dia-bot/dia/internal/features/tickets"
@@ -244,6 +245,7 @@ func seedFeatures(ctx context.Context, st *store.Store, guildID int64) error {
 		{giveaway.FeatureKey, giv},
 		{socialnotifications.FeatureKey, socialnotifications.Default()},
 		{statschannels.FeatureKey, statschannels.Default()},
+		{schedmessages.FeatureKey, schedmessages.Default()},
 	}
 	for _, c := range configs {
 		raw, err := json.Marshal(c.val)

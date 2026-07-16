@@ -10,6 +10,7 @@ import (
 	"github.com/dia-bot/dia/internal/features/leveling"
 	"github.com/dia-bot/dia/internal/features/moderation"
 	"github.com/dia-bot/dia/internal/features/roles"
+	"github.com/dia-bot/dia/internal/features/schedmessages"
 	"github.com/dia-bot/dia/internal/features/socialnotifications"
 	"github.com/dia-bot/dia/internal/features/statschannels"
 	"github.com/dia-bot/dia/internal/features/welcome"
@@ -207,6 +208,23 @@ func BuildBuiltins(configs map[string]json.RawMessage, featureEnabled map[string
 		Definition:  statsFlow(stcfg),
 	})
 
+	// ── Scheduled messages ───────────────────────────────────────────────────
+	sccfg := schedmessages.Default()
+	if raw := configs[schedmessages.FeatureKey]; len(raw) > 0 {
+		_ = json.Unmarshal(raw, &sccfg)
+	}
+	out = append(out, Builtin{
+		Key:         "scheduler.sent",
+		Name:        "Scheduled message sent",
+		Description: "Runs after every scheduled message posts. Chain follow-up steps: pin it, open a thread, notify staff. Managed on the Scheduling tab.",
+		TriggerType: "scheduled_message",
+		FeatureKey:  schedmessages.FeatureKey,
+		FeatureName: "Scheduled Messages",
+		FeatureTab:  "scheduling",
+		Enabled:     featureEnabled[schedmessages.FeatureKey],
+		Definition:  schedFlow(sccfg),
+	})
+
 	// ── Social alerts ────────────────────────────────────────────────────────
 	scfg := socialnotifications.Default()
 	if raw := configs[socialnotifications.FeatureKey]; len(raw) > 0 {
@@ -225,6 +243,17 @@ func BuildBuiltins(configs map[string]json.RawMessage, featureEnabled map[string
 	})
 
 	return out
+}
+
+// schedFlow renders the post as a read-only spine node (the scheduler posts
+// natively) followed by the editable follow-up tail. Mirrors giveawayEntryFlow.
+func schedFlow(cfg schedmessages.Config) cc.Definition {
+	steps := []cc.Step{{
+		ID:   "builtin-post",
+		Kind: cc.KindNoop,
+	}}
+	steps = append(steps, cfg.Tail...)
+	return cc.Definition{Steps: steps}
 }
 
 // statsFlow renders the milestone as a read-only spine node (the stats feature

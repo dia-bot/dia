@@ -30,6 +30,7 @@ import (
 	serverlogs "github.com/dia-bot/dia/internal/features/logging"
 	"github.com/dia-bot/dia/internal/features/moderation"
 	"github.com/dia-bot/dia/internal/features/roles"
+	"github.com/dia-bot/dia/internal/features/schedmessages"
 	"github.com/dia-bot/dia/internal/features/socialnotifications"
 	"github.com/dia-bot/dia/internal/features/statschannels"
 	"github.com/dia-bot/dia/internal/features/tickets"
@@ -95,6 +96,7 @@ func main() {
 	automationsPlugin := automations.New()
 	giveawayPlugin := giveaway.New()
 	socialPlugin := socialnotifications.New()
+	schedPlugin := schedmessages.New()
 	if err := b.Register(ctx,
 		welcome.New(),
 		leveling.New(),
@@ -105,6 +107,7 @@ func main() {
 		tickets.New(),
 		socialPlugin,
 		statschannels.New(),
+		schedPlugin,
 		customcommands.New(),
 		automationsPlugin,
 		giveawayPlugin,
@@ -117,6 +120,7 @@ func main() {
 	// injected as the bridge once all have initialised.
 	giveawayPlugin.SetAutomationRunner(automationsPlugin)
 	socialPlugin.SetAutomationRunner(automationsPlugin)
+	schedPlugin.SetAutomationRunner(automationsPlugin)
 
 	// DEV_GUILD_ID registers commands to one guild (instant) for development;
 	// empty registers globally (~1h propagation).

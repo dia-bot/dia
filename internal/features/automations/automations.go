@@ -69,6 +69,9 @@ type TriggerConfig struct {
 	// Kinds, when non-empty, restricts a social_update trigger to these update
 	// kinds (live_start, live_end, new_video, new_post).
 	Kinds []string `json:"kinds,omitempty"`
+	// Schedules, when non-empty, restricts a scheduled_message trigger to
+	// these schedule ids (decimal strings).
+	Schedules []string `json:"schedules,omitempty"`
 	// Cooldown, when set, rate-limits the automation per scope so a burst of
 	// events doesn't fan out a burst of runs.
 	Cooldown *Cooldown `json:"cooldown,omitempty"`

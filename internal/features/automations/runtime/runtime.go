@@ -23,6 +23,7 @@ import (
 	cc "github.com/dia-bot/dia/internal/features/customcommands"
 	"github.com/dia-bot/dia/internal/features/customcommands/exec"
 	"github.com/dia-bot/dia/internal/features/giveaway"
+	"github.com/dia-bot/dia/internal/features/schedmessages"
 	"github.com/dia-bot/dia/internal/features/socialnotifications"
 	"github.com/dia-bot/dia/internal/features/statschannels"
 	"github.com/dia-bot/dia/internal/interactions"
@@ -118,8 +119,9 @@ func (p *Plugin) handleEvent(ctx context.Context, et event.Type, env *event.Enve
 	// tail, run on SOCIAL_UPDATE / MEMBER_MILESTONE respectively.
 	socialTail := p.socialTail(ctx, et, gid)
 	milestoneTail := p.statsTail(ctx, et, gid)
+	schedTail := p.schedTail(ctx, et, gid)
 
-	if len(autos) == 0 && len(waiting) == 0 && len(drawTail) == 0 && len(entryTail) == 0 && len(socialTail) == 0 && len(milestoneTail) == 0 {
+	if len(autos) == 0 && len(waiting) == 0 && len(drawTail) == 0 && len(entryTail) == 0 && len(socialTail) == 0 && len(milestoneTail) == 0 && len(schedTail) == 0 {
 		return nil
 	}
 
@@ -152,6 +154,9 @@ func (p *Plugin) handleEvent(ctx context.Context, et event.Type, env *event.Enve
 	}
 	if len(milestoneTail) > 0 {
 		p.runBuiltinTail(ctx, "stats.milestone", "member_milestone", milestoneTail, ec)
+	}
+	if len(schedTail) > 0 {
+		p.runBuiltinTail(ctx, "scheduler.sent", "scheduled_message", schedTail, ec)
 	}
 
 	if len(waiting) > 0 {
@@ -456,6 +461,19 @@ func (p *Plugin) prepare(ctx context.Context, et event.Type, env *event.Envelope
 			"channel_id":  g.ChannelID,
 		}
 
+	case event.TypeScheduledMessageSent:
+		m, err := plugin.DecodeData[event.ScheduledMessageSent](env)
+		if err != nil {
+			return nil, false
+		}
+		ec.channelID = m.ChannelID
+		ec.eventMap = map[string]any{
+			"schedule":   m.ScheduleID,
+			"name":       m.Name,
+			"channel_id": m.ChannelID,
+			"message_id": m.MessageID,
+		}
+
 	case event.TypeMemberMilestone:
 		m, err := plugin.DecodeData[event.MemberMilestone](env)
 		if err != nil {
@@ -729,13 +747,16 @@ func (p *Plugin) matches(ctx context.Context, a store.Automation, cfg automation
 			return false
 		}
 	}
+	// Scheduling scoping: restrict to specific schedules.
+	if len(cfg.Schedules) > 0 && !contains(cfg.Schedules, int64Of(ec.eventMap, "schedule")) {
+		return false
+	}
 	return true
 }
 
-// socialSubOf reads the social subscription id out of a social_update event
-// scope as the decimal string the trigger config stores.
-func socialSubOf(m map[string]any) string {
-	switch v := m["subscription"].(type) {
+// int64Of reads an int64-ish event value as its decimal string.
+func int64Of(m map[string]any, key string) string {
+	switch v := m[key].(type) {
 	case int64:
 		return strconv.FormatInt(v, 10)
 	case float64:
@@ -745,6 +766,10 @@ func socialSubOf(m map[string]any) string {
 	}
 	return ""
 }
+
+// socialSubOf reads the social subscription id out of a social_update event
+// scope as the decimal string the trigger config stores.
+func socialSubOf(m map[string]any) string { return int64Of(m, "subscription") }
 
 // passCooldown enforces an optional per-scope rate limit via the cache (SET NX).
 func (p *Plugin) passCooldown(ctx context.Context, autoID string, cfg automations.TriggerConfig, ec *eventContext) bool {
@@ -855,6 +880,23 @@ func (p *Plugin) statsTail(ctx context.Context, et event.Type, gid int64) []cc.S
 		return nil
 	}
 	var cfg statschannels.Config
+	if json.Unmarshal(fc.Config, &cfg) != nil {
+		return nil
+	}
+	return cfg.Tail
+}
+
+// schedTail returns the scheduler feature's built-in follow-up flow on
+// SCHEDULED_MESSAGE_SENT. Mirrors socialTail.
+func (p *Plugin) schedTail(ctx context.Context, et event.Type, gid int64) []cc.Step {
+	if et != event.TypeScheduledMessageSent {
+		return nil
+	}
+	fc, err := p.deps.Store.Features.Get(ctx, gid, schedmessages.FeatureKey)
+	if err != nil || !fc.Enabled || len(fc.Config) == 0 {
+		return nil
+	}
+	var cfg schedmessages.Config
 	if json.Unmarshal(fc.Config, &cfg) != nil {
 		return nil
 	}
