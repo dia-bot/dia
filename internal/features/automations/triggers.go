@@ -7,13 +7,15 @@ import "github.com/dia-bot/dia/internal/event"
 type Filter string
 
 const (
-	FilterChannels   Filter = "channels"    // restrict to / exclude channels
-	FilterRoles      Filter = "roles"       // actor must / must not hold a role
-	FilterIgnoreBots Filter = "ignore_bots" // drop bot actors
-	FilterKeywords   Filter = "keywords"    // message content match
-	FilterEmojis     Filter = "emojis"      // reaction emoji allowlist
-	FilterRole       Filter = "role"        // single watched role (role add/remove)
-	FilterCooldown   Filter = "cooldown"    // per-scope rate limit
+	FilterChannels       Filter = "channels"        // restrict to / exclude channels
+	FilterRoles          Filter = "roles"           // actor must / must not hold a role
+	FilterIgnoreBots     Filter = "ignore_bots"     // drop bot actors
+	FilterKeywords       Filter = "keywords"        // message content match
+	FilterEmojis         Filter = "emojis"          // reaction emoji allowlist
+	FilterRole           Filter = "role"            // single watched role (role add/remove)
+	FilterSocialAccounts Filter = "social_accounts" // restrict to followed accounts (social_update)
+	FilterSocialKinds    Filter = "social_kinds"    // restrict to update kinds (social_update)
+	FilterCooldown       Filter = "cooldown"        // per-scope rate limit
 )
 
 // TriggerKind is one entry in the trigger catalogue: a user-facing automation
@@ -103,7 +105,7 @@ var Triggers = []TriggerKind{
 	{Key: "giveaway_entry", Label: "Giveaway entered", Description: "A member clicks a giveaway's Enter button. Branch on .Event.outcome (entered, left, denied, blocked). .User is the member who clicked.", Event: event.TypeGiveawayEntered, Category: CatGiveaways, Actor: "the member who clicked Enter", HasChannel: true, Filters: []Filter{FilterChannels, FilterIgnoreBots, FilterCooldown}},
 
 	// Social
-	{Key: "social_update", Label: "Social account update", Description: "A followed social account goes live or posts (branch on .Event.kind: live_start, live_end, new_video, new_post — and .Event.provider).", Event: event.TypeSocialUpdate, Category: CatSocial, Actor: "(no actor)", Filters: []Filter{FilterCooldown}},
+	{Key: "social_update", Label: "Social account update", Description: "A followed social account goes live or posts (branch on .Event.kind: live_start, live_end, new_video, new_post — and .Event.provider).", Event: event.TypeSocialUpdate, Category: CatSocial, Actor: "(no actor)", Filters: []Filter{FilterSocialAccounts, FilterSocialKinds, FilterCooldown}},
 }
 
 // triggerByKey indexes the catalogue.
