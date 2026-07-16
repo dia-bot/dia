@@ -35,6 +35,8 @@ export interface TriggerConfig {
 	kinds?: string[];
 	// scheduled_message scoping: schedule ids.
 	schedules?: string[];
+	// "schedule" trigger cadence (the flow runs on this timer).
+	schedule?: import('$lib/schedules').ScheduleDef;
 	cooldown?: { scope: 'user' | 'channel' | 'guild'; seconds: number };
 }
 
@@ -629,6 +631,21 @@ export const TRIGGERS: TriggerKindMeta[] = [
 			v('.Event.name', 'string', "The schedule's name"),
 			v('.Event.channel_id', 'snowflake', 'The channel it posted in'),
 			v('.Event.message_id', 'snowflake', 'The posted message id')
+		]
+	},
+	{
+		key: 'schedule',
+		label: 'At a scheduled time',
+		description:
+			'Runs the flow itself on a cadence: once, every N minutes, daily or weekly. No actor or channel; send to explicit channels.',
+		category: 'scheduling',
+		event: '',
+		actor: '(no actor)',
+		hasChannel: false,
+		filters: [],
+		eventVars: [
+			v('.Event.scheduled_at', 'string', 'When this run fired (RFC 3339, UTC)'),
+			v('.Event.kind', 'string', 'The cadence kind (once, every, daily, weekly)')
 		]
 	},
 	{
