@@ -18,6 +18,7 @@ export type TriggerFilter =
 	| 'social_accounts'
 	| 'social_kinds'
 	| 'schedules'
+	| 'milestones'
 	| 'cooldown';
 
 export interface TriggerConfig {
@@ -35,6 +36,8 @@ export interface TriggerConfig {
 	kinds?: string[];
 	// scheduled_message scoping: schedule ids.
 	schedules?: string[];
+	// member_milestone scoping: milestone ids from the Server Stats config.
+	milestones?: string[];
 	// "schedule" trigger cadence (the flow runs on this timer).
 	schedule?: import('$lib/schedules').ScheduleDef;
 	cooldown?: { scope: 'user' | 'channel' | 'guild'; seconds: number };
@@ -605,16 +608,17 @@ export const TRIGGERS: TriggerKindMeta[] = [
 		key: 'member_milestone',
 		label: 'Member milestone reached',
 		description:
-			'The member count crosses the milestone step configured on the Server Stats tab (e.g. every 100 members). No .User or .Channel.',
+			'The member count crosses a milestone configured on the Server Stats tab (every N members, or a one-time target). No .User or .Channel.',
 		category: 'members',
 		event: 'MEMBER_MILESTONE',
 		actor: '(no actor)',
 		hasChannel: false,
-		filters: ['cooldown'],
+		filters: ['milestones', 'cooldown'],
 		eventVars: [
-			v('.Event.count', 'int', 'The member count that crossed the step'),
-			v('.Event.step', 'int', 'The configured milestone interval'),
-			v('.Event.milestone', 'int', 'The milestone value crossed')
+			v('.Event.count', 'int', 'The member count that crossed the milestone'),
+			v('.Event.step', 'int', 'The recurring interval (0 for a one-time target)'),
+			v('.Event.milestone', 'int', 'The milestone value crossed'),
+			v('.Event.milestone_id', 'string', 'The milestone definition that fired')
 		]
 	},
 	{
