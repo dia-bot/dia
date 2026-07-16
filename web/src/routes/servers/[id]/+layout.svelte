@@ -27,6 +27,8 @@
 		Zap,
 		Frame,
 		Megaphone,
+		CalendarClock,
+		BarChart3,
 		CreditCard,
 		ChevronRight,
 		Search,
@@ -72,6 +74,13 @@
 		{
 			section: 'Social',
 			items: [{ label: 'Social Alerts', path: 'social', icon: Megaphone }]
+		},
+		{
+			section: 'Utility',
+			items: [
+				{ label: 'Scheduling', path: 'scheduling', icon: CalendarClock },
+				{ label: 'Server Stats', path: 'stats', icon: BarChart3 }
+			]
 		},
 		{
 			section: 'Moderation',
@@ -123,7 +132,9 @@
 		verification: 'verification',
 		logging: 'logging',
 		commands: 'customcommands',
-		social: 'social'
+		social: 'social',
+		scheduling: 'scheduler',
+		stats: 'stats'
 	};
 	function canAccessPath(path: string): boolean {
 		if (store.admin) return true;
@@ -204,7 +215,9 @@
 		'verification',
 		'tickets',
 		'logging',
-		'social'
+		'social',
+		'scheduling',
+		'stats'
 	];
 	const fullWidth = $derived(fullWidthPages.includes(currentSeg));
 	// And a few want to paint edge-to-edge — no outer px/py wrapper at all.
@@ -222,7 +235,9 @@
 		'verification',
 		'tickets',
 		'logging',
-		'social'
+		'social',
+		'scheduling',
+		'stats'
 	];
 	const flush = $derived(flushPages.includes(currentSeg));
 

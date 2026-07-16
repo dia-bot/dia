@@ -107,7 +107,9 @@
 				auto?.feature_tab === 'reaction-roles' ||
 				auto?.feature_tab === 'automod' ||
 				auto?.feature_tab === 'giveaways' ||
-				auto?.feature_tab === 'social')
+				auto?.feature_tab === 'social' ||
+				auto?.feature_tab === 'stats' ||
+				auto?.feature_tab === 'scheduling')
 	);
 	// Welcome distinguishes its two built-in ids (join vs leave) as config tabs;
 	// leveling has a single surface so this is only meaningful for welcome.
@@ -545,7 +547,9 @@
 			auto.feature_tab === 'reaction-roles' ||
 			auto.feature_tab === 'automod' ||
 			auto.feature_tab === 'giveaways' ||
-			auto.feature_tab === 'social'
+			auto.feature_tab === 'social' ||
+			auto.feature_tab === 'stats' ||
+			auto.feature_tab === 'scheduling'
 		) {
 			let last = '';
 			for (const s of steps) {
@@ -674,6 +678,10 @@
 				await api.saveGiveawayEntryTail(store.id, extractSpineTail(auto.definition));
 			} else if (auto.id === 'social.update') {
 				await api.saveSocialTail(store.id, extractSpineTail(auto.definition));
+			} else if (auto.id === 'stats.milestone') {
+				await api.saveStatsTail(store.id, extractSpineTail(auto.definition));
+			} else if (auto.id === 'scheduler.sent') {
+				await api.saveSchedulerTail(store.id, extractSpineTail(auto.definition));
 			} else if (auto.feature_tab === 'leveling') {
 				const acts = extractWelcomeActions(auto.definition);
 				await api.saveLevelingActions(store.id, acts.channel, extractWelcomeTail(auto.definition));
@@ -1167,7 +1175,18 @@
 			.then((r) => (socialSubs = r.subscriptions ?? []))
 			.catch(() => {});
 	});
-	function toggleListValue(key: 'subscriptions' | 'kinds', value: string) {
+	// Schedules backing the scheduled_message scoping filter.
+	let schedList = $state<import('$lib/schedules').ScheduledMessage[]>([]);
+	let schedListLoaded = $state(false);
+	$effect(() => {
+		if (!supports('schedules') || schedListLoaded) return;
+		schedListLoaded = true;
+		api
+			.schedules(store.id)
+			.then((r) => (schedList = r.schedules ?? []))
+			.catch(() => {});
+	});
+	function toggleListValue(key: 'subscriptions' | 'kinds' | 'schedules', value: string) {
 		const cur = tcfg()[key] ?? [];
 		const next = cur.includes(value) ? cur.filter((x) => x !== value) : [...cur, value];
 		setCfg(key, next.length ? next : undefined);
@@ -1716,6 +1735,38 @@
 									{/each}
 								</div>
 								<p class="mt-1 font-mono text-[10px] text-faint">None selected = any followed account.</p>
+							{/if}
+						</section>
+					{/if}
+
+					{#if supports('schedules')}
+						<section>
+							<div class="mb-1 font-mono text-[10px] font-medium uppercase tracking-[0.14em] text-faint">Schedules</div>
+							{#if schedList.length === 0}
+								<p class="font-mono text-[10px] text-faint">
+									No scheduled messages yet — create some on the Scheduling tab. Blank = any schedule.
+								</p>
+							{:else}
+								<div class="flex flex-col gap-1">
+									{#each schedList as sc (sc.id)}
+										{@const on = (tcfg().schedules ?? []).includes(sc.id)}
+										<button
+											type="button"
+											role="checkbox"
+											aria-checked={on}
+											onclick={() => toggleListValue('schedules', sc.id)}
+											class="flex items-center gap-2 rounded-md border px-2 py-1.5 text-left transition-colors {on
+												? 'border-line-strong bg-surface'
+												: 'border-line bg-bg hover:border-line-strong'}"
+										>
+											<span class="grid size-3.5 shrink-0 place-items-center rounded-sm border {on ? 'border-ink bg-ink text-bg' : 'border-line'}">
+												{#if on}<span class="text-[9px] leading-none">✓</span>{/if}
+											</span>
+											<span class="min-w-0 truncate text-[11.5px] text-ink">{sc.name}</span>
+										</button>
+									{/each}
+								</div>
+								<p class="mt-1 font-mono text-[10px] text-faint">None selected = any schedule.</p>
 							{/if}
 						</section>
 					{/if}
