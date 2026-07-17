@@ -202,7 +202,9 @@
 	});
 
 	// A few builder pages want the whole content width (no centered column).
+	// '' is the Overview, a full-bleed slab page like the feature tabs.
 	const fullWidthPages = [
+		'',
 		'welcome',
 		'leveling',
 		'reaction-roles',
@@ -224,6 +226,7 @@
 	// And a few want to paint edge-to-edge — no outer px/py wrapper at all.
 	// Used by the dashboard surfaces that draw their own slab topbar / rows.
 	const flushPages = [
+		'',
 		'welcome',
 		'leveling',
 		'reaction-roles',
