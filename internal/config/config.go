@@ -126,6 +126,10 @@ type DiscordConfig struct {
 	ClientID     string
 	ClientSecret string
 	PublicKey    string
+	// CustomBotEncKey is the AES-256 key (base64 or hex, 32 bytes) used to
+	// encrypt customer bot tokens at rest for the custom-bot feature. Empty
+	// disables custom bots (the dashboard reports it as unavailable).
+	CustomBotEncKey string
 }
 
 // NATSConfig configures the JetStream event bus connection.
@@ -180,10 +184,11 @@ func Load() (*Config, error) {
 		Env:      env("ENV", "development"),
 		LogLevel: env("LOG_LEVEL", "info"),
 		Discord: DiscordConfig{
-			Token:        env("DISCORD_TOKEN", ""),
-			ClientID:     env("DISCORD_CLIENT_ID", ""),
-			ClientSecret: env("DISCORD_CLIENT_SECRET", ""),
-			PublicKey:    env("DISCORD_PUBLIC_KEY", ""),
+			Token:           env("DISCORD_TOKEN", ""),
+			ClientID:        env("DISCORD_CLIENT_ID", ""),
+			ClientSecret:    env("DISCORD_CLIENT_SECRET", ""),
+			PublicKey:       env("DISCORD_PUBLIC_KEY", ""),
+			CustomBotEncKey: env("CUSTOM_BOT_ENC_KEY", ""),
 		},
 		NATS: NATSConfig{
 			URL:    env("NATS_URL", "nats://localhost:4222"),
