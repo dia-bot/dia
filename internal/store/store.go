@@ -41,6 +41,7 @@ type Store struct {
 	Subscriptions  *SubscriptionRepo
 	Social         *SocialRepo
 	Schedules      *SchedulesRepo
+	CustomBots     *CustomBotRepo
 }
 
 // Open creates the pool, verifies connectivity and wires the repositories.
@@ -88,6 +89,7 @@ func Open(ctx context.Context, cfg config.PostgresConfig, log *slog.Logger) (*St
 	s.Subscriptions = &SubscriptionRepo{pool: pool}
 	s.Social = &SocialRepo{pool: pool}
 	s.Schedules = &SchedulesRepo{pool: pool}
+	s.CustomBots = &CustomBotRepo{pool: pool}
 
 	log.Info("connected to postgres", "max_conns", pcfg.MaxConns)
 	return s, nil

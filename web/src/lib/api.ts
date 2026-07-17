@@ -4,7 +4,9 @@ import { env } from '$env/dynamic/public';
 import type {
 	GuildDetail,
 	GuildListItem,
-	FeatureState
+	FeatureState,
+	CustomBotState,
+	BotPresence
 } from './types';
 import type { SocialList, SocialSubInput, SocialSubscription } from './social';
 
@@ -98,6 +100,24 @@ export const api = {
 		req<FeatureState>('GET', `/api/guilds/${id}/features/${key}`),
 	saveFeature: (id: string, key: string, enabled: boolean, config: unknown) =>
 		req<{ ok: boolean }>('PUT', `/api/guilds/${id}/features/${key}`, { enabled, config }),
+
+	// ── Custom bot ("bring your own token") ──
+	customBot: (id: string) => req<CustomBotState>('GET', `/api/guilds/${id}/custom-bot`),
+	validateCustomBot: (id: string, token: string) =>
+		req<{ application_id: string; username: string; avatar_url: string }>(
+			'POST',
+			`/api/guilds/${id}/custom-bot/validate`,
+			{ token }
+		),
+	saveCustomBot: (id: string, body: { token?: string; presence?: BotPresence }) =>
+		req<CustomBotState>('PUT', `/api/guilds/${id}/custom-bot`, body),
+	enableCustomBot: (id: string) =>
+		req<{ ok: boolean }>('POST', `/api/guilds/${id}/custom-bot/enable`),
+	disableCustomBot: (id: string) =>
+		req<{ ok: boolean }>('POST', `/api/guilds/${id}/custom-bot/disable`),
+	customBotPresence: (id: string, presence: BotPresence) =>
+		req<{ ok: boolean }>('PUT', `/api/guilds/${id}/custom-bot/presence`, presence),
+	deleteCustomBot: (id: string) => req<{ ok: boolean }>('DELETE', `/api/guilds/${id}/custom-bot`),
 
 	leaderboard: (id: string) =>
 		req<{ entries: any[] }>('GET', `/api/guilds/${id}/leaderboard`),

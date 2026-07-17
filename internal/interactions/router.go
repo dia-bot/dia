@@ -87,7 +87,16 @@ func (r *Router) CommandDefs() []*discordgo.ApplicationCommand {
 
 // Dispatch routes an interaction to the appropriate handler.
 func (r *Router) Dispatch(ctx context.Context, i *event.Interaction) {
-	c := &Context{Ctx: ctx, I: i, Client: r.client, Log: r.log, GuildID: i.GuildID}
+	// Use the client injected for this event (the custom bot that received the
+	// interaction) when present; otherwise the shared platform client. Interaction
+	// responses are authenticated by the interaction token + application id in the
+	// URL, so they work either way, but non-interaction sends a handler makes need
+	// the receiving bot's token.
+	client := r.client
+	if injected := discord.ClientFromContext(ctx); injected != nil {
+		client = injected
+	}
+	c := &Context{Ctx: ctx, I: i, Client: client, Log: r.log, GuildID: i.GuildID}
 	if u, ok := i.Actor(); ok {
 		c.User = u
 	}

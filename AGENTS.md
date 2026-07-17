@@ -88,6 +88,39 @@ welcome; it is not required.
   Prefer commas, periods, or parentheses; reach for an em-dash only when the
   sentence genuinely needs one.
 
+## Custom bots ("bring your own token")
+
+A customer can run Dia under their own Discord application: they supply a bot
+token, we run their bot on our infra so their server's bot wears their name,
+avatar and (unlike the shared bot) its own presence, while every feature still
+works. Architecture:
+
+- **Gateway (Elixir, Nostrum 0.11 multi-bot).** The platform bot and each custom
+  bot are `Nostrum.Bot` children; custom ones live under the
+  `Dia.Gateway.BotSupervisor` DynamicSupervisor. `Dia.Gateway.Control` subscribes
+  to the NATS control plane and starts/stops/restyles bots. Every forwarded event
+  is stamped with `app_id` (the producing bot). Nostrum multi-bot only exists on
+  0.11, so `mix.exs` pins a 0.11-dev git ref (bump when 0.11 hits Hex).
+- **Control plane (contract in `internal/event/control.go`, mirrored in
+  `gateway/lib/dia_gateway/control.ex`).** Core NATS (latest-wins + reconcile),
+  NOT the durable JetStream event stream. Go publishes `ensure`/`remove`/
+  `presence` on `dia.control.bots`; the gateway reports `ready`/`bot_state` on
+  `dia.control.gateway`. `internal/custombot` owns the Go side (Manager publishes,
+  the worker Service reconciles on gateway hello + a 60s tick and registers the
+  command set under a custom app when it first reports ready).
+- **Per-guild REST token.** `internal/botreg.Registry` resolves the client that
+  should act for a guild/app; the worker injects it into the request context from
+  the event's `app_id` (`discord.WithClient`). **When a feature sends a message,
+  grants a role, or takes any non-interaction REST action in response to a guild
+  event, use `d.ClientFor(ctx, guildID)`, never `d.Discord`** — a custom-bot
+  guild may not have the shared bot in it at all, so the shared token would 403.
+  Interaction *responses* are exempt: they're authenticated by the interaction
+  token + app id in the URL, so `c.Client` already works. `internal/features/welcome`
+  is the reference conversion; other features should follow the same pattern.
+- **Secrets.** Tokens are encrypted at rest with `internal/secret` (AES-256-GCM,
+  key from `CUSTOM_BOT_ENC_KEY`). Never log or return a token; the dashboard view
+  is `customBotView` (no secrets). Custom bots are admin-only.
+
 ## Custom commands: the templating contract
 
 Every user-facing **string value in a custom-command definition is a Go

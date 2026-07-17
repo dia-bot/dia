@@ -56,6 +56,16 @@ type Bus interface {
 	Publish(ctx context.Context, subject string, data []byte, dedupID string) error
 	// Consume creates/updates a durable consumer and starts delivering to h.
 	Consume(ctx context.Context, spec ConsumerSpec, h Handler) (Subscription, error)
+
+	// PublishCore sends a fire-and-forget message on a core (non-JetStream)
+	// subject. Used for the control plane (bot lifecycle, presence), which is
+	// latest-wins with periodic reconciliation rather than a durable log.
+	PublishCore(subject string, data []byte) error
+	// SubscribeCore delivers core-NATS messages on subject to h. Delivery is
+	// at-most-once and unordered; the caller must tolerate missed messages
+	// (the control plane reconciles on an interval and on gateway hello).
+	SubscribeCore(subject string, h func(data []byte)) (Subscription, error)
+
 	// Close stops all subscriptions and releases the connection.
 	Close() error
 }

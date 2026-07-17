@@ -140,6 +140,26 @@ func (b *natsBus) Consume(ctx context.Context, spec ConsumerSpec, h Handler) (Su
 	return &natsSub{cc: consumeCtx}, nil
 }
 
+func (b *natsBus) PublishCore(subject string, data []byte) error {
+	if err := b.nc.Publish(subject, data); err != nil {
+		return fmt.Errorf("core publish %q: %w", subject, err)
+	}
+	return b.nc.Flush()
+}
+
+func (b *natsBus) SubscribeCore(subject string, h func(data []byte)) (Subscription, error) {
+	sub, err := b.nc.Subscribe(subject, func(m *nats.Msg) { h(m.Data) })
+	if err != nil {
+		return nil, fmt.Errorf("core subscribe %q: %w", subject, err)
+	}
+	b.log.Info("control subscribed", "subject", subject)
+	return &coreSub{sub: sub}, nil
+}
+
+type coreSub struct{ sub *nats.Subscription }
+
+func (s *coreSub) Stop() { _ = s.sub.Unsubscribe() }
+
 func (b *natsBus) Close() error {
 	b.mu.Lock()
 	for _, s := range b.subs {

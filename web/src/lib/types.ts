@@ -46,6 +46,30 @@ export interface FeatureState {
 	config: Record<string, unknown>;
 }
 
+// BotPresence is the status + activity a custom bot broadcasts.
+export interface BotPresence {
+	status: 'online' | 'idle' | 'dnd' | 'invisible';
+	// -1 none, 0 playing, 1 streaming, 2 listening, 3 watching, 5 competing
+	activity_type: number;
+	activity_text: string;
+	activity_url: string;
+}
+
+// CustomBotState is the dashboard-safe view of a guild's custom bot (no token).
+export interface CustomBotState {
+	available: boolean; // the instance has custom bots configured (encryption key set)
+	configured: boolean; // a bot has been saved for this guild
+	enabled?: boolean;
+	state?: 'connecting' | 'ready' | 'error' | 'disconnected';
+	last_error?: string;
+	application_id?: string;
+	username?: string;
+	avatar_url?: string;
+	commands_synced?: boolean;
+	presence?: BotPresence;
+	invite_url?: string;
+}
+
 // GuildAccess is the current user's access to this guild's dashboard: admins
 // manage everything; otherwise `features` lists the delegated feature keys their
 // roles grant (e.g. { giveaway: true }).

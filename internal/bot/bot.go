@@ -10,11 +10,13 @@ import (
 	"sync"
 	"time"
 
+	"github.com/dia-bot/dia/internal/discord"
 	"github.com/dia-bot/dia/internal/event"
 	"github.com/dia-bot/dia/internal/eventbus"
 	"github.com/dia-bot/dia/internal/guildstate"
 	"github.com/dia-bot/dia/internal/interactions"
 	"github.com/dia-bot/dia/internal/plugin"
+	"github.com/dia-bot/dia/pkg/discordgo"
 )
 
 // Bot is the worker runtime.
@@ -85,6 +87,12 @@ func (b *Bot) SyncCommands(ctx context.Context, devGuildID string) error {
 	return nil
 }
 
+// CommandDefs returns the global slash-command set (for registering the same
+// commands under a customer's custom-bot application).
+func (b *Bot) CommandDefs() []*discordgo.ApplicationCommand {
+	return b.router.CommandDefs()
+}
+
 // Start launches background workers and begins consuming events. It returns a
 // stop function that drains them.
 func (b *Bot) Start(ctx context.Context) (func(), error) {
@@ -124,6 +132,14 @@ func (b *Bot) handle(ctx context.Context, msg eventbus.Msg) error {
 	if err := json.Unmarshal(msg.Data(), &env); err != nil {
 		b.log.Warn("dropping malformed event", "err", err)
 		return nil
+	}
+
+	// Resolve which bot produced this event and inject its REST client into the
+	// context, so every downstream send/action for a custom-bot guild acts as
+	// that customer's bot (whose token is the only one with access there). No
+	// DB hit: the app id rides on the envelope.
+	if b.deps.Bots != nil {
+		ctx = discord.WithClient(ctx, b.deps.Bots.ForApp(ctx, env.AppID))
 	}
 
 	// Core state tracking (guilds, channels, roles, member counts).

@@ -10,14 +10,17 @@ import (
 	"time"
 
 	"github.com/dia-bot/dia/internal/billing"
+	"github.com/dia-bot/dia/internal/botreg"
 	"github.com/dia-bot/dia/internal/cache"
 	"github.com/dia-bot/dia/internal/config"
+	"github.com/dia-bot/dia/internal/custombot"
 	"github.com/dia-bot/dia/internal/discord"
 	"github.com/dia-bot/dia/internal/eventbus"
 	"github.com/dia-bot/dia/internal/features/giveaway"
 	"github.com/dia-bot/dia/internal/guildstate"
 	"github.com/dia-bot/dia/internal/imaging"
 	"github.com/dia-bot/dia/internal/realtime"
+	"github.com/dia-bot/dia/internal/secret"
 	"github.com/dia-bot/dia/internal/social"
 	"github.com/dia-bot/dia/internal/storage"
 	"github.com/dia-bot/dia/internal/store"
@@ -59,12 +62,15 @@ type Server struct {
 	sessions *sessionStore
 	oauth    *oauth2.Config
 	upgrader websocket.Upgrader
+
+	cbBox     *secret.Box
+	custombot *custombot.Manager
 }
 
 // New builds a Server.
 func New(d Deps) *Server {
 	webOrigin := d.Config.API.WebBaseURL
-	return &Server{
+	s := &Server{
 		cfg:      d.Config,
 		log:      d.Log,
 		store:    d.Store,
@@ -94,6 +100,17 @@ func New(d Deps) *Server {
 			CheckOrigin:     func(r *http.Request) bool { return originAllowed(r, webOrigin) },
 		},
 	}
+	// Custom-bot ("bring your own token") support. A malformed key disables the
+	// feature rather than failing API startup.
+	box, err := secret.NewBox(d.Config.Discord.CustomBotEncKey)
+	if err != nil {
+		d.Log.Error("custom bot encryption key invalid; feature disabled", "err", err)
+		box, _ = secret.NewBox("")
+	}
+	registry := botreg.New(d.Discord, d.Store, box, d.Log)
+	s.cbBox = box
+	s.custombot = custombot.NewManager(d.Store, box, d.Bus, registry, d.Log)
+	return s
 }
 
 // Handler builds the gin engine with all routes and middleware.
@@ -146,6 +163,17 @@ func (s *Server) Handler() http.Handler {
 	g.GET("/assets", s.handleListAssets)
 	g.DELETE("/assets/:aid", s.handleDeleteAsset)
 	g.GET("/emojis", s.handleListEmojis)
+
+	// Custom bot ("bring your own token"): admin-only. Managing a bot token is
+	// as sensitive as any config write.
+	g.GET("/custom-bot", s.handleGetCustomBot)
+	g.POST("/custom-bot/validate", s.handleValidateCustomBot)
+	g.PUT("/custom-bot", s.handleSaveCustomBot)
+	g.POST("/custom-bot/enable", s.handleEnableCustomBot)
+	g.POST("/custom-bot/disable", s.handleDisableCustomBot)
+	g.PUT("/custom-bot/presence", s.handleCustomBotPresence)
+	g.DELETE("/custom-bot", s.handleDeleteCustomBot)
+
 	g.GET("/billing", s.handleBillingStatus)
 	g.POST("/billing/checkout", s.handleCheckout)
 	g.POST("/billing/portal", s.handlePortal)

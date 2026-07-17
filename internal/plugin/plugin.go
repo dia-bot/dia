@@ -12,6 +12,7 @@ import (
 	"context"
 	"log/slog"
 
+	"github.com/dia-bot/dia/internal/botreg"
 	"github.com/dia-bot/dia/internal/cache"
 	"github.com/dia-bot/dia/internal/config"
 	"github.com/dia-bot/dia/internal/discord"
@@ -54,6 +55,26 @@ type Deps struct {
 	// GuildState exposes the cached per-guild roles/channels snapshot for
 	// read-only template lookups (getRole/getChannel).
 	GuildState *guildstate.Store
+	// Bots resolves the REST client that should act for a guild: the shared bot
+	// for most guilds, or a customer's custom bot. May be nil in tests.
+	Bots *botreg.Registry
+}
+
+// ClientFor returns the REST client that should act for guildID as part of the
+// current unit of work: the client injected into ctx from the triggering
+// event's app id when present (no DB hit), else the guild's resolved bot, else
+// the shared platform client. Features that send messages, grant roles or take
+// moderation actions in response to a guild event should use this instead of
+// Deps.Discord so a custom-bot guild acts as its own bot (whose token is the
+// only one with access there).
+func (d Deps) ClientFor(ctx context.Context, guildID int64) *discord.Client {
+	if c := discord.ClientFromContext(ctx); c != nil {
+		return c
+	}
+	if d.Bots != nil {
+		return d.Bots.ForGuild(ctx, guildID)
+	}
+	return d.Discord
 }
 
 // EventHandler reacts to a decoded gateway event envelope.

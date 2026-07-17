@@ -198,6 +198,11 @@ func handleTest(c *interactions.Context, d plugin.Deps) error {
 // namespaces the component custom_ids so clicks route to the right per-button
 // actions.
 func sendConfigured(ctx context.Context, d plugin.Deps, mc MessageConfig, v Vars, tab string) error {
+	// Act as the bot that serves this guild: the customer's custom bot when one
+	// is running (the only token with access there), else the shared bot.
+	gid, _ := event.ParseID(v.guildID)
+	dc := d.ClientFor(ctx, gid)
+
 	// Render the card once per event and share the PNG across surfaces: the
 	// channel message attaches it whenever the card is on, and the DM attaches
 	// the same image when DM.AttachCard is on (there is no separate DM card).
@@ -218,8 +223,8 @@ func sendConfigured(ctx context.Context, d plugin.Deps, mc MessageConfig, v Vars
 			attachCard(dm, card)
 		}
 		if dm.Content != "" || len(dm.Embeds) > 0 || len(dm.Components) > 0 || len(dm.Files) > 0 {
-			if ch, err := d.Discord.Session().UserChannelCreate(v.user.ID); err == nil {
-				if _, err := d.Discord.SendMessage(ch.ID, dm); err != nil {
+			if ch, err := dc.Session().UserChannelCreate(v.user.ID); err == nil {
+				if _, err := dc.SendMessage(ch.ID, dm); err != nil {
 					d.Log.Warn("welcome DM send failed", "tab", tab, "err", err)
 				}
 			}
@@ -228,7 +233,7 @@ func sendConfigured(ctx context.Context, d plugin.Deps, mc MessageConfig, v Vars
 	if mc.ChannelID == "" {
 		return nil
 	}
-	_, err := d.Discord.SendMessage(mc.ChannelID, composeMessage(mc, v, tab, card))
+	_, err := dc.SendMessage(mc.ChannelID, composeMessage(mc, v, tab, card))
 	return err
 }
 

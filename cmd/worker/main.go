@@ -12,8 +12,10 @@ import (
 	"syscall"
 
 	"github.com/dia-bot/dia/internal/bot"
+	"github.com/dia-bot/dia/internal/botreg"
 	"github.com/dia-bot/dia/internal/cache"
 	"github.com/dia-bot/dia/internal/config"
+	"github.com/dia-bot/dia/internal/custombot"
 	"github.com/dia-bot/dia/internal/discord"
 	"github.com/dia-bot/dia/internal/event"
 	"github.com/dia-bot/dia/internal/eventbus"
@@ -21,6 +23,7 @@ import (
 	"github.com/dia-bot/dia/internal/imaging"
 	"github.com/dia-bot/dia/internal/logging"
 	"github.com/dia-bot/dia/internal/plugin"
+	"github.com/dia-bot/dia/internal/secret"
 	"github.com/dia-bot/dia/internal/store"
 
 	automations "github.com/dia-bot/dia/internal/features/automations/runtime"
@@ -81,6 +84,12 @@ func main() {
 	}
 	defer bus.Close()
 
+	box, err := secret.NewBox(cfg.Discord.CustomBotEncKey)
+	if err != nil {
+		fatal(log, "custom bot encryption key", err)
+	}
+	registry := botreg.New(dg, st, box, log)
+
 	deps := plugin.Deps{
 		Config:     cfg,
 		Log:        log,
@@ -90,6 +99,7 @@ func main() {
 		Imaging:    imaging.New(cfg.Imaging.FontsDir, log),
 		Bus:        bus,
 		GuildState: guildstate.New(caches),
+		Bots:       registry,
 	}
 
 	b := bot.New(deps)
@@ -127,6 +137,12 @@ func main() {
 	if err := b.SyncCommands(ctx, os.Getenv("DEV_GUILD_ID")); err != nil {
 		log.Error("command sync failed (continuing)", "err", err)
 	}
+
+	// Custom-bot control service: reconciles the gateway's running set of
+	// customer bots with the database and registers their commands on connect.
+	cbManager := custombot.NewManager(st, box, bus, registry, log)
+	cbService := custombot.NewService(cbManager, st, registry, bus, b.CommandDefs, log)
+	go cbService.Run(ctx)
 
 	stopBot, err := b.Start(ctx)
 	if err != nil {
