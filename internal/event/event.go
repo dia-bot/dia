@@ -133,6 +133,13 @@ type Envelope struct {
 	ShardID int             `json:"shard_id"`
 	TS      int64           `json:"ts"` // unix milliseconds when forwarded
 	Data    json.RawMessage `json:"data"`
+
+	// AppID identifies which bot produced the event: "" (or the platform's
+	// application id) means the shared Dia bot; any other value is a customer's
+	// custom bot. The Go side uses it to pick the REST client/token that should
+	// act on the event and respond to its interactions. Absent on envelopes
+	// from an older gateway, which is treated as the platform bot.
+	AppID string `json:"app_id,omitempty"`
 }
 
 // ── Shared sub-objects ───────────────────────────────────────
