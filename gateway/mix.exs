@@ -29,7 +29,13 @@ defmodule Dia.Gateway.MixProject do
     [
       # Discord gateway. We run it "thin": all caches are NoOp (see config.exs).
       # gun, certifi and jason are pulled in transitively.
-      {:nostrum, "~> 0.10"},
+      #
+      # Pinned to a 0.11-dev commit because multi-bot (`Nostrum.Bot`, needed to
+      # run customers' custom bots in-process) only exists on the 0.11 line;
+      # 0.10.x has no `Nostrum.Bot`. Bump the ref when 0.11 is released to Hex.
+      {:nostrum,
+       git: "https://github.com/Kraigie/nostrum.git",
+       ref: "03b06ba1c5094b83991097b1ce76b5fe2740324c"},
 
       # NATS client. We use gnat's own JetStream API; the archived
       # :jetstream / mmmries package is intentionally NOT used.
