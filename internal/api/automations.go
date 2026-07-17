@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/dia-bot/dia/internal/event"
 	"github.com/dia-bot/dia/internal/features/automations"
@@ -129,6 +130,26 @@ func (s *Server) handleUpsertAutomation(c *gin.Context) {
 	if err != nil {
 		fail(c, http.StatusInternalServerError, "could not save automation")
 		return
+	}
+	// A "schedule"-triggered automation carries its cadence in the trigger
+	// config; stamp the durable timer so the runtime sweep picks it up.
+	if saved.TriggerType == "schedule" {
+		cfg := automations.DecodeTriggerConfig(saved.TriggerConfig)
+		var next *time.Time
+		if cfg.Schedule != nil && saved.Enabled {
+			if err := cfg.Schedule.Validate(); err != nil {
+				fail(c, http.StatusBadRequest, err.Error())
+				return
+			}
+			if n, ok := cfg.Schedule.NextRun(time.Now()); ok {
+				next = &n
+			}
+		}
+		if next != nil {
+			if err := s.store.Automations.SetNextRun(c.Request.Context(), saved.ID, next); err != nil {
+				s.log.Warn("automation schedule stamp", "err", err)
+			}
+		}
 	}
 	if saved.Status == string(automations.StatusPublished) {
 		if err := s.store.Automations.PublishVersion(c.Request.Context(), store.AutomationVersion{

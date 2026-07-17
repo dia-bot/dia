@@ -15,7 +15,7 @@
 	<SelectPrimitive.Content
 		{sideOffset}
 		class={cn(
-			'menu-pop relative z-50 max-h-80 min-w-[8rem] overflow-hidden rounded-md border border-border bg-popover text-popover-foreground shadow-md',
+			'menu-pop relative z-[80] max-h-80 min-w-[8rem] overflow-hidden rounded-md border border-border bg-popover text-popover-foreground shadow-md',
 			cls
 		)}
 		{...rest}

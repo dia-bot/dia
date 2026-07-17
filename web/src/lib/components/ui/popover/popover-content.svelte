@@ -19,7 +19,7 @@
 		{align}
 		{side}
 		class={cn(
-			'menu-pop z-50 w-72 rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-md outline-none',
+			'menu-pop z-[80] w-72 rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-md outline-none',
 			cls
 		)}
 		{...rest}

@@ -40,8 +40,11 @@
 		<AlertDialog.Overlay
 			class="dialog-overlay fixed inset-0 z-[70] bg-black/65 backdrop-blur-sm"
 		/>
+		<!-- Centering lives on .dialog-content's `transform` (see app.css); the
+		     translate-x/y utilities compile to the independent `translate`
+		     property, stack with it, and shove the panel off-center. -->
 		<AlertDialog.Content
-			class="dialog-content fixed left-1/2 top-1/2 z-[71] w-full max-w-sm -translate-x-1/2 -translate-y-1/2 rounded-xl border border-line-strong bg-surface p-5 shadow-2xl outline-none"
+			class="dialog-content fixed left-1/2 top-1/2 z-[71] w-full max-w-sm rounded-xl border border-line-strong bg-surface p-5 shadow-2xl outline-none"
 		>
 			<div class="flex gap-3.5">
 				<div

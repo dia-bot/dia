@@ -199,5 +199,35 @@ export const AUTOMATION_TEMPLATES: AutomationTemplate[] = [
 				})
 			]
 		})
+	},
+	{
+		key: 'social-live-announce',
+		name: 'Shout out a go-live',
+		description:
+			'When a followed account starts streaming, post a hype announcement to a channel you choose.',
+		trigger_type: 'social_update',
+		// Social updates have no actor and no channel, so branch on the kind and
+		// send to an explicit channel the user fills in.
+		trigger_config: {},
+		definition: () => ({
+			steps: [
+				{
+					...step('if', { cond: { src: '{{ eq .Event.kind "live_start" }}' } }),
+					then: [
+						step('send_message', {
+							channel: { src: '' },
+							embeds: [
+								{
+									title: '🔴 {{ .Event.account }} is live',
+									description: '{{ .Event.title }}\n\n[Watch on {{ .Event.provider }}]({{ .Event.url }})',
+									color: '#ff6363',
+									timestamp: true
+								}
+							]
+						})
+					]
+				}
+			]
+		})
 	}
 ];

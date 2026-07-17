@@ -91,6 +91,27 @@ const (
 	// on entry, log denials, DM a confirmation) branching on .Event.outcome. Like
 	// TypeAutomodAction it has no gateway/Elixir mapper.
 	TypeGiveawayEntered Type = "GIVEAWAY_ENTERED"
+
+	// TypeSocialUpdate is NOT a gateway event: it is published on the same
+	// stream whenever a followed social account does something notable — the
+	// API's webhook ingestors emit it for push providers (Twitch EventSub, Kick
+	// webhooks, YouTube WebSub) and the worker's social pollers emit it for
+	// polled ones (RSS, Bluesky). One envelope is published per matching guild
+	// subscription; the social feature consumes it to post the announcement and
+	// the automations runtime exposes it as the "social_update" trigger. Like
+	// TypeAutomodAction it has no gateway/Elixir mapper.
+	TypeSocialUpdate Type = "SOCIAL_UPDATE"
+
+	// TypeMemberMilestone is NOT a gateway event: the stats feature publishes
+	// it when the member count crosses a configured milestone step, so
+	// automations can celebrate via the "member_milestone" trigger. Like
+	// TypeSocialUpdate it has no gateway/Elixir mapper.
+	TypeMemberMilestone Type = "MEMBER_MILESTONE"
+
+	// TypeScheduledMessageSent is NOT a gateway event: the scheduler feature
+	// publishes it after posting a scheduled message, exposed as the
+	// "scheduled_message" trigger. No gateway/Elixir mapper.
+	TypeScheduledMessageSent Type = "SCHEDULED_MESSAGE_SENT"
 )
 
 // SubjectPrefix is the JetStream subject root for forwarded gateway events.
@@ -434,6 +455,50 @@ type GiveawayEntered struct {
 	EntryCount int     `json:"entry_count"`      // distinct entrants after this click
 	User       User    `json:"user"`             // the member who clicked Enter
 	Member     *Member `json:"member,omitempty"`
+}
+
+// SocialUpdate is published (per matching guild subscription) when a followed
+// social account goes live or posts, on subject
+// discord.events.SOCIAL_UPDATE.<guild>. Kind is "live_start", "live_end",
+// "new_video" or "new_post"; Provider is "twitch", "youtube", "kick",
+// "bluesky" or "rss". The social feature consumes it to post the configured
+// announcement; the automations runtime consumes it as the "social_update"
+// trigger, exposing these fields to flows as .Event.*.
+type SocialUpdate struct {
+	GuildID        string `json:"guild_id"`
+	SubscriptionID int64  `json:"subscription_id"`
+	Provider       string `json:"provider"`
+	Kind           string `json:"kind"`
+	AccountID      string `json:"account_id"`   // canonical upstream id
+	AccountName    string `json:"account_name"` // display handle / channel title
+	AccountURL     string `json:"account_url,omitempty"`
+	ItemID         string `json:"item_id,omitempty"` // stream / video / post id (dedupe key)
+	Title          string `json:"title,omitempty"`
+	URL            string `json:"url,omitempty"` // link to the stream / video / post
+	Description    string `json:"description,omitempty"`
+	Thumbnail      string `json:"thumbnail,omitempty"`
+	Category       string `json:"category,omitempty"` // e.g. the Twitch game name
+	StartedAt      string `json:"started_at,omitempty"`
+}
+
+// MemberMilestone is published on MEMBER_MILESTONE (synthetic, worker-emitted)
+// when the guild's member count crosses a configured milestone.
+type MemberMilestone struct {
+	GuildID     string `json:"guild_id"`
+	MilestoneID string `json:"milestone_id"` // the milestone definition that fired (stats config)
+	Count       int    `json:"count"`        // the member count that crossed the milestone
+	Step        int    `json:"step"`         // the recurring interval (0 for a one-shot target)
+	Reached     int    `json:"milestone"`    // the milestone value crossed
+}
+
+// ScheduledMessageSent is published on SCHEDULED_MESSAGE_SENT (synthetic,
+// worker-emitted) after a scheduled message posts.
+type ScheduledMessageSent struct {
+	GuildID    string `json:"guild_id"`
+	ScheduleID int64  `json:"schedule_id"`
+	Name       string `json:"name"`
+	ChannelID  string `json:"channel_id"`
+	MessageID  string `json:"message_id,omitempty"`
 }
 
 // VoiceState is delivered on VOICE_STATE_UPDATE. ChannelID == "" means the

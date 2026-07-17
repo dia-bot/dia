@@ -17,7 +17,7 @@
 		{sideOffset}
 		{align}
 		class={cn(
-			'menu-pop z-50 min-w-[10rem] overflow-hidden rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-md',
+			'menu-pop z-[80] min-w-[10rem] overflow-hidden rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-md',
 			cls
 		)}
 		{...rest}

@@ -30,6 +30,55 @@ type Config struct {
 	Storage  StorageConfig
 	Premium  PremiumConfig
 	Billing  BillingConfig
+	Social   SocialConfig
+}
+
+// SocialConfig configures the social notification providers. Each provider is
+// unlocked by its own credentials, so a deployment enables exactly the set it
+// has keys for; the dashboard shows the rest as "coming soon". Push providers
+// (Twitch, Kick, YouTube WebSub) additionally need WebhookBaseURL — the public
+// origin of the API service — to receive callbacks.
+type SocialConfig struct {
+	// WebhookBaseURL is the public https origin the API is reachable on
+	// (PUBLIC_WEBHOOK_BASE_URL, e.g. https://api.example.com). Push providers
+	// deliver to <base>/webhooks/<provider>.
+	WebhookBaseURL string
+
+	TwitchClientID     string // TWITCH_CLIENT_ID
+	TwitchClientSecret string // TWITCH_CLIENT_SECRET
+	// TwitchEventSubSecret signs EventSub webhook deliveries
+	// (TWITCH_EVENTSUB_SECRET). Falls back to the client secret when unset.
+	TwitchEventSubSecret string
+
+	KickClientID     string // KICK_CLIENT_ID
+	KickClientSecret string // KICK_CLIENT_SECRET
+
+	// YouTubeAPIKey (YOUTUBE_API_KEY) enriches WebSub pushes (live vs upload)
+	// and resolves @handles; the push subscription itself is keyless.
+	YouTubeAPIKey string
+}
+
+// TwitchEnabled reports whether Twitch stream alerts can be offered.
+func (s SocialConfig) TwitchEnabled() bool {
+	return s.TwitchClientID != "" && s.TwitchClientSecret != "" && s.WebhookBaseURL != ""
+}
+
+// KickEnabled reports whether Kick stream alerts can be offered.
+func (s SocialConfig) KickEnabled() bool {
+	return s.KickClientID != "" && s.KickClientSecret != "" && s.WebhookBaseURL != ""
+}
+
+// YouTubeEnabled reports whether YouTube upload/live alerts can be offered.
+// WebSub pushes are keyless; only the public callback origin is required.
+func (s SocialConfig) YouTubeEnabled() bool { return s.WebhookBaseURL != "" }
+
+// TwitchSecret returns the EventSub HMAC secret (dedicated, or the client
+// secret as fallback).
+func (s SocialConfig) TwitchSecret() string {
+	if s.TwitchEventSubSecret != "" {
+		return s.TwitchEventSubSecret
+	}
+	return s.TwitchClientSecret
 }
 
 // BillingConfig configures Stripe billing for the $3.99/mo premium plan. Empty
@@ -166,6 +215,15 @@ func Load() (*Config, error) {
 			SecretKey:     env("STRIPE_SECRET_KEY", ""),
 			WebhookSecret: env("STRIPE_WEBHOOK_SECRET", ""),
 			PriceID:       env("STRIPE_PRICE_ID", ""),
+		},
+		Social: SocialConfig{
+			WebhookBaseURL:       strings.TrimRight(env("PUBLIC_WEBHOOK_BASE_URL", ""), "/"),
+			TwitchClientID:       env("TWITCH_CLIENT_ID", ""),
+			TwitchClientSecret:   env("TWITCH_CLIENT_SECRET", ""),
+			TwitchEventSubSecret: env("TWITCH_EVENTSUB_SECRET", ""),
+			KickClientID:         env("KICK_CLIENT_ID", ""),
+			KickClientSecret:     env("KICK_CLIENT_SECRET", ""),
+			YouTubeAPIKey:        env("YOUTUBE_API_KEY", ""),
 		},
 		Storage: StorageConfig{
 			Endpoint:       env("S3_ENDPOINT", ""),

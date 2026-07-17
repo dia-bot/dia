@@ -6,6 +6,7 @@ import type {
 	GuildListItem,
 	FeatureState
 } from './types';
+import type { SocialList, SocialSubInput, SocialSubscription } from './social';
 
 export const API_URL = env.PUBLIC_API_URL ?? 'http://localhost:8080';
 export const WS_URL = env.PUBLIC_WS_URL ?? 'ws://localhost:8080';
@@ -230,6 +231,17 @@ export const api = {
 		req<{ ok: boolean }>('POST', `/api/guilds/${id}/tickets/${tid}/close`),
 	ticketStats: (id: string) => req<{ stats: any }>('GET', `/api/guilds/${id}/ticket-stats`),
 
+	// ── Social alerts ──
+	social: (id: string) => req<SocialList>('GET', `/api/guilds/${id}/social`),
+	createSocial: (id: string, body: SocialSubInput) =>
+		req<{ subscription: SocialSubscription }>('POST', `/api/guilds/${id}/social`, body),
+	updateSocial: (id: string, sid: string, body: SocialSubInput) =>
+		req<{ subscription: SocialSubscription }>('PATCH', `/api/guilds/${id}/social/${sid}`, body),
+	deleteSocial: (id: string, sid: string) =>
+		req<{ ok: boolean }>('DELETE', `/api/guilds/${id}/social/${sid}`),
+	testSocial: (id: string, sid: string) =>
+		req<{ ok: boolean }>('POST', `/api/guilds/${id}/social/${sid}/test`),
+
 	cases: (id: string) => req<{ cases: any[] }>('GET', `/api/guilds/${id}/cases`),
 	// Automod infractions (the escalation heat ledger); optional user filter.
 	infractions: (id: string, userId?: string) =>
@@ -308,6 +320,34 @@ export const api = {
 	// like reaction-roles only the post-fire tail saves.
 	saveAutomodRuleTail: (id: string, ruleId: string, tail: unknown[]) =>
 		req<{ ok: boolean }>('POST', `/api/guilds/${id}/automod/rules/${ruleId}/actions`, { tail }),
+	// saveSocialTail persists the canvas-authored follow-up flow for the social
+	// feature's built-in "Announce social updates" automation. The spine (the
+	// native announce) is read-only, so like the giveaway flows only the
+	// post-announce tail saves; it runs on the social_update event.
+	saveSocialTail: (id: string, tail: unknown[]) =>
+		req<{ ok: boolean }>('POST', `/api/guilds/${id}/social-actions`, { tail }),
+	// saveStatsTail / saveSchedulerTail persist the canvas-authored follow-up
+	// flows for the stats and scheduler built-ins (same shape as the above).
+	saveStatsTail: (id: string, tail: unknown[]) =>
+		req<{ ok: boolean }>('POST', `/api/guilds/${id}/stats/actions`, { tail }),
+	saveSchedulerTail: (id: string, tail: unknown[]) =>
+		req<{ ok: boolean }>('POST', `/api/guilds/${id}/scheduler/actions`, { tail }),
+
+	// ── Server stats ──
+	createStatsChannel: (id: string, name: string) =>
+		req<{ channel_id: string }>('POST', `/api/guilds/${id}/stats/channels`, { name }),
+
+	// ── Scheduled messages ──
+	schedules: (id: string) =>
+		req<{ schedules: import('$lib/schedules').ScheduledMessage[] }>('GET', `/api/guilds/${id}/schedules`),
+	createSchedule: (id: string, body: import('$lib/schedules').SchedInput) =>
+		req<{ schedule: import('$lib/schedules').ScheduledMessage }>('POST', `/api/guilds/${id}/schedules`, body),
+	updateSchedule: (id: string, sid: string, body: import('$lib/schedules').SchedInput) =>
+		req<{ schedule: import('$lib/schedules').ScheduledMessage }>('PATCH', `/api/guilds/${id}/schedules/${sid}`, body),
+	deleteSchedule: (id: string, sid: string) =>
+		req<{ ok: boolean }>('DELETE', `/api/guilds/${id}/schedules/${sid}`),
+	sendSchedule: (id: string, sid: string) =>
+		req<{ ok: boolean }>('POST', `/api/guilds/${id}/schedules/${sid}/send`),
 	levelingVariables: (id: string) =>
 		req<{ variables: { token: string; desc: string }[] }>('GET', `/api/guilds/${id}/leveling/variables`),
 	// templatingPreview renders one template string and returns the text + any

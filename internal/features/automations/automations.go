@@ -15,7 +15,11 @@
 // automations/runtime, mirroring the customcommands/{exec,runtime} split.
 package automations
 
-import "encoding/json"
+import (
+	"encoding/json"
+
+	"github.com/dia-bot/dia/internal/features/schedmessages"
+)
 
 // FeatureKey is the stable identifier used in guild_feature_configs and as the
 // dashboard route segment.
@@ -63,6 +67,21 @@ type TriggerConfig struct {
 	// Role is the single watched role for role_added / role_removed triggers
 	// (empty = any role change fires).
 	Role string `json:"role,omitempty"`
+	// Subscriptions, when non-empty, restricts a social_update trigger to
+	// these followed accounts (social subscription ids as decimal strings).
+	Subscriptions []string `json:"subscriptions,omitempty"`
+	// Kinds, when non-empty, restricts a social_update trigger to these update
+	// kinds (live_start, live_end, new_video, new_post).
+	Kinds []string `json:"kinds,omitempty"`
+	// Schedules, when non-empty, restricts a scheduled_message trigger to
+	// these schedule ids (decimal strings).
+	Schedules []string `json:"schedules,omitempty"`
+	// Milestones, when non-empty, restricts a member_milestone trigger to
+	// these milestone ids (from the Server Stats config).
+	Milestones []string `json:"milestones,omitempty"`
+	// Schedule is the cadence of a "schedule"-triggered automation (the flow
+	// runs on this timer instead of a gateway event).
+	Schedule *schedmessages.ScheduleDef `json:"schedule,omitempty"`
 	// Cooldown, when set, rate-limits the automation per scope so a burst of
 	// events doesn't fan out a burst of runs.
 	Cooldown *Cooldown `json:"cooldown,omitempty"`

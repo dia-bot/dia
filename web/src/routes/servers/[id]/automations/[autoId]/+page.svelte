@@ -17,6 +17,9 @@
 	import { newStep, newStepID, STEP_KINDS, STEP_KIND_BY_KIND } from '$lib/commands/types';
 	import { EXPR_SCOPE_CTX, AUTOMATION_CTX, type ExprScope } from '$lib/commands/expr-meta';
 	import { TRIGGERS, TRIGGER_BY_KEY, triggerEventVars, type TriggerConfig } from '$lib/automations/types';
+	import { SOCIAL_KINDS, type SocialSubscription } from '$lib/social';
+	import { WEEKDAYS, type ScheduleDef } from '$lib/schedules';
+	import { milestoneLabel, normalizeStats, type StatsConfig, type StatsMilestone } from '$lib/stats';
 
 	import { Dialog, Popover } from '$lib/components/ui';
 	import { fade, fly } from 'svelte/transition';
@@ -105,7 +108,10 @@
 				auto?.feature_tab === 'auto-roles' ||
 				auto?.feature_tab === 'reaction-roles' ||
 				auto?.feature_tab === 'automod' ||
-				auto?.feature_tab === 'giveaways')
+				auto?.feature_tab === 'giveaways' ||
+				auto?.feature_tab === 'social' ||
+				auto?.feature_tab === 'stats' ||
+				auto?.feature_tab === 'scheduling')
 	);
 	// Welcome distinguishes its two built-in ids (join vs leave) as config tabs;
 	// leveling has a single surface so this is only meaningful for welcome.
@@ -542,7 +548,10 @@
 			auto.feature_tab === 'auto-roles' ||
 			auto.feature_tab === 'reaction-roles' ||
 			auto.feature_tab === 'automod' ||
-			auto.feature_tab === 'giveaways'
+			auto.feature_tab === 'giveaways' ||
+			auto.feature_tab === 'social' ||
+			auto.feature_tab === 'stats' ||
+			auto.feature_tab === 'scheduling'
 		) {
 			let last = '';
 			for (const s of steps) {
@@ -669,6 +678,12 @@
 				await api.saveGiveawayTail(store.id, extractSpineTail(auto.definition));
 			} else if (auto.id === 'giveaway.entry') {
 				await api.saveGiveawayEntryTail(store.id, extractSpineTail(auto.definition));
+			} else if (auto.id === 'social.update') {
+				await api.saveSocialTail(store.id, extractSpineTail(auto.definition));
+			} else if (auto.id === 'stats.milestone') {
+				await api.saveStatsTail(store.id, extractSpineTail(auto.definition));
+			} else if (auto.id === 'scheduler.sent') {
+				await api.saveSchedulerTail(store.id, extractSpineTail(auto.definition));
 			} else if (auto.feature_tab === 'leveling') {
 				const acts = extractWelcomeActions(auto.definition);
 				await api.saveLevelingActions(store.id, acts.channel, extractWelcomeTail(auto.definition));
@@ -1148,6 +1163,53 @@
 	}
 	function supports(filter: string): boolean {
 		return (triggerMeta?.filters ?? []).some((f) => f === filter);
+	}
+
+	// Followed accounts backing the social_update scoping filter; fetched once
+	// the trigger needs it.
+	let socialSubs = $state<SocialSubscription[]>([]);
+	let socialSubsLoaded = $state(false);
+	$effect(() => {
+		if (!supports('social_accounts') || socialSubsLoaded) return;
+		socialSubsLoaded = true;
+		api
+			.social(store.id)
+			.then((r) => (socialSubs = r.subscriptions ?? []))
+			.catch(() => {});
+	});
+	// Schedules backing the scheduled_message scoping filter.
+	let schedList = $state<import('$lib/schedules').ScheduledMessage[]>([]);
+	let schedListLoaded = $state(false);
+	$effect(() => {
+		if (!supports('schedules') || schedListLoaded) return;
+		schedListLoaded = true;
+		api
+			.schedules(store.id)
+			.then((r) => (schedList = r.schedules ?? []))
+			.catch(() => {});
+	});
+	// Server Stats milestones backing the member_milestone scoping filter.
+	let milestoneList = $state<StatsMilestone[]>([]);
+	let milestoneListLoaded = $state(false);
+	$effect(() => {
+		if (!supports('milestones') || milestoneListLoaded) return;
+		milestoneListLoaded = true;
+		api
+			.feature(store.id, 'stats')
+			.then((f) => (milestoneList = normalizeStats((f.config ?? {}) as StatsConfig).milestones))
+			.catch(() => {});
+	});
+	// Cadence editing for the "schedule" trigger (the flow's own timer).
+	function schedDef(): ScheduleDef {
+		return tcfg().schedule ?? { kind: 'weekly', time: '18:00', weekdays: [5] };
+	}
+	function setSched(patch: Partial<ScheduleDef>) {
+		setCfg('schedule', { ...schedDef(), ...patch });
+	}
+	function toggleListValue(key: 'subscriptions' | 'kinds' | 'schedules' | 'milestones', value: string) {
+		const cur = tcfg()[key] ?? [];
+		const next = cur.includes(value) ? cur.filter((x) => x !== value) : [...cur, value];
+		setCfg(key, next.length ? next : undefined);
 	}
 
 	function isInTextField(target: EventTarget | null): boolean {
@@ -1661,6 +1723,203 @@
 								placeholder="Any role change"
 							/>
 							<p class="mt-1 font-mono text-[10px] text-faint">Tip: use the Server Booster role to catch boosts.</p>
+						</section>
+					{/if}
+
+					{#if supports('social_accounts')}
+						<section>
+							<div class="mb-1 font-mono text-[10px] font-medium uppercase tracking-[0.14em] text-faint">Followed accounts</div>
+							{#if socialSubs.length === 0}
+								<p class="font-mono text-[10px] text-faint">
+									No accounts followed yet — add some on the Social tab. Blank = any account.
+								</p>
+							{:else}
+								<div class="flex flex-col gap-1">
+									{#each socialSubs as s (s.id)}
+										{@const on = (tcfg().subscriptions ?? []).includes(s.id)}
+										<button
+											type="button"
+											role="checkbox"
+											aria-checked={on}
+											onclick={() => toggleListValue('subscriptions', s.id)}
+											class="flex items-center gap-2 rounded-md border px-2 py-1.5 text-left transition-colors {on
+												? 'border-line-strong bg-surface'
+												: 'border-line bg-bg hover:border-line-strong'}"
+										>
+											<span class="grid size-3.5 shrink-0 place-items-center rounded-sm border {on ? 'border-ink bg-ink text-bg' : 'border-line'}">
+												{#if on}<span class="text-[9px] leading-none">✓</span>{/if}
+											</span>
+											<span class="min-w-0 truncate text-[11.5px] text-ink">{s.account_name}</span>
+											<span class="ml-auto shrink-0 font-mono text-[9px] uppercase tracking-[0.1em] text-faint">{s.provider}</span>
+										</button>
+									{/each}
+								</div>
+								<p class="mt-1 font-mono text-[10px] text-faint">None selected = any followed account.</p>
+							{/if}
+						</section>
+					{/if}
+
+					{#if auto.trigger_type === 'schedule'}
+						{@const def = schedDef()}
+						<section class="space-y-2">
+							<div>
+								<div class="mb-1 font-mono text-[10px] font-medium uppercase tracking-[0.14em] text-faint">Repeats</div>
+								<FieldSelect
+									value={def.kind}
+									onChange={(v) => setSched({ kind: v as ScheduleDef['kind'] })}
+									options={[
+										{ value: 'once', label: 'Once' },
+										{ value: 'every', label: 'Every N minutes' },
+										{ value: 'daily', label: 'Daily' },
+										{ value: 'weekly', label: 'Weekly' }
+									]}
+								/>
+							</div>
+							{#if def.kind === 'once'}
+								<div>
+									<div class="mb-1 font-mono text-[10px] font-medium uppercase tracking-[0.14em] text-faint">When (local time)</div>
+									<input
+										type="datetime-local"
+										value={def.at ? def.at.slice(0, 16) : ''}
+										oninput={(e) => setSched({ at: new Date((e.currentTarget as HTMLInputElement).value).toISOString() })}
+										class="h-7 w-full rounded-md border border-line bg-bg px-2 font-mono text-[11.5px] focus:border-line-strong focus:outline-none"
+									/>
+								</div>
+							{:else if def.kind === 'every'}
+								<div>
+									<div class="mb-1 font-mono text-[10px] font-medium uppercase tracking-[0.14em] text-faint">Interval (minutes, min 5)</div>
+									<input
+										type="number"
+										min="5"
+										step="5"
+										value={def.every_minutes ?? 60}
+										oninput={(e) => setSched({ every_minutes: Number((e.currentTarget as HTMLInputElement).value) })}
+										class="h-7 w-28 rounded-md border border-line bg-bg px-2 text-center font-mono text-[11.5px] focus:border-line-strong focus:outline-none"
+									/>
+								</div>
+							{:else}
+								<div>
+									<div class="mb-1 font-mono text-[10px] font-medium uppercase tracking-[0.14em] text-faint">Time of day (UTC)</div>
+									<input
+										type="time"
+										value={def.time ?? '18:00'}
+										oninput={(e) => setSched({ time: (e.currentTarget as HTMLInputElement).value })}
+										class="h-7 w-28 rounded-md border border-line bg-bg px-2 font-mono text-[11.5px] focus:border-line-strong focus:outline-none"
+									/>
+								</div>
+								{#if def.kind === 'weekly'}
+									<div class="flex flex-wrap gap-1">
+										{#each WEEKDAYS as w, i (w)}
+											{@const on = (def.weekdays ?? []).includes(i)}
+											<button
+												type="button"
+												aria-pressed={on}
+												onclick={() =>
+													setSched({
+														weekdays: on
+															? (def.weekdays ?? []).filter((x) => x !== i)
+															: [...(def.weekdays ?? []), i]
+													})}
+												class="inline-flex h-6 items-center rounded-md border px-2 text-[11px] font-medium transition-colors {on
+													? 'border-line-strong bg-surface text-ink'
+													: 'border-line bg-bg text-muted hover:border-line-strong hover:text-ink'}"
+											>
+												{w}
+											</button>
+										{/each}
+									</div>
+								{/if}
+							{/if}
+							<p class="font-mono text-[10px] text-faint">The timer arms when the automation is enabled and saved.</p>
+						</section>
+					{/if}
+
+					{#if supports('schedules')}
+						<section>
+							<div class="mb-1 font-mono text-[10px] font-medium uppercase tracking-[0.14em] text-faint">Schedules</div>
+							{#if schedList.length === 0}
+								<p class="font-mono text-[10px] text-faint">
+									No scheduled messages yet — create some on the Scheduling tab. Blank = any schedule.
+								</p>
+							{:else}
+								<div class="flex flex-col gap-1">
+									{#each schedList as sc (sc.id)}
+										{@const on = (tcfg().schedules ?? []).includes(sc.id)}
+										<button
+											type="button"
+											role="checkbox"
+											aria-checked={on}
+											onclick={() => toggleListValue('schedules', sc.id)}
+											class="flex items-center gap-2 rounded-md border px-2 py-1.5 text-left transition-colors {on
+												? 'border-line-strong bg-surface'
+												: 'border-line bg-bg hover:border-line-strong'}"
+										>
+											<span class="grid size-3.5 shrink-0 place-items-center rounded-sm border {on ? 'border-ink bg-ink text-bg' : 'border-line'}">
+												{#if on}<span class="text-[9px] leading-none">✓</span>{/if}
+											</span>
+											<span class="min-w-0 truncate text-[11.5px] text-ink">{sc.name}</span>
+										</button>
+									{/each}
+								</div>
+								<p class="mt-1 font-mono text-[10px] text-faint">None selected = any schedule.</p>
+							{/if}
+						</section>
+					{/if}
+
+					{#if supports('milestones')}
+						<section>
+							<div class="mb-1 font-mono text-[10px] font-medium uppercase tracking-[0.14em] text-faint">Milestones</div>
+							{#if milestoneList.length === 0}
+								<p class="font-mono text-[10px] text-faint">
+									No milestones yet — create some on the Server Stats tab. Blank = any milestone.
+								</p>
+							{:else}
+								<div class="flex flex-col gap-1">
+									{#each milestoneList as ms (ms.id)}
+										{@const on = (tcfg().milestones ?? []).includes(ms.id)}
+										<button
+											type="button"
+											role="checkbox"
+											aria-checked={on}
+											onclick={() => toggleListValue('milestones', ms.id)}
+											class="flex items-center gap-2 rounded-md border px-2 py-1.5 text-left transition-colors {on
+												? 'border-line-strong bg-surface'
+												: 'border-line bg-bg hover:border-line-strong'}"
+										>
+											<span class="grid size-3.5 shrink-0 place-items-center rounded-sm border {on ? 'border-ink bg-ink text-bg' : 'border-line'}">
+												{#if on}<span class="text-[9px] leading-none">✓</span>{/if}
+											</span>
+											<span class="min-w-0 truncate text-[11.5px] text-ink">{milestoneLabel(ms)}</span>
+											{#if !ms.enabled}
+												<span class="shrink-0 font-mono text-[9px] uppercase tracking-[0.12em] text-faint">off</span>
+											{/if}
+										</button>
+									{/each}
+								</div>
+								<p class="mt-1 font-mono text-[10px] text-faint">None selected = any milestone.</p>
+							{/if}
+						</section>
+					{/if}
+
+					{#if supports('social_kinds')}
+						<section>
+							<div class="mb-1 font-mono text-[10px] font-medium uppercase tracking-[0.14em] text-faint">Update kinds</div>
+							<div class="flex flex-wrap gap-1">
+								{#each Object.entries(SOCIAL_KINDS) as [k, meta] (k)}
+									{@const on = (tcfg().kinds ?? []).includes(k)}
+									<button
+										type="button"
+										aria-pressed={on}
+										onclick={() => toggleListValue('kinds', k)}
+										class="inline-flex h-6 items-center rounded-md border px-2 text-[11px] font-medium transition-colors {on
+											? 'border-line-strong bg-surface text-ink'
+											: 'border-line bg-bg text-muted hover:border-line-strong hover:text-ink'}"
+									>
+										{meta.label}
+									</button>
+								{/each}
+							</div>
+							<p class="mt-1 font-mono text-[10px] text-faint">None selected = every kind fires.</p>
 						</section>
 					{/if}
 

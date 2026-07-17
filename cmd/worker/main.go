@@ -30,6 +30,9 @@ import (
 	serverlogs "github.com/dia-bot/dia/internal/features/logging"
 	"github.com/dia-bot/dia/internal/features/moderation"
 	"github.com/dia-bot/dia/internal/features/roles"
+	"github.com/dia-bot/dia/internal/features/schedmessages"
+	"github.com/dia-bot/dia/internal/features/socialnotifications"
+	"github.com/dia-bot/dia/internal/features/statschannels"
 	"github.com/dia-bot/dia/internal/features/tickets"
 	"github.com/dia-bot/dia/internal/features/verification"
 	"github.com/dia-bot/dia/internal/features/welcome"
@@ -92,6 +95,8 @@ func main() {
 	b := bot.New(deps)
 	automationsPlugin := automations.New()
 	giveawayPlugin := giveaway.New()
+	socialPlugin := socialnotifications.New()
+	schedPlugin := schedmessages.New()
 	if err := b.Register(ctx,
 		welcome.New(),
 		leveling.New(),
@@ -100,16 +105,22 @@ func main() {
 		verification.New(),
 		serverlogs.New(),
 		tickets.New(),
+		socialPlugin,
+		statschannels.New(),
+		schedPlugin,
 		customcommands.New(),
 		automationsPlugin,
 		giveawayPlugin,
 	); err != nil {
 		fatal(log, "register plugins", err)
 	}
-	// Composed giveaway action buttons fire a saved automation on click. The
-	// giveaway plugin can't import the automations runner (it would cycle), so the
-	// automations runtime is injected as the bridge once both have initialised.
+	// Composed giveaway and social action buttons (and social per-kind
+	// attachments) fire a saved automation. Those plugins can't import the
+	// automations runner (it would cycle), so the automations runtime is
+	// injected as the bridge once all have initialised.
 	giveawayPlugin.SetAutomationRunner(automationsPlugin)
+	socialPlugin.SetAutomationRunner(automationsPlugin)
+	schedPlugin.SetAutomationRunner(automationsPlugin)
 
 	// DEV_GUILD_ID registers commands to one guild (instant) for development;
 	// empty registers globally (~1h propagation).

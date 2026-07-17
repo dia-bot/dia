@@ -25,7 +25,9 @@
 		ScrollText,
 		Wand2,
 		Zap,
-		Frame,
+		Megaphone,
+		CalendarClock,
+		BarChart3,
 		CreditCard,
 		ChevronRight,
 		Search,
@@ -69,6 +71,17 @@
 			]
 		},
 		{
+			section: 'Social',
+			items: [{ label: 'Social Alerts', path: 'social', icon: Megaphone }]
+		},
+		{
+			section: 'Utility',
+			items: [
+				{ label: 'Scheduling', path: 'scheduling', icon: CalendarClock },
+				{ label: 'Server Stats', path: 'stats', icon: BarChart3 }
+			]
+		},
+		{
 			section: 'Moderation',
 			items: [
 				{ label: 'Moderation', path: 'moderation', icon: ShieldCheck },
@@ -82,8 +95,7 @@
 			section: 'Advanced',
 			items: [
 				{ label: 'Custom Commands', path: 'commands', icon: Wand2 },
-				{ label: 'Automations', path: 'automations', icon: Zap },
-				{ label: 'Card Studio', path: 'editor', icon: Frame }
+				{ label: 'Automations', path: 'automations', icon: Zap }
 			]
 		},
 		{
@@ -91,7 +103,10 @@
 			items: [{ label: 'Billing & Storage', path: 'billing', icon: CreditCard }]
 		}
 	];
-	const flatPages = nav.flatMap((s) => s.items).map((i) => ({ label: i.label, path: i.path }));
+	// Pages reachable only by deep link (no sidebar entry): the Card Studio
+	// opens from the image editors (welcome / rank cards), not the nav.
+	const hiddenPages = [{ label: 'Card Studio', path: 'editor' }];
+	const flatPages = [...nav.flatMap((s) => s.items).map((i) => ({ label: i.label, path: i.path })), ...hiddenPages];
 
 	const base = $derived(`/servers/${$page.params.id}`);
 	function isActive(p: string) {
@@ -117,7 +132,10 @@
 		automod: 'automod',
 		verification: 'verification',
 		logging: 'logging',
-		commands: 'customcommands'
+		commands: 'customcommands',
+		social: 'social',
+		scheduling: 'scheduler',
+		stats: 'stats'
 	};
 	function canAccessPath(path: string): boolean {
 		if (store.admin) return true;
@@ -184,7 +202,9 @@
 	});
 
 	// A few builder pages want the whole content width (no centered column).
+	// '' is the Overview, a full-bleed slab page like the feature tabs.
 	const fullWidthPages = [
+		'',
 		'welcome',
 		'leveling',
 		'reaction-roles',
@@ -197,12 +217,16 @@
 		'automod',
 		'verification',
 		'tickets',
-		'logging'
+		'logging',
+		'social',
+		'scheduling',
+		'stats'
 	];
 	const fullWidth = $derived(fullWidthPages.includes(currentSeg));
 	// And a few want to paint edge-to-edge — no outer px/py wrapper at all.
 	// Used by the dashboard surfaces that draw their own slab topbar / rows.
 	const flushPages = [
+		'',
 		'welcome',
 		'leveling',
 		'reaction-roles',
@@ -214,7 +238,10 @@
 		'automod',
 		'verification',
 		'tickets',
-		'logging'
+		'logging',
+		'social',
+		'scheduling',
+		'stats'
 	];
 	const flush = $derived(flushPages.includes(currentSeg));
 

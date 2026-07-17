@@ -15,6 +15,10 @@ export type TriggerFilter =
 	| 'keywords'
 	| 'emojis'
 	| 'role'
+	| 'social_accounts'
+	| 'social_kinds'
+	| 'schedules'
+	| 'milestones'
 	| 'cooldown';
 
 export interface TriggerConfig {
@@ -27,6 +31,15 @@ export interface TriggerConfig {
 	match_mode?: 'contains' | 'equals' | 'word';
 	emojis?: string[];
 	role?: string;
+	// social_update scoping: followed-account subscription ids and update kinds.
+	subscriptions?: string[];
+	kinds?: string[];
+	// scheduled_message scoping: schedule ids.
+	schedules?: string[];
+	// member_milestone scoping: milestone ids from the Server Stats config.
+	milestones?: string[];
+	// "schedule" trigger cadence (the flow runs on this timer).
+	schedule?: import('$lib/schedules').ScheduleDef;
 	cooldown?: { scope: 'user' | 'channel' | 'guild'; seconds: number };
 }
 
@@ -53,7 +66,9 @@ export const TRIGGER_CATEGORIES: { id: string; label: string }[] = [
 	{ id: 'moderation', label: 'Moderation' },
 	{ id: 'tickets', label: 'Tickets' },
 	{ id: 'channels', label: 'Channels & threads' },
-	{ id: 'giveaways', label: 'Giveaways' }
+	{ id: 'giveaways', label: 'Giveaways' },
+	{ id: 'social', label: 'Social' },
+	{ id: 'scheduling', label: 'Scheduling' }
 ];
 
 const v = (path: string, type: string, short: string): TmplVar => ({
@@ -200,6 +215,24 @@ const GIVEAWAY_ENTRY_EVENT_VARS: TmplVar[] = [
 	v('.Event.entry_count', 'int', 'Distinct entrants after this click'),
 	v('.Event.message_id', 'snowflake', 'The giveaway message id'),
 	v('.Event.channel_id', 'snowflake', 'The channel the giveaway lives in')
+];
+
+// Mirrors the eventMap set in runtime.go's TypeSocialUpdate case. Keep the key
+// names exact: the runtime emits `account` (not account_name) and `subscription`
+// (not subscription_id), and does not surface a thumbnail.
+const SOCIAL_EVENT_VARS: TmplVar[] = [
+	v('.Event.provider', 'string', 'The platform (twitch, youtube, kick, bluesky, rss)'),
+	v('.Event.kind', 'string', 'What happened (live_start, live_end, new_video, new_post)'),
+	v('.Event.account', 'string', 'The followed account name'),
+	v('.Event.account_url', 'string', "Link to the account's page"),
+	v('.Event.title', 'string', 'The stream, video or post title'),
+	v('.Event.url', 'string', 'Link to the stream, video or post'),
+	v('.Event.description', 'string', 'A short excerpt or description ("" if none)'),
+	v('.Event.category', 'string', 'The stream game or category ("" if none)'),
+	v('.Event.account_id', 'string', 'The upstream account id (or feed URL for RSS)'),
+	v('.Event.item_id', 'string', 'The upstream item id (dedupe key)'),
+	v('.Event.started_at', 'string', 'When a stream started (RFC 3339, "" if not a stream)'),
+	v('.Event.subscription', 'int', 'The Dia subscription id that matched')
 ];
 
 export const TRIGGERS: TriggerKindMeta[] = [
@@ -570,6 +603,66 @@ export const TRIGGERS: TriggerKindMeta[] = [
 		hasChannel: true,
 		filters: ['channels', 'ignore_bots', 'cooldown'],
 		eventVars: GIVEAWAY_ENTRY_EVENT_VARS
+	},
+	{
+		key: 'member_milestone',
+		label: 'Member milestone reached',
+		description:
+			'The member count crosses a milestone configured on the Server Stats tab (every N members, or a one-time target). No .User or .Channel.',
+		category: 'members',
+		event: 'MEMBER_MILESTONE',
+		actor: '(no actor)',
+		hasChannel: false,
+		filters: ['milestones', 'cooldown'],
+		eventVars: [
+			v('.Event.count', 'int', 'The member count that crossed the milestone'),
+			v('.Event.step', 'int', 'The recurring interval (0 for a one-time target)'),
+			v('.Event.milestone', 'int', 'The milestone value crossed'),
+			v('.Event.milestone_id', 'string', 'The milestone definition that fired')
+		]
+	},
+	{
+		key: 'scheduled_message',
+		label: 'Scheduled message sent',
+		description: 'A scheduled message posts. Chain follow-up steps: pin it, open a thread, notify staff.',
+		category: 'scheduling',
+		event: 'SCHEDULED_MESSAGE_SENT',
+		actor: '(no actor)',
+		hasChannel: true,
+		filters: ['schedules', 'channels', 'cooldown'],
+		eventVars: [
+			v('.Event.schedule', 'int', 'The schedule id that posted'),
+			v('.Event.name', 'string', "The schedule's name"),
+			v('.Event.channel_id', 'snowflake', 'The channel it posted in'),
+			v('.Event.message_id', 'snowflake', 'The posted message id')
+		]
+	},
+	{
+		key: 'schedule',
+		label: 'At a scheduled time',
+		description:
+			'Runs the flow itself on a cadence: once, every N minutes, daily or weekly. No actor or channel; send to explicit channels.',
+		category: 'scheduling',
+		event: '',
+		actor: '(no actor)',
+		hasChannel: false,
+		filters: [],
+		eventVars: [
+			v('.Event.scheduled_at', 'string', 'When this run fired (RFC 3339, UTC)'),
+			v('.Event.kind', 'string', 'The cadence kind (once, every, daily, weekly)')
+		]
+	},
+	{
+		key: 'social_update',
+		label: 'Social account update',
+		description:
+			'A followed social account goes live or posts. Branch on .Event.kind (live_start, live_end, new_video, new_post) and .Event.provider. No .User or .Channel, send to an explicit channel.',
+		category: 'social',
+		event: 'SOCIAL_UPDATE',
+		actor: '(no actor)',
+		hasChannel: false,
+		filters: ['social_accounts', 'social_kinds', 'cooldown'],
+		eventVars: SOCIAL_EVENT_VARS
 	}
 ];
 

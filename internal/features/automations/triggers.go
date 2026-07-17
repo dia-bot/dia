@@ -7,13 +7,17 @@ import "github.com/dia-bot/dia/internal/event"
 type Filter string
 
 const (
-	FilterChannels   Filter = "channels"    // restrict to / exclude channels
-	FilterRoles      Filter = "roles"       // actor must / must not hold a role
-	FilterIgnoreBots Filter = "ignore_bots" // drop bot actors
-	FilterKeywords   Filter = "keywords"    // message content match
-	FilterEmojis     Filter = "emojis"      // reaction emoji allowlist
-	FilterRole       Filter = "role"        // single watched role (role add/remove)
-	FilterCooldown   Filter = "cooldown"    // per-scope rate limit
+	FilterChannels       Filter = "channels"        // restrict to / exclude channels
+	FilterRoles          Filter = "roles"           // actor must / must not hold a role
+	FilterIgnoreBots     Filter = "ignore_bots"     // drop bot actors
+	FilterKeywords       Filter = "keywords"        // message content match
+	FilterEmojis         Filter = "emojis"          // reaction emoji allowlist
+	FilterRole           Filter = "role"            // single watched role (role add/remove)
+	FilterSocialAccounts Filter = "social_accounts" // restrict to followed accounts (social_update)
+	FilterSocialKinds    Filter = "social_kinds"    // restrict to update kinds (social_update)
+	FilterSchedules      Filter = "schedules"       // restrict to specific schedules (scheduled_message)
+	FilterMilestones     Filter = "milestones"      // restrict to specific milestones (member_milestone)
+	FilterCooldown       Filter = "cooldown"        // per-scope rate limit
 )
 
 // TriggerKind is one entry in the trigger catalogue: a user-facing automation
@@ -44,6 +48,8 @@ const (
 	CatChannels   = "channels"
 	CatTickets    = "tickets"
 	CatGiveaways  = "giveaways"
+	CatSocial     = "social"
+	CatScheduling = "scheduling"
 )
 
 // Triggers is the closed catalogue of automation triggers. Adding one here is
@@ -57,6 +63,7 @@ var Triggers = []TriggerKind{
 	{Key: "verification_passed", Label: "Member verified", Description: "A member passes verification (button or captcha).", Event: event.TypeVerificationPassed, Category: CatMembers, Actor: "the verified member", Filters: []Filter{FilterCooldown}},
 	{Key: "verification_failed", Label: "Verification failed", Description: "A member fails the captcha, or is removed for not verifying in time.", Event: event.TypeVerificationFailed, Category: CatMembers, Actor: "the member who failed", Filters: []Filter{FilterCooldown}},
 	{Key: "level_up", Label: "Member levels up", Description: "A member reaches a new level.", Event: event.TypeLevelUp, Category: CatMembers, Actor: "the member who leveled up", HasChannel: true, Filters: []Filter{FilterChannels, FilterCooldown}},
+	{Key: "member_milestone", Label: "Member milestone reached", Description: "The member count crosses a milestone configured on the Server Stats tab (every N members, or a one-time target).", Event: event.TypeMemberMilestone, Category: CatMembers, Actor: "(no actor)", Filters: []Filter{FilterMilestones, FilterCooldown}},
 
 	// Roles (derived from member updates)
 	{Key: "role_added", Label: "Role added", Description: "A specific role is granted to a member (use for boost detection: watch the Server Booster role).", Event: event.TypeMemberUpdate, Category: CatRoles, Actor: "the member who got the role", Filters: []Filter{FilterRole, FilterCooldown}},
@@ -100,6 +107,13 @@ var Triggers = []TriggerKind{
 	// Giveaways
 	{Key: "giveaway_ended", Label: "Giveaway ends", Description: "A giveaway is drawn (natural end, manual end, or reroll). .User is the first winner; loop .Event.winner_ids for all winners.", Event: event.TypeGiveawayEnded, Category: CatGiveaways, Actor: "the first winner (if any)", HasChannel: true, Filters: []Filter{FilterChannels, FilterCooldown}},
 	{Key: "giveaway_entry", Label: "Giveaway entered", Description: "A member clicks a giveaway's Enter button. Branch on .Event.outcome (entered, left, denied, blocked). .User is the member who clicked.", Event: event.TypeGiveawayEntered, Category: CatGiveaways, Actor: "the member who clicked Enter", HasChannel: true, Filters: []Filter{FilterChannels, FilterIgnoreBots, FilterCooldown}},
+
+	// Social
+	{Key: "social_update", Label: "Social account update", Description: "A followed social account goes live or posts (branch on .Event.kind: live_start, live_end, new_video, new_post — and .Event.provider).", Event: event.TypeSocialUpdate, Category: CatSocial, Actor: "(no actor)", Filters: []Filter{FilterSocialAccounts, FilterSocialKinds, FilterCooldown}},
+
+	// Scheduling
+	{Key: "scheduled_message", Label: "Scheduled message sent", Description: "A scheduled message posts (chain follow-up steps, pin it, open a thread, and more).", Event: event.TypeScheduledMessageSent, Category: CatScheduling, Actor: "(no actor)", HasChannel: true, Filters: []Filter{FilterSchedules, FilterChannels, FilterCooldown}},
+	{Key: "schedule", Label: "At a scheduled time", Description: "Runs the flow itself on a cadence: once, every N minutes, daily or weekly. No gateway event, no actor; the schedule lives on this automation.", Event: "", Category: CatScheduling, Actor: "(no actor)", Filters: nil},
 }
 
 // triggerByKey indexes the catalogue.
@@ -133,11 +147,15 @@ func EventForTrigger(key string) (event.Type, bool) {
 }
 
 // SubscribedEvents returns the distinct set of gateway events the catalogue
-// needs — the runtime subscribes to exactly these.
+// needs — the runtime subscribes to exactly these. Time-driven triggers (the
+// "schedule" kind) have no event and are swept by the scheduler instead.
 func SubscribedEvents() []event.Type {
 	seen := map[event.Type]bool{}
 	var out []event.Type
 	for _, t := range Triggers {
+		if t.Event == "" {
+			continue
+		}
 		if !seen[t.Event] {
 			seen[t.Event] = true
 			out = append(out, t.Event)
