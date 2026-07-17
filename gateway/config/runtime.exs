@@ -67,13 +67,17 @@ num_shards =
     true -> {first_0b + 1, first_0b + count_here, shard_total}
   end
 
-config :nostrum,
+# In Nostrum 0.11 each bot is started explicitly as a `Nostrum.Bot` child (see
+# Dia.Gateway.Application), not via a global `config :nostrum, token:`. We stash
+# the platform bot's options here for the supervisor to read. `custom_bot_intents`
+# is the intent set every customer bot IDENTIFYs with (the customer must have
+# enabled the matching privileged intents in their application's portal).
+config :dia_gateway, :platform_bot,
   token: token,
-  gateway_intents: gateway_intents,
-  num_shards: num_shards,
-  # We never proactively request guild members; the worker does what it needs
-  # via REST. Keeps us a pure pump and avoids large member chunk traffic.
-  request_guild_members: false
+  intents: gateway_intents,
+  shards: num_shards
+
+config :dia_gateway, :custom_bot_intents, gateway_intents
 
 # ── NATS / JetStream ────────────────────────────────────────────────────────
 
