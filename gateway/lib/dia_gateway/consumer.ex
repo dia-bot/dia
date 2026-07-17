@@ -1,11 +1,13 @@
 defmodule Dia.Gateway.Consumer do
   @moduledoc """
-  The single Nostrum consumer for the gateway.
+  The shared Nostrum consumer for every bot the gateway runs (the platform bot
+  and each customer's custom bot). In Nostrum 0.11 the consumer is a plain
+  `@behaviour Nostrum.Consumer` module named by each bot's `:consumer` option,
+  invoked per event with that bot's context; `current_app_id/0` reads that
+  context so each envelope is stamped with the producing bot's application id.
 
-  `use Nostrum.Consumer` gives us `start_link/1`, `child_spec/1` and a default
-  `handle_event/1` catch-all, and runs each event in its own `Task` (free
-  parallelism + isolation). We implement one catch-all `handle_event/1` clause
-  per forwarded event type that:
+  Nostrum runs each event in its own `Task` (free parallelism + isolation). We
+  implement one `handle_event/1` clause per forwarded event type that:
 
     1. maps the Nostrum struct(s) into the normalized contract via
        `Dia.Gateway.Mapper`,
@@ -20,7 +22,7 @@ defmodule Dia.Gateway.Consumer do
   swallows NATS failures (retry then drop).
   """
 
-  use Nostrum.Consumer
+  @behaviour Nostrum.Consumer
 
   require Logger
 
@@ -270,10 +272,20 @@ defmodule Dia.Gateway.Consumer do
     forward(:INTERACTION_CREATE, gid, ws, data, id_of(interaction))
   end
 
-  # Everything else (READY, TYPING_START, presence, etc.) is ignored by the
-  # `handle_event(_)` catch-all that `use Nostrum.Consumer` injects via
-  # `__before_compile__`, so we deliberately do not define our own — a redundant
-  # catch-all here would shadow Nostrum's and trip the compiler's clause check.
+  # ── Readiness ─────────────────────────────────────────────────────────────
+
+  # A bot finishing IDENTIFY tells the control plane it is live, so the Go side
+  # can flip the custom bot's dashboard state to "ready" and (re)apply its
+  # configured presence. The platform bot readies too; Control ignores app ids
+  # it isn't tracking.
+  def handle_event({:READY, _data, _ws}) do
+    Dia.Gateway.Control.on_ready(current_app_id())
+    :ok
+  end
+
+  # Everything else (TYPING_START, presence, etc.) is dropped by this explicit
+  # catch-all (0.11 no longer injects one via `use Nostrum.Consumer`).
+  def handle_event(_), do: :ok
 
   # ── Internal ──────────────────────────────────────────────────────────────────
 
@@ -289,7 +301,12 @@ defmodule Dia.Gateway.Consumer do
       "guild_id" => guild_id_field(guild_id),
       "shard_id" => shard_id,
       "ts" => System.system_time(:millisecond),
-      "data" => data
+      "data" => data,
+      # Which bot produced this event. For the platform bot this is its own id
+      # (the Go side treats the platform id, or "", as the shared bot); for a
+      # customer's bot it is their application id, so the worker picks the right
+      # token to act and respond with.
+      "app_id" => current_app_id()
     }
 
     subject = @subject_prefix <> "." <> type <> "." <> gid_str
@@ -333,6 +350,18 @@ defmodule Dia.Gateway.Consumer do
   # ids (lowest-1)..(highest-1)), so no adjustment is needed.
   defp shard_id(%{shard_num: n}) when is_integer(n), do: n
   defp shard_id(_), do: 0
+
+  # The current bot's Nostrum name as a string. In multi-bot mode the event task
+  # runs with its bot's context, so fetch_bot_name/0 resolves to that bot; name
+  # defaults to the integer bot/application id. Guarded so a lookup miss can
+  # never crash the pipeline (falls back to "").
+  defp current_app_id do
+    to_string(Nostrum.Bot.fetch_bot_name())
+  rescue
+    _ -> ""
+  catch
+    _, _ -> ""
+  end
 
   defp guild_id(%{guild_id: gid}), do: gid
   defp guild_id(_), do: nil
