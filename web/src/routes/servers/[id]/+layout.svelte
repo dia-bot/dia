@@ -28,6 +28,7 @@
 		Megaphone,
 		CalendarClock,
 		BarChart3,
+		Bot,
 		CreditCard,
 		ChevronRight,
 		Search,
@@ -100,7 +101,10 @@
 		},
 		{
 			section: 'Settings',
-			items: [{ label: 'Billing & Storage', path: 'billing', icon: CreditCard }]
+			items: [
+				{ label: 'Custom Bot', path: 'custom-bot', icon: Bot },
+				{ label: 'Billing & Storage', path: 'billing', icon: CreditCard }
+			]
 		}
 	];
 	// Pages reachable only by deep link (no sidebar entry): the Card Studio
@@ -220,7 +224,8 @@
 		'logging',
 		'social',
 		'scheduling',
-		'stats'
+		'stats',
+		'custom-bot'
 	];
 	const fullWidth = $derived(fullWidthPages.includes(currentSeg));
 	// And a few want to paint edge-to-edge — no outer px/py wrapper at all.
@@ -241,7 +246,8 @@
 		'logging',
 		'social',
 		'scheduling',
-		'stats'
+		'stats',
+		'custom-bot'
 	];
 	const flush = $derived(flushPages.includes(currentSeg));
 
